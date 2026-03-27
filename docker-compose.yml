@@ -19,6 +19,14 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude                # SRS-5.2.7
       - NODE_OPTIONS=--max-old-space-size=4096              # SRS-5.2.8
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_A:-}             # SRS-5.2.9
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
     command: ["sleep", "infinity"]
 
   claude-b:
@@ -36,6 +44,14 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_B:-}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
     command: ["sleep", "infinity"]
 
 volumes:                                                    # SRS-5.2.10

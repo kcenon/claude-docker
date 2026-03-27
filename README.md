@@ -234,6 +234,19 @@ docker compose exec claude-a git add -A && git commit -m "feat: add feature"
 docker compose exec claude-b git add -A && git commit -m "fix: resolve bug"
 ```
 
+### Read-Only Mode (Code Review)
+
+For review-only sessions where you want to prevent accidental writes:
+
+```bash
+# Override the project mount to read-only in your docker-compose.override.yml
+# or pass it inline:
+docker compose run --volume ${PROJECT_DIR}:/workspace:ro claude-a claude
+```
+
+Files in `/workspace` will be read-only. The container can still write to
+`/home/node/.claude` (settings/history) and `/workspace/node_modules` (named volume).
+
 ### Cleanup
 
 ```bash
