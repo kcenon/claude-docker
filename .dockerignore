@@ -1,0 +1,9 @@
+.git
+node_modules
+dist
+build
+*.log
+.env
+.env.*
+.claude/
+.claude-state/
