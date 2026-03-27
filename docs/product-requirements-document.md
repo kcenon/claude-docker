@@ -326,12 +326,12 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 | G2 (isolation) | FR-6, FR-7, FR-8 | SRS-5.2.5, 5.2.7, 5.3.1, 5.3.2 | SC-3, SC-4 | 2 |
 | G3 (source sharing) | FR-10, FR-11, FR-12, FR-13 | SRS-5.4.1, 5.4.2, 5.2.6 | SC-5 | 3 |
 | G4 (concurrent safety) | FR-10, FR-11 | SRS-5.4.1, 5.4.2 | SC-5 | 3 |
-| G5 (simple setup) | FR-2, FR-3, FR-4, FR-9 | SRS-5.1.2~6, 5.2.1~3, 4.5 | SC-2, SC-7 | 1, 2 |
-| G6 (cross-platform) | — | SRS-6.1~6.3 | SC-6 | 2, 3 |
+| G5 (simple setup) | FR-2, FR-3, FR-4, FR-9 | SRS-5.1.2–6, 5.2.1–3, 4.5 | SC-2, SC-7 | 1, 2 |
+| G6 (cross-platform) | — | SRS-6.1–6.3 | SC-6 | 2, 3 |
 | G7 (subscription) | FR-7 | SRS-5.3.1 | SC-4 | 2 |
 | G8 (scalable N) | — | SRS-5.5 | SC-8 | 2, 3 |
-| G9 | FR-18, FR-19, FR-21, FR-22 | SRS-8.1.1~9, SRS-8.2.1~11, SRS-8.3.1~5 | SC-10 | 5 |
-| G10 | FR-20 | SRS-8.2.3~4 | SC-11 | 5 |
+| G9 | FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24 | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | SC-10 | 5 |
+| G10 | FR-20 | SRS-8.2.3–4, SRS-8.2.7, SRS-8.3.3 | SC-11 | 5 |
 
 **Reading the table**:
 - Left to right (forward): "Goal G2 is fulfilled by FR-6/7/8, specified in SRS-5.2.5/5.2.7/5.3.1/5.3.2, and verified by SC-3/SC-4."
