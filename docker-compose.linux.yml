@@ -1,0 +1,13 @@
+# docker-compose.linux.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.linux.yml up
+
+services:
+  claude-a:
+    user: "${UID}:${GID}"           # SRS-6.1.1
+    environment:
+      - HOME=/home/node             # SRS-6.1.2
+
+  claude-b:
+    user: "${UID}:${GID}"
+    environment:
+      - HOME=/home/node
