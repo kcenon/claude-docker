@@ -358,6 +358,7 @@ claude-docker/
 ├── .gitattributes                    # (Phase 2) LF line endings (Windows teams)
 └── scripts/
     ├── setup-worktrees.sh            # (Phase 3, Tier B)
+    ├── test-concurrent-git.sh        # (Phase 3, Tier B — E2E concurrent git test)
     └── cleanup.sh                    # (Phase 4)
 ```
 

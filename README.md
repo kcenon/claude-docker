@@ -366,6 +366,7 @@ claude-docker/
 +-- .gitattributes                     LF line endings
 +-- scripts/
 |   +-- setup-worktrees.sh            Tier B worktree setup
+|   +-- test-concurrent-git.sh        E2E test: Tier B concurrent git safety
 |   +-- cleanup.sh                    Full cleanup
 +-- docs/
     +-- product-requirements-document.md
