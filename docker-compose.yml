@@ -22,8 +22,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${CLAUDE_CPUS:-4}"
-          memory: "${CLAUDE_MEMORY:-4G}"
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
     command: ["sleep", "infinity"]
 
   claude-b:
@@ -44,8 +47,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${CLAUDE_CPUS:-4}"
-          memory: "${CLAUDE_MEMORY:-4G}"
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
     command: ["sleep", "infinity"]
 
 volumes:                                                    # SRS-5.2.10

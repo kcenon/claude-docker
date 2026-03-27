@@ -234,6 +234,19 @@ docker compose exec claude-a git add -A && git commit -m "feat: add feature"
 docker compose exec claude-b git add -A && git commit -m "fix: resolve bug"
 ```
 
+### Read-Only Mode (Code Review)
+
+For review-only sessions where you want to prevent accidental writes:
+
+```bash
+# Override the project mount to read-only in your docker-compose.override.yml
+# or pass it inline:
+docker compose run --volume ${PROJECT_DIR}:/workspace:ro claude-a claude
+```
+
+Files in `/workspace` will be read-only. The container can still write to
+`/home/node/.claude` (settings/history) and `/workspace/node_modules` (named volume).
+
 ### Cleanup
 
 ```bash
@@ -342,35 +355,6 @@ Docker Desktop alternative.
 
 Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **not** an NTFS path (`/mnt/c/...`). The difference is ~27x in performance.
-
-## Resource Limits
-
-Each container defaults to **4 CPUs** and **4 GB RAM**. Override via `.env`:
-
-```bash
-CLAUDE_CPUS=2
-CLAUDE_MEMORY=2G
-```
-
-These limits use `deploy.resources.limits` in compose, preventing a single
-container from consuming all host resources.
-
-## Read-Only Source Mount
-
-To prevent containers from modifying source files (useful for review-only sessions),
-add `:ro` to the project bind mount:
-
-```yaml
-# In docker-compose.override.yml or inline
-services:
-  claude-b:
-    volumes:
-      - ${PROJECT_DIR}:/workspace:ro
-```
-
-With a read-only mount, Claude Code can read and analyze code but cannot write
-files to the project directory. The container can still write to its own
-`/home/node/.claude` and the `node_modules` named volume.
 
 ## Resource Requirements
 
