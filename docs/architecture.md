@@ -74,6 +74,9 @@ The pattern extends to N accounts. Each additional instance requires:
 | 2 | 8 GB | 12 / 16 / 16 GB |
 | 3 | 12 GB | 16 / 20 / 20 GB |
 | 4 | 16 GB | 20 / 24 / 24 GB |
+| 1 manager + 2 workers + Redis | 12.3 GB | 16 / 20 / 20 GB |
+| 1 manager + 3 workers + Redis | 16.3 GB | 20 / 24 / 24 GB |
+| 1 manager + 4 workers + Redis | 20.3 GB | 24 / 28 / 28 GB |
 
 To add a third instance, add a new service to `docker-compose.yml`:
 
@@ -181,6 +184,61 @@ A 100 MB source tree adds ~100 MB, not another full clone.
 > (where `main-a` is based on `main`), then merge back.
 
 **Best for**: Both sessions actively editing and committing.
+
+## Orchestration Tier (Phase 5)
+
+For coordinated multi-agent analysis, the orchestration overlay adds a
+manager-worker pattern with Redis shared context on top of the base
+container architecture.
+
+### Architecture
+
+```
+Host
+└── Docker Compose (default bridge network)
+    ├── redis              (shared context store, redis:7-alpine)
+    ├── manager            (interactive Claude session, dispatches work)
+    ├── worker-1           (HTTP server + claude -p, port 9000)
+    ├── worker-2           (HTTP server + claude -p, port 9000)
+    ├── worker-3           (HTTP server + claude -p, port 9000)
+    └── [claude-a, claude-b from base — still available]
+```
+
+### Communication Flow
+
+```
+Manager ──HTTP POST──> Worker-N:9000/task
+                       │
+                       ├── Read context:shared from Redis
+                       ├── Read findings:all from Redis
+                       ├── Build enriched prompt (context + prior findings + task)
+                       ├── Execute claude -p
+                       ├── Parse structured JSON findings
+                       ├── Write result:{taskId} to Redis
+                       └── RPUSH findings:{category} + findings:all to Redis
+                       │
+Manager <──JSON resp── Worker-N
+```
+
+### Redis Data Model
+
+| Key Pattern | Type | Purpose |
+|-------------|------|---------|
+| `context:shared` | HASH | Project context set by manager (summary, architecture, focus areas) |
+| `findings:{category}` | LIST | Categorized findings (security, performance, architecture, ...) |
+| `findings:all` | LIST | All findings chronologically across all workers |
+| `result:{taskId}` | HASH | Per-task result (worker, raw output, structured findings, timestamp) |
+| `task:{taskId}` | HASH | Task metadata (prompt, assignee, status, timestamp) |
+| `worker:{name}:status` | STRING | Worker status with 60s TTL (idle/busy/error) |
+| `worker:{name}:heartbeat` | STRING | Heartbeat timestamp with 30s TTL |
+
+### Key Design Decisions
+
+- **HTTP over raw TCP**: `curl` and `jq` already in the image; HTTP provides framing and error codes
+- **Workers mount source `:ro`**: Workers analyze code but do not modify it
+- **Redis as context bus**: Structured findings accumulate across workers; each worker reads prior findings before processing
+- **Opt-in overlay**: Base compose unchanged; add via `-f docker-compose.orchestration.yml`
+- **No docker.sock**: All communication via bridge network; no container needs Docker API access
 
 ## Authentication Strategy
 
@@ -310,6 +368,17 @@ For 3+ instances, see [Scaling Beyond Two Instances](#scaling-beyond-two-instanc
 - [ ] Container resource limits (memory, CPU)
 - [ ] Cleanup script for worktrees and state
 
+### Phase 5 — Orchestration
+
+| Deliverable | Description |
+|-------------|-------------|
+| `docker-compose.orchestration.yml` | Redis + manager + N worker services |
+| `scripts/worker-server.js` | Node.js HTTP server with Redis context integration |
+| `scripts/manager-helpers.sh` | Bash functions for task dispatch and result aggregation |
+| `scripts/test-orchestration.sh` | E2E test for orchestration pipeline |
+| Dockerfile update | Add `redis-tools` (apt) and `redis` npm package |
+| `.env.example` update | Add orchestration environment variables |
+
 ### Phase–Requirements Traceability
 
 | Phase | Deliverables | PRD FR | SRS Spec | PRD SC |
@@ -318,6 +387,7 @@ For 3+ instances, see [Scaling Beyond Two Instances](#scaling-beyond-two-instanc
 | 2 — Account Separation | docker-compose.yml, .env.example | FR-6~9 | SRS-5.2.1~11, 5.3.1~3, 6.1~6.3 | SC-3, SC-4, SC-6 |
 | 3 — Source Sharing | Tier A/B configs, setup-worktrees.sh | FR-10~13 | SRS-5.4.1~3, 5.5 | SC-5, SC-7, SC-8 |
 | 4 — Hardening | Firewall, resource limits, cleanup.sh | FR-14~17 | SRS-7.2, 7.3, 4.4 | SC-9 |
+| 5 — Orchestration | orchestration.yml, worker-server.js, manager-helpers.sh, test-orchestration.sh | FR-18~24 | SRS-8.1~8.4 | SC-10, SC-11 |
 
 ## Comparison: Containers vs VMs
 
@@ -353,13 +423,17 @@ claude-docker/
 ├── docker-compose.linux.yml          # (Phase 2) Linux override (UID/GID, HOME)
 ├── docker-compose.worktree.yml       # (Phase 3) Tier B override
 ├── docker-compose.firewall.yml       # (Phase 4) firewall override (cap_add)
+├── docker-compose.orchestration.yml  # (Phase 5) orchestration overlay
 ├── .env.example                      # (Phase 2)
 ├── .gitignore                        # (Phase 2)
 ├── .gitattributes                    # (Phase 2) LF line endings (Windows teams)
 └── scripts/
     ├── setup-worktrees.sh            # (Phase 3, Tier B)
     ├── test-concurrent-git.sh        # (Phase 3, Tier B — E2E concurrent git test)
-    └── cleanup.sh                    # (Phase 4)
+    ├── cleanup.sh                    # (Phase 4)
+    ├── worker-server.js              # (Phase 5) worker HTTP server with Redis
+    ├── manager-helpers.sh            # (Phase 5) manager dispatch functions
+    └── test-orchestration.sh         # (Phase 5) E2E orchestration test
 ```
 
 ## References

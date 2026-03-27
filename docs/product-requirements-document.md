@@ -23,8 +23,8 @@ instances; scaling to more requires only a compose edit and additional RAM
 The solution supports Linux, macOS, and Windows (WSL2) with two
 configuration tiers — shared source (simplest) and git worktree (safest).
 Two authentication paths are provided: host-first OAuth for subscription
-accounts and API key for Console accounts. Implementation spans 4 phases
-over an estimated 6-10 days.
+accounts and API key for Console accounts. Implementation spans 5 phases
+over an estimated 9-15 days.
 
 ---
 
@@ -66,6 +66,8 @@ stays under 100 MB.
 | G6 | Cross-platform support | Linux, macOS, Windows (WSL2) |
 | G7 | Support subscription accounts | Host-first OAuth for Pro/Max/Team |
 | G8 | Scalable to N instances | Compose pattern extends to 3+ accounts |
+| G9 | Manager-worker orchestration | 1 manager dispatches tasks to N workers via HTTP; results aggregated via Redis |
+| G10 | Shared context accumulation | Worker N reads structured findings from workers 1..N-1 before processing |
 
 ### Non-Goals
 
@@ -185,6 +187,18 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | FR-16 | P2 | Container resource limits via `deploy.resources` in compose |
 | FR-17 | P2 | Cleanup script for worktrees and state (`scripts/cleanup.sh`) |
 
+### Phase 5 — Orchestration
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-18 | P0 | Redis service (`redis:7-alpine`) available on default bridge network with RDB persistence |
+| FR-19 | P0 | Worker HTTP server (Node.js) receives prompt via POST, executes `claude -p`, returns structured JSON findings |
+| FR-20 | P0 | Workers read shared context from Redis before processing and write structured findings after completion |
+| FR-21 | P0 | Manager dispatches tasks to workers via `curl` and aggregates results using `jq` |
+| FR-22 | P0 | Orchestration compose overlay (`docker-compose.orchestration.yml`) compatible with all existing overlays via `-f` flag |
+| FR-23 | P1 | Worker heartbeat and status tracking in Redis with TTL-based expiration |
+| FR-24 | P1 | E2E test script verifies parallel dispatch, Redis result storage, and findings accumulation |
+
 ---
 
 ## 7. Non-Functional Requirements
@@ -263,7 +277,13 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 - **Acceptance**: Outbound limited to whitelist; review session read-only; cleanup removes state
 - **Effort**: 2-3 days | **Depends on**: Phase 3
 
-**Total estimated effort: 6-10 days**
+### Phase 5 — Orchestration
+
+- **Deliverables**: `docker-compose.orchestration.yml`, `scripts/worker-server.js`, `scripts/manager-helpers.sh`, `scripts/test-orchestration.sh`, Dockerfile update, `.env.example` update
+- **Acceptance**: Manager dispatches to 3 workers; results stored in Redis; findings accumulate across sequential worker invocations
+- **Effort**: 3–5 days | **Depends on**: Phase 1–4
+
+**Total estimated effort: 9–15 days**
 
 ---
 
@@ -280,6 +300,8 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | SC-7 | Reproducibility | New user goes from zero to two running containers in < 15 min (Linux) / < 30 min (macOS, Windows) |
 | SC-8 | Scalability | Third instance addable by copying one compose service block + creating state directory |
 | SC-9 | Security baseline | No API keys in VCS; no Docker socket mounted; state dirs owner-only |
+| SC-10 | Manager dispatches tasks to 3 workers and all return results within timeout | Phase 5 |
+| SC-11 | Worker-2 prompt includes Worker-1's findings read from Redis shared context | Phase 5 |
 
 ---
 
@@ -308,6 +330,8 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 | G6 (cross-platform) | — | SRS-6.1~6.3 | SC-6 | 2, 3 |
 | G7 (subscription) | FR-7 | SRS-5.3.1 | SC-4 | 2 |
 | G8 (scalable N) | — | SRS-5.5 | SC-8 | 2, 3 |
+| G9 | FR-18, FR-19, FR-21, FR-22 | SRS-8.1.1~9, SRS-8.2.1~11, SRS-8.3.1~5 | SC-10 | 5 |
+| G10 | FR-20 | SRS-8.2.3~4 | SC-11 | 5 |
 
 **Reading the table**:
 - Left to right (forward): "Goal G2 is fulfilled by FR-6/7/8, specified in SRS-5.2.5/5.2.7/5.3.1/5.3.2, and verified by SC-3/SC-4."

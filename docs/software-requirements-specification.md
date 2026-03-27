@@ -98,6 +98,9 @@ The system exposes no GUI. All interaction is through:
 | Container → Internet | registry.npmjs.org | HTTPS | 443 | Package installation |
 | Container → Internet | github.com | HTTPS/SSH | 443/22 | Git operations |
 | Host → Container | N/A | docker exec | N/A | Shell access |
+| Manager → Worker | `http://worker-N:9000/task` | HTTP POST | 9000 | Task dispatch with prompt and timeout |
+| Worker ↔ Redis | `redis://redis:6379` | TCP | 6379 | Shared context read/write, findings, status |
+| Manager → Redis | `redis://redis:6379` | TCP | 6379 | Context initialization, findings aggregation |
 
 No inbound ports are exposed from containers to the host.
 
@@ -122,6 +125,11 @@ Variables marked **`.env`** are set in the `.env` file.
 | `UID` | .env | Linux only | `$(id -u)` | Integer | Host user ID |
 | `GID` | .env | Linux only | `$(id -g)` | Integer | Host group ID |
 | `CLAUDE_CODE_VERSION` | Dockerfile ARG | No | latest | Semver | Build-time version pin |
+| `REDIS_URL` | compose | Phase 5 only | `redis://redis:6379` | URL | Redis connection URL (SRS-8.1.7) |
+| `WORKER_NAME` | compose | Phase 5 only | `worker-1` | String | Worker identifier for Redis keys and logging (SRS-8.1.7) |
+| `WORKER_PORT` | compose | Phase 5 only | `9000` | Integer | HTTP server listen port (SRS-8.1.7) |
+| `ROLE` | compose | Phase 5 only | — | `manager` or `worker` | Container role designation (SRS-8.1.7) |
+| `WORKER_COUNT` | compose | Phase 5 only | `3` | Integer | Number of worker containers (SRS-8.3.2) |
 
 ### 4.2 Credential File Schema
 
@@ -177,6 +185,8 @@ bind-mounted to `/home/node/.claude` inside the container.
 | Source (read-only) | `${PROJECT_DIR}` | `/workspace` | bind | ro | `:z` |
 | Account state | `${HOME}/.claude-state/account-X` | `/home/node/.claude` | bind | rw | `:Z` |
 | Dependencies | `node_modules_X` | `/workspace/node_modules` | named | rw | N/A |
+| Redis data | `redis-data` | `/data` (Redis) | named | rw | N/A |
+| Scripts (read-only) | `./scripts` | `/scripts` (orchestration) | bind | ro | N/A |
 
 - SELinux flags apply only to RHEL/CentOS/Fedora. Other platforms omit them.
 - Named volumes are Docker-managed; no host path.
@@ -373,16 +383,70 @@ is identical; only `.env` values and optional compose overrides differ.
 
 ---
 
-## 8. Constraints and Assumptions
+## 8. Orchestration Specifications
 
-### 8.1 Technology Constraints
+### 8.1 Orchestration Compose (`docker-compose.orchestration.yml`)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.1.1 | SHALL | Orchestration overlay SHALL define `redis`, `manager`, `worker-1`, `worker-2`, `worker-3` services |
+| SRS-8.1.2 | SHALL | Redis service SHALL use `redis:7-alpine` image with 256 MB memory limit |
+| SRS-8.1.3 | SHALL | Redis service SHALL persist data via RDB snapshot to named volume `redis-data` |
+| SRS-8.1.4 | SHALL | Manager service SHALL use `claude-code-base:latest` with `sleep infinity` command |
+| SRS-8.1.5 | SHALL | Worker services SHALL run `node /scripts/worker-server.js` as entry command |
+| SRS-8.1.6 | SHALL | All services SHALL communicate via Docker Compose default bridge network using service name DNS |
+| SRS-8.1.7 | SHALL | Each service SHALL receive `REDIS_URL`, `WORKER_NAME`, `WORKER_PORT`, and `ROLE` environment variables |
+| SRS-8.1.8 | SHALL | Each worker and manager SHALL mount its own dedicated account state directory |
+| SRS-8.1.9 | SHALL | The overlay SHALL NOT modify the base `docker-compose.yml` services |
+
+### 8.2 Worker Server (`scripts/worker-server.js`)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.2.1 | SHALL | Worker server SHALL expose HTTP POST `/task` endpoint on configurable port (default 9000) |
+| SRS-8.2.2 | SHALL | Worker server SHALL accept JSON body `{taskId, prompt, timeout}` |
+| SRS-8.2.3 | SHALL | Before executing `claude -p`, worker SHALL read `context:shared` hash from Redis |
+| SRS-8.2.4 | SHALL | Before executing `claude -p`, worker SHALL read `findings:all` list from Redis |
+| SRS-8.2.5 | SHALL | Worker SHALL execute `claude -p` with configurable timeout via `child_process.execSync` |
+| SRS-8.2.6 | SHALL | Worker SHALL parse structured JSON findings block from Claude output |
+| SRS-8.2.7 | SHALL | Worker SHALL write `result:{taskId}` hash and RPUSH findings to Redis |
+| SRS-8.2.8 | SHALL | Worker SHALL maintain `worker:{name}:status` key with TTL 60s |
+| SRS-8.2.9 | SHALL | Worker SHALL maintain `worker:{name}:heartbeat` key with TTL 30s |
+| SRS-8.2.10 | SHALL | Worker SHALL respond with JSON `{status, taskId, output, findings}` |
+| SRS-8.2.11 | SHALL | Worker server SHALL use the `redis` npm package for Redis communication |
+
+### 8.3 Manager Helpers (`scripts/manager-helpers.sh`)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.3.1 | SHALL | Manager helpers SHALL provide `dispatch_task` function sending HTTP POST via `curl` |
+| SRS-8.3.2 | SHALL | Manager helpers SHALL provide `dispatch_parallel` function sending to all workers concurrently |
+| SRS-8.3.3 | SHALL | Manager helpers SHALL provide `get_findings` function reading findings from Redis via `redis-cli` |
+| SRS-8.3.4 | SHALL | Manager helpers SHALL provide `get_worker_status` function checking all worker statuses |
+| SRS-8.3.5 | SHALL | All helper functions SHALL use `set -euo pipefail` and return proper exit codes |
+
+### 8.4 Orchestration Testing (`scripts/test-orchestration.sh`)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.4.1 | SHALL | E2E test SHALL start Redis, manager, and 3 workers via compose overlay |
+| SRS-8.4.2 | SHALL | E2E test SHALL dispatch 3 distinct tasks to 3 workers sequentially |
+| SRS-8.4.3 | SHALL | E2E test SHALL verify results stored in Redis `result:{taskId}` hashes |
+| SRS-8.4.4 | SHALL | E2E test SHALL verify findings accumulation (later workers see earlier findings) |
+| SRS-8.4.5 | SHALL | E2E test SHALL use `trap cleanup EXIT` for reliable teardown |
+
+---
+
+## 9. Constraints and Assumptions
+
+### 9.1 Technology Constraints
 
 - Alpine Linux base images are NOT supported (musl incompatible with Claude Code).
 - Interactive CLI commands (`vim`, `git rebase -i`) are NOT supported inside Claude Code's shell tool (GitHub #26353).
 - Docker-in-Docker is NOT used. Containers do not manage other containers.
 - `docker compose` V2 (Go binary, space-separated) is required. Legacy `docker-compose` V1 (Python, hyphenated) is not tested.
 
-### 8.2 Assumptions
+### 9.2 Assumptions
 
 - Host has internet access for initial image build and Claude API communication.
 - For Path A, the host has a browser for OAuth login.
@@ -391,9 +455,9 @@ is identical; only `.env` values and optional compose overrides differ.
 
 ---
 
-## 9. Verification and Traceability
+## 10. Verification and Traceability
 
-### 9.1 Upstream Traceability (SRS → PRD)
+### 10.1 Upstream Traceability (SRS → PRD)
 
 Each SRS functional section traces back to PRD Goals and Functional Requirements.
 
@@ -408,8 +472,9 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 | 6.2 macOS Adaptation | SRS-6.2.1~4 | — | G6 | 2 |
 | 6.3 Windows Adaptation | SRS-6.3.1~6 | — | G6 | 2 |
 | 7.3 Security | SRS-7.3 | FR-14 | G5 | 4 |
+| 8.1~8.4 Orchestration | SRS-8.1~8.4 | FR-18~24 | G9, G10 | 5 |
 
-### 9.2 Downstream Verification (PRD FR → SRS → Test)
+### 10.2 Downstream Verification (PRD FR → SRS → Test)
 
 Each PRD Functional Requirement (FR) maps to an SRS specification and
 a test procedure.
@@ -433,3 +498,10 @@ a test procedure.
 | FR-15 (read-only mount) | SRS-4.4 | Start container with `:ro` on project volume; verify write operations fail inside container |
 | FR-16 (resource limits) | SRS-7.2 | Add `deploy.resources` to compose; verify `docker stats` shows enforced limits |
 | FR-17 (cleanup script) | SRS-5.5 | Run `scripts/cleanup.sh`; verify worktrees removed and state directories cleaned |
+| FR-18 (Redis service) | SRS-8.1.2~3 | Redis service starts with healthcheck; `redis-cli ping` returns PONG |
+| FR-19 (worker task endpoint) | SRS-8.2.1~6 | POST to worker-N:9000/task returns JSON with status and findings |
+| FR-20 (findings accumulation) | SRS-8.2.3~4, 8.2.7 | Worker-2 prompt contains Worker-1's findings from Redis |
+| FR-21 (manager dispatch) | SRS-8.3.1~2 | `dispatch_task` and `dispatch_parallel` return worker responses |
+| FR-22 (overlay compatibility) | SRS-8.1.9 | `docker compose -f ... -f docker-compose.orchestration.yml config` validates |
+| FR-23 (worker status) | SRS-8.2.8~9 | `redis-cli GET worker:worker-1:status` returns current status |
+| FR-24 (E2E test) | SRS-8.4.1~5 | `test-orchestration.sh` exits with code 0 |

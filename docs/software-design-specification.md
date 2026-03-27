@@ -44,6 +44,10 @@ docker-compose.worktree.yml   (Phase 3) ── depends on: docker-compose.yml (b
 setup-worktrees.sh            (Phase 3) ── depends on: git, project repo
 docker-compose.firewall.yml   (Phase 4) ── depends on: docker-compose.yml (base)
 cleanup.sh                    (Phase 4) ── depends on: docker, git
+docker-compose.orchestration.yml  (Phase 5) ── depends on: docker-compose.yml, Dockerfile, worker-server.js
+scripts/worker-server.js          (Phase 5) ── depends on: redis npm package, claude CLI
+scripts/manager-helpers.sh        (Phase 5) ── depends on: curl, jq, redis-cli
+scripts/test-orchestration.sh     (Phase 5) ── depends on: docker compose, all Phase 5 files
 ```
 
 ### 1.3 Design Principles
@@ -261,6 +265,167 @@ services:
 | Linux + Tier A | `docker compose -f docker-compose.yml -f docker-compose.linux.yml up` |
 | Linux + Tier B | `docker compose -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.worktree.yml up` |
 | Any + Firewall | Append `-f docker-compose.firewall.yml` |
+| Orchestration (macOS/Windows) | `docker compose -f docker-compose.yml -f docker-compose.orchestration.yml up -d` |
+| Orchestration (Linux) | `docker compose -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.orchestration.yml up -d` |
+| Orchestration + Firewall | Append both `-f docker-compose.orchestration.yml -f docker-compose.firewall.yml` |
+
+### 3.6 Orchestration Override — docker-compose.orchestration.yml (Phase 5)
+
+Manager-worker pattern with Redis shared context. Opt-in via `-f docker-compose.orchestration.yml`.
+
+```yaml
+# docker-compose.orchestration.yml
+# Phase 5: Manager-Worker orchestration with Redis shared context
+# Usage: docker compose -f docker-compose.yml -f docker-compose.orchestration.yml up -d
+# SRS-8.1.1~9
+
+services:
+  redis:
+    image: redis:7-alpine                                       # SRS-8.1.2
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice"]
+    volumes:
+      - redis-data:/data                                        # SRS-8.1.3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  manager:
+    image: claude-code-base:latest                              # SRS-8.1.4
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ${PROJECT_DIR}:/workspace
+      - ${HOME}/.claude-state/account-manager:/home/node/.claude # SRS-8.1.8
+      - node_modules_manager:/workspace/node_modules
+      - ./scripts:/scripts:ro
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_MANAGER:-}
+      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - ROLE=manager
+      - WORKER_COUNT=${WORKER_COUNT:-3}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    command: ["sleep", "infinity"]
+
+  worker-1:
+    image: claude-code-base:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ${PROJECT_DIR}:/workspace:ro                            # Workers read-only
+      - ${HOME}/.claude-state/account-w1:/home/node/.claude     # SRS-8.1.8
+      - node_modules_w1:/workspace/node_modules
+      - ./scripts:/scripts:ro
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_1:-}
+      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - WORKER_NAME=worker-1                                    # SRS-8.1.7
+      - WORKER_PORT=9000                                        # SRS-8.1.7
+      - ROLE=worker
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    command: ["node", "/scripts/worker-server.js"]              # SRS-8.1.5
+
+  worker-2:
+    image: claude-code-base:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ${PROJECT_DIR}:/workspace:ro
+      - ${HOME}/.claude-state/account-w2:/home/node/.claude
+      - node_modules_w2:/workspace/node_modules
+      - ./scripts:/scripts:ro
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_2:-}
+      - REDIS_URL=redis://redis:6379
+      - WORKER_NAME=worker-2
+      - WORKER_PORT=9000
+      - ROLE=worker
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    command: ["node", "/scripts/worker-server.js"]
+
+  worker-3:
+    image: claude-code-base:latest
+    depends_on:
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ${PROJECT_DIR}:/workspace:ro
+      - ${HOME}/.claude-state/account-w3:/home/node/.claude
+      - node_modules_w3:/workspace/node_modules
+      - ./scripts:/scripts:ro
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_3:-}
+      - REDIS_URL=redis://redis:6379
+      - WORKER_NAME=worker-3
+      - WORKER_PORT=9000
+      - ROLE=worker
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    command: ["node", "/scripts/worker-server.js"]
+
+volumes:
+  redis-data:
+  node_modules_manager:
+  node_modules_w1:
+  node_modules_w2:
+  node_modules_w3:
+```
+
+**Design decisions:**
+- Workers mount source as `:ro` — analysis only, no code modification
+- Scripts bind-mounted at `/scripts:ro` — no image rebuild for script changes
+- Redis healthcheck ensures workers don't start before Redis is ready
+- Each worker has its own account state and node_modules volume
+- No port exposure to host — all communication via internal bridge network
 
 ---
 
@@ -400,6 +565,127 @@ fi
 echo "=== Cleanup complete ==="
 ```
 
+### 5.3 scripts/worker-server.js (Phase 5)
+
+Node.js HTTP server that receives task prompts from the manager, enriches them with
+shared context from Redis, executes `claude -p`, and writes results back to Redis.
+Reference: SRS-8.2.1~11.
+
+**Key functions:**
+
+| Function | Purpose | SRS |
+|----------|---------|-----|
+| `connectRedis()` | Establish Redis connection using `REDIS_URL` env var; reconnect on failure | SRS-8.2.1 |
+| `readSharedContext()` | `HGETALL context:shared` — retrieve project summary, guidelines, prior findings | SRS-8.2.3 |
+| `buildEnrichedPrompt()` | Combine shared context + task-specific prompt into a single enriched prompt | SRS-8.2.4 |
+| `parseFindings()` | Extract structured findings (JSON array) from Claude's raw output | SRS-8.2.6 |
+| `executeClaude()` | Spawn `claude -p` with enriched prompt; capture stdout; enforce timeout | SRS-8.2.5 |
+| `writeResults()` | `SET result:<worker>:<taskId>` and `RPUSH findings:all` to Redis | SRS-8.2.7 |
+| `handleTask()` | HTTP POST handler: orchestrates read → build → execute → parse → write | SRS-8.2.2 |
+
+**Redis data flow:**
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Redis                                              │
+│  ┌──────────────┐  ┌──────────────┐                 │
+│  │context:shared│  │ findings:all │                 │
+│  │  (HASH)      │  │  (LIST)      │                 │
+│  └──────┬───────┘  └──────▲───────┘                 │
+│         │ HGETALL         │ RPUSH                   │
+└─────────┼─────────────────┼─────────────────────────┘
+          │                 │
+          ▼                 │
+   ┌─────────────┐  ┌──────┴──────┐
+   │ buildEnrich │  │ writeResults│
+   │ edPrompt()  │  │    ()       │
+   └──────┬──────┘  └──────▲──────┘
+          │                │
+          ▼                │
+   ┌─────────────┐  ┌──────┴──────┐
+   │executeClaude│──▶│parseFindings│
+   │    ()       │  │    ()       │
+   └─────────────┘  └─────────────┘
+```
+
+**Enriched prompt template:**
+
+```
+## Shared Context
+{context:shared fields as key-value pairs}
+
+## Prior Findings
+{findings:all entries, if any}
+
+## Your Task
+{task-specific prompt from manager}
+
+Respond with a JSON object: { "summary": "...", "findings": [...], "status": "done"|"error" }
+```
+
+**Error handling:**
+- **Timeout**: `executeClaude()` enforces a configurable timeout (default 300s); on timeout, writes error result to Redis and returns HTTP 504 (SRS-8.2.8)
+- **JSON parse failure**: If Claude output is not valid JSON, `parseFindings()` wraps raw text in a fallback structure (SRS-8.2.9)
+- **Redis connection error**: `connectRedis()` retries with exponential backoff (max 5 attempts); server returns HTTP 503 until connected (SRS-8.2.10)
+- **Worker status**: Periodically writes heartbeat to `SET status:<worker> "{state, lastTask, timestamp}"` (SRS-8.2.11)
+
+### 5.4 scripts/manager-helpers.sh (Phase 5)
+
+Bash helper functions sourced by the manager to dispatch tasks and query state.
+Reference: SRS-8.3.1~5.
+
+```bash
+#!/usr/bin/env bash
+# Manager helper functions for orchestration (SRS-8.3.1~5)
+# Usage: source /scripts/manager-helpers.sh
+
+# SRS-8.3.1: Dispatch a task to a specific worker
+# Args: $1 = worker name (e.g., worker-1), $2 = prompt text
+dispatch_task() {
+    local worker="$1" prompt="$2"
+    local payload
+    payload=$(jq -n --arg p "$prompt" '{"prompt": $p}')
+    curl -s -X POST "http://${worker}:9000/task" \
+        -H "Content-Type: application/json" \
+        -d "$payload"
+}
+
+# SRS-8.3.2: Dispatch same prompt to all workers in parallel
+# Args: $1 = prompt text (or unique prompts via stdin, one per line)
+dispatch_parallel() {
+    local prompt="$1"
+    local pids=() tmpfiles=()
+    for i in 1 2 3; do
+        local tmp
+        tmp=$(mktemp)
+        tmpfiles+=("$tmp")
+        dispatch_task "worker-$i" "$prompt" > "$tmp" 2>&1 &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do wait "$pid"; done
+    for tmp in "${tmpfiles[@]}"; do cat "$tmp"; rm -f "$tmp"; done
+}
+
+# SRS-8.3.3: Retrieve all findings from Redis
+get_findings() {
+    redis-cli -u "$REDIS_URL" LRANGE findings:all 0 -1
+}
+
+# SRS-8.3.4: Get status of all workers
+get_worker_status() {
+    for i in 1 2 3; do
+        echo "worker-$i: $(redis-cli -u "$REDIS_URL" GET "status:worker-$i")"
+    done
+}
+
+# SRS-8.3.5: Set shared context for all workers
+# Args: $1 = field name, $2 = value
+set_shared_context() {
+    local field="$1" value="$2"
+    redis-cli -u "$REDIS_URL" HSET context:shared "$field" "$value"
+}
+```
+
 ---
 
 ## 6. Operational Flows
@@ -499,6 +785,38 @@ Bind mount not working
     └── Windows → Move source to WSL2 filesystem
 ```
 
+### 6.6 Orchestration First Run (Phase 5)
+
+```
+Host                                    Docker
+─────                                   ──────
+1. mkdir -p ~/.claude-state/account-{manager,w1,w2,w3}
+2. Authenticate each account:
+   Path A (OAuth):
+     CLAUDE_CONFIG_DIR=~/.claude-state/account-manager claude auth login
+     CLAUDE_CONFIG_DIR=~/.claude-state/account-w1 claude auth login
+     CLAUDE_CONFIG_DIR=~/.claude-state/account-w2 claude auth login
+     CLAUDE_CONFIG_DIR=~/.claude-state/account-w3 claude auth login
+   Path B (API key):
+     Add CLAUDE_API_KEY_MANAGER, CLAUDE_API_KEY_1~3 to .env
+3. Configure .env with orchestration variables:
+     WORKER_COUNT=3
+4.                                      docker compose -f docker-compose.yml \
+                                          -f docker-compose.orchestration.yml build
+5.                                      docker compose -f docker-compose.yml \
+                                          -f docker-compose.orchestration.yml up -d
+6.                                      docker compose -f docker-compose.yml \
+                                          -f docker-compose.orchestration.yml \
+                                          exec manager bash
+7. source /scripts/manager-helpers.sh
+8. set_shared_context "project_summary" "Description of the project..."
+9. dispatch_task worker-1 "analyze auth module"
+   dispatch_task worker-2 "analyze database layer"
+   dispatch_task worker-3 "analyze API routes"
+10. get_findings
+    └─ Returns combined findings from all workers
+```
+
 ---
 
 ## 7. SRS Traceability
@@ -520,6 +838,10 @@ Bind mount not working
 | SRS-7.3 (Security/Firewall) | 3.4 Firewall Override | `docker-compose.firewall.yml` |
 | SRS-4.4 (Volume Matrix) | 3.1~3.3 all compose files | `docker-compose*.yml` |
 | SRS-4.5 (.env Format) | 4.1 .env.example | `.env.example` |
+| SRS-8.1.1~9 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
+| SRS-8.2.1~11 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
+| SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
+| SRS-8.4.1~5 (Orchestration Tests) | 5.3 (test section) | `scripts/test-orchestration.sh` |
 
 ### Deliverable File Inventory
 
@@ -537,3 +859,7 @@ Bind mount not working
 | `scripts/setup-worktrees.sh` | 3 | SRS-5.4.2 |
 | `scripts/test-concurrent-git.sh` | 3 | SRS-5.4.2 (verification) |
 | `scripts/cleanup.sh` | 4 | SRS-5.5 (FR-17) |
+| `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~9 |
+| `scripts/worker-server.js` | 5 | SRS-8.2.1~11 |
+| `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
+| `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |
