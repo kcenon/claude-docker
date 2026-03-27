@@ -231,6 +231,8 @@ SHALL be provided with placeholder values and no real credentials.
 | SRS-5.1.8 | Package manager caches SHALL be cleaned: `apt-get` lists and `npm cache`. |
 | SRS-5.1.9 | A `.dockerignore` SHALL exclude: `.git`, `node_modules`, `dist`, `build`, `.env`, `.claude/`. |
 | SRS-5.1.10 | Final image size SHALL be under 1 GB. |
+| SRS-5.1.11 | Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. |
+| SRS-5.1.12 | Dockerfile SHALL install `redis` npm package (v4.6+) globally for worker-server.js. |
 
 ### SRS-5.2 Container Orchestration (docker-compose.yml)
 
@@ -414,6 +416,11 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.2.9 | SHALL | Worker SHALL maintain `worker:{name}:heartbeat` key with TTL 30s |
 | SRS-8.2.10 | SHALL | Worker SHALL respond with JSON `{status, taskId, output, findings}` |
 | SRS-8.2.11 | SHALL | Worker server SHALL use the `redis` npm package for Redis communication |
+| SRS-8.2.12 | SHALL | Worker SHALL expect findings in JSON format: `{"findings": [{"category": "string", "summary": "string", "severity": "high|medium|low", "details": "string"}]}` |
+| SRS-8.2.13 | SHALL | If JSON findings block is missing or malformed, worker SHALL return empty findings array and status "partial" |
+| SRS-8.2.14 | SHALL | Worker SHALL extract findings from the last markdown code fence tagged `json` in Claude output |
+| SRS-8.2.15 | SHALL | Worker SHALL retry Redis connection up to 3 times with 2-second intervals on connection failure |
+| SRS-8.2.16 | SHALL | Result keys (`result:{taskId}`) SHALL have TTL of 3600 seconds (1 hour) |
 
 ### 8.3 Manager Helpers (`scripts/manager-helpers.sh`)
 
@@ -424,6 +431,8 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.3.3 | SHALL | Manager helpers SHALL provide `get_findings` function reading findings from Redis via `redis-cli` |
 | SRS-8.3.4 | SHALL | Manager helpers SHALL provide `get_worker_status` function checking all worker statuses |
 | SRS-8.3.5 | SHALL | All helper functions SHALL use `set -euo pipefail` and return proper exit codes |
+| SRS-8.3.6 | SHALL | Manager helpers SHALL verify Redis connectivity before dispatching tasks |
+| SRS-8.3.7 | SHALL | Manager SHALL clear `findings:all` list before starting a new analysis session |
 
 ### 8.4 Orchestration Testing (`scripts/test-orchestration.sh`)
 
@@ -463,16 +472,16 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 
 | SRS Section | Specs | PRD FR | PRD Goal | Phase |
 |-------------|-------|--------|----------|-------|
-| 5.1 Image Build | SRS-5.1.1~10 | FR-1~5 | G1, G5 | 1 |
-| 5.2 Container Orchestration | SRS-5.2.1~11 | FR-6, FR-9, FR-10, FR-12 | G2, G3, G5 | 2, 3 |
-| 5.3 Authentication | SRS-5.3.1~3 | FR-7, FR-8 | G2, G7 | 2 |
-| 5.4 Source Sharing | SRS-5.4.1~3 | FR-10~13 | G3, G4 | 3 |
+| 5.1 Image Build | SRS-5.1.1–10 | FR-1–5 | G1, G5 | 1 |
+| 5.2 Container Orchestration | SRS-5.2.1–11 | FR-6, FR-9, FR-10, FR-12 | G2, G3, G5 | 2, 3 |
+| 5.3 Authentication | SRS-5.3.1–3 | FR-7, FR-8 | G2, G7 | 2 |
+| 5.4 Source Sharing | SRS-5.4.1–3 | FR-10–13 | G3, G4 | 3 |
 | 5.5 Scaling | SRS-5.5 | — | G8 | 2, 3 |
-| 6.1 Linux Adaptation | SRS-6.1.1~5 | — | G6 | 2 |
-| 6.2 macOS Adaptation | SRS-6.2.1~4 | — | G6 | 2 |
-| 6.3 Windows Adaptation | SRS-6.3.1~6 | — | G6 | 2 |
+| 6.1 Linux Adaptation | SRS-6.1.1–5 | — | G6 | 2 |
+| 6.2 macOS Adaptation | SRS-6.2.1–4 | — | G6 | 2 |
+| 6.3 Windows Adaptation | SRS-6.3.1–6 | — | G6 | 2 |
 | 7.3 Security | SRS-7.3 | FR-14 | G5 | 4 |
-| 8.1~8.4 Orchestration | SRS-8.1~8.4 | FR-18~24 | G9, G10 | 5 |
+| 8.1–8.4 Orchestration | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | FR-18–24 | G9, G10 | 5 |
 
 ### 10.2 Downstream Verification (PRD FR → SRS → Test)
 
@@ -498,10 +507,14 @@ a test procedure.
 | FR-15 (read-only mount) | SRS-4.4 | Start container with `:ro` on project volume; verify write operations fail inside container |
 | FR-16 (resource limits) | SRS-7.2 | Add `deploy.resources` to compose; verify `docker stats` shows enforced limits |
 | FR-17 (cleanup script) | SRS-5.5 | Run `scripts/cleanup.sh`; verify worktrees removed and state directories cleaned |
-| FR-18 (Redis service) | SRS-8.1.2~3 | Redis service starts with healthcheck; `redis-cli ping` returns PONG |
-| FR-19 (worker task endpoint) | SRS-8.2.1~6 | POST to worker-N:9000/task returns JSON with status and findings |
-| FR-20 (findings accumulation) | SRS-8.2.3~4, 8.2.7 | Worker-2 prompt contains Worker-1's findings from Redis |
-| FR-21 (manager dispatch) | SRS-8.3.1~2 | `dispatch_task` and `dispatch_parallel` return worker responses |
+| FR-18 (Redis service) | SRS-8.1.2–3 | Redis service starts with healthcheck; `redis-cli ping` returns PONG |
+| FR-19 (worker task endpoint) | SRS-8.2.1–6 | POST to worker-N:9000/task returns JSON with status and findings |
+| FR-20 (findings accumulation) | SRS-8.2.3–4, 8.2.7 | Worker-2 prompt contains Worker-1's findings from Redis |
+| FR-21 (manager dispatch) | SRS-8.3.1–2 | `dispatch_task` and `dispatch_parallel` return worker responses |
 | FR-22 (overlay compatibility) | SRS-8.1.9 | `docker compose -f ... -f docker-compose.orchestration.yml config` validates |
-| FR-23 (worker status) | SRS-8.2.8~9 | `redis-cli GET worker:worker-1:status` returns current status |
-| FR-24 (E2E test) | SRS-8.4.1~5 | `test-orchestration.sh` exits with code 0 |
+| FR-23 (worker status) | SRS-8.2.8–9 | `redis-cli GET worker:worker-1:status` returns current status |
+| FR-24 (E2E test) | SRS-8.4.1–5 | `test-orchestration.sh` exits with code 0 |
+| — (Redis tooling) | SRS-5.1.11–12 | `docker compose exec manager redis-cli --version` and `node -e "require('redis')"` both succeed |
+| — (JSON findings schema) | SRS-8.2.12–14 | Worker returns structured findings for well-formed prompt; returns empty findings for prompt without JSON block |
+| — (error recovery) | SRS-8.2.15–16 | Worker reconnects after Redis restart; result keys expire after 1 hour |
+| — (manager resilience) | SRS-8.3.6–7 | `get_worker_status` fails gracefully if Redis unreachable; `findings:all` empty after session reset |

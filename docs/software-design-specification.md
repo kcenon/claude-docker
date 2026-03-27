@@ -44,9 +44,9 @@ docker-compose.worktree.yml   (Phase 3) ── depends on: docker-compose.yml (b
 setup-worktrees.sh            (Phase 3) ── depends on: git, project repo
 docker-compose.firewall.yml   (Phase 4) ── depends on: docker-compose.yml (base)
 cleanup.sh                    (Phase 4) ── depends on: docker, git
-docker-compose.orchestration.yml  (Phase 5) ── depends on: docker-compose.yml, Dockerfile, worker-server.js
-scripts/worker-server.js          (Phase 5) ── depends on: redis npm package, claude CLI
-scripts/manager-helpers.sh        (Phase 5) ── depends on: curl, jq, redis-cli
+docker-compose.orchestration.yml  (Phase 5) ── depends on: docker-compose.yml, Dockerfile, worker-server.js, manager-helpers.sh
+scripts/worker-server.js          (Phase 5) ── depends on: redis npm (SRS-5.1.12), claude CLI, redis service
+scripts/manager-helpers.sh        (Phase 5) ── depends on: curl, jq, redis-tools (SRS-5.1.11)
 scripts/test-orchestration.sh     (Phase 5) ── depends on: docker compose, all Phase 5 files
 ```
 
@@ -85,6 +85,7 @@ RUN apt-get update \
        fzf \
        zsh \
        sudo \
+       redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
@@ -100,6 +101,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # SRS-5.1.2: Install Claude Code globally
 # SRS-5.1.8: npm cache cleaned in same RUN
 RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
+    && npm cache clean --force
+
+# SRS-5.1.12: Redis client for worker-server.js orchestration (Phase 5)
+RUN npm install -g redis \
     && npm cache clean --force
 
 # SRS-5.1.5: Memory heap limit
@@ -307,7 +312,7 @@ services:
       - ${PROJECT_DIR}:/workspace
       - ${HOME}/.claude-state/account-manager:/home/node/.claude # SRS-8.1.8
       - node_modules_manager:/workspace/node_modules
-      - ./scripts:/scripts:ro
+      - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
@@ -335,7 +340,7 @@ services:
       - ${PROJECT_DIR}:/workspace:ro                            # Workers read-only
       - ${HOME}/.claude-state/account-w1:/home/node/.claude     # SRS-8.1.8
       - node_modules_w1:/workspace/node_modules
-      - ./scripts:/scripts:ro
+      - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
@@ -364,14 +369,14 @@ services:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w2:/home/node/.claude
       - node_modules_w2:/workspace/node_modules
-      - ./scripts:/scripts:ro
+      - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_2:-}
-      - REDIS_URL=redis://redis:6379
-      - WORKER_NAME=worker-2
-      - WORKER_PORT=9000
+      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - WORKER_NAME=worker-2                                    # SRS-8.1.7
+      - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
     deploy:
       resources:
@@ -393,14 +398,14 @@ services:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w3:/home/node/.claude
       - node_modules_w3:/workspace/node_modules
-      - ./scripts:/scripts:ro
+      - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_3:-}
-      - REDIS_URL=redis://redis:6379
-      - WORKER_NAME=worker-3
-      - WORKER_PORT=9000
+      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - WORKER_NAME=worker-3                                    # SRS-8.1.7
+      - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
     deploy:
       resources:
@@ -423,6 +428,7 @@ volumes:
 **Design decisions:**
 - Workers mount source as `:ro` — analysis only, no code modification
 - Scripts bind-mounted at `/scripts:ro` — no image rebuild for script changes
+- **Relative paths**: `./scripts` is relative to the compose file location; `docker compose` must be run from the project root directory where `docker-compose.orchestration.yml` resides
 - Redis healthcheck ensures workers don't start before Redis is ready
 - Each worker has its own account state and node_modules volume
 - No port exposure to host — all communication via internal bridge network
@@ -449,6 +455,15 @@ PROJECT_DIR=/path/to/your/project
 # ==== Linux only ====
 # UID=1000
 # GID=1000
+
+# ==== Phase 5: Orchestration (optional) ====
+# API keys for manager and workers (Path B only)
+# CLAUDE_API_KEY_MANAGER=sk-ant-...
+# CLAUDE_API_KEY_1=sk-ant-...
+# CLAUDE_API_KEY_2=sk-ant-...
+# CLAUDE_API_KEY_3=sk-ant-...
+# Number of workers (default: 3)
+# WORKER_COUNT=3
 ```
 
 ### 4.2 .dockerignore
@@ -567,67 +582,441 @@ echo "=== Cleanup complete ==="
 
 ### 5.3 scripts/worker-server.js (Phase 5)
 
-Node.js HTTP server that receives task prompts from the manager, enriches them with
-shared context from Redis, executes `claude -p`, and writes results back to Redis.
-Reference: SRS-8.2.1~11.
+Worker HTTP server with Redis shared context integration (SRS-8.2.1–16).
+Receives task prompts from the manager container, enriches them with shared
+context and prior findings from Redis, executes `claude -p` via stdin pipe,
+parses structured JSON findings from the output, and writes results back to
+Redis for downstream consumers.
 
-**Key functions:**
+```javascript
+#!/usr/bin/env node
+'use strict';
 
-| Function | Purpose | SRS |
-|----------|---------|-----|
-| `connectRedis()` | Establish Redis connection using `REDIS_URL` env var; reconnect on failure | SRS-8.2.1 |
-| `readSharedContext()` | `HGETALL context:shared` — retrieve project summary, guidelines, prior findings | SRS-8.2.3 |
-| `buildEnrichedPrompt()` | Combine shared context + task-specific prompt into a single enriched prompt | SRS-8.2.4 |
-| `parseFindings()` | Extract structured findings (JSON array) from Claude's raw output | SRS-8.2.6 |
-| `executeClaude()` | Spawn `claude -p` with enriched prompt; capture stdout; enforce timeout | SRS-8.2.5 |
-| `writeResults()` | `SET result:<worker>:<taskId>` and `RPUSH findings:all` to Redis | SRS-8.2.7 |
-| `handleTask()` | HTTP POST handler: orchestrates read → build → execute → parse → write | SRS-8.2.2 |
+// --- Dependencies -----------------------------------------------------------
+const http = require('http');
+const { spawnSync } = require('child_process');              // SRS-8.2.5
+const { createClient } = require('redis');                   // SRS-8.2.11
 
-**Redis data flow:**
+// --- Configuration ----------------------------------------------------------
+const WORKER_PORT = parseInt(process.env.WORKER_PORT, 10) || 9000; // SRS-8.2.1
+const REDIS_URL   = process.env.REDIS_URL || 'redis://redis:6379';
+const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
+const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
+const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
+const REDIS_RETRY_DELAY_MS = 2000;
 
+// --- Redis connection -------------------------------------------------------
+let redis = null;
+
+/**
+ * Connect to Redis with retry logic.
+ * Retries up to REDIS_RETRY_LIMIT times with REDIS_RETRY_DELAY_MS intervals.
+ * @returns {Promise<import('redis').RedisClientType>}
+ */
+async function connectRedis() {                              // SRS-8.2.15
+  for (let attempt = 1; attempt <= REDIS_RETRY_LIMIT; attempt++) {
+    try {
+      const client = createClient({ url: REDIS_URL });
+      client.on('error', (err) => console.error(`[redis] ${err.message}`));
+      await client.connect();
+      console.log(`[redis] Connected to ${REDIS_URL} (attempt ${attempt})`);
+      return client;
+    } catch (err) {
+      console.error(`[redis] Attempt ${attempt}/${REDIS_RETRY_LIMIT} failed: ${err.message}`);
+      if (attempt < REDIS_RETRY_LIMIT) {
+        await new Promise((r) => setTimeout(r, REDIS_RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw new Error(`Failed to connect to Redis after ${REDIS_RETRY_LIMIT} attempts`);
+}
+
+// --- Shared context helpers -------------------------------------------------
+
+/**
+ * Read project-level shared context from Redis.
+ * @returns {Promise<Record<string, string>>}
+ */
+async function readSharedContext() {                          // SRS-8.2.3
+  const ctx = await redis.hGetAll('context:shared');
+  return ctx || {};
+}
+
+/**
+ * Read accumulated findings from all previous workers.
+ * @returns {Promise<string[]>}
+ */
+async function readPriorFindings() {                         // SRS-8.2.4
+  const findings = await redis.lRange('findings:all', 0, -1);
+  return findings || [];
+}
+
+// --- Prompt builder ---------------------------------------------------------
+
+/**
+ * Build an enriched prompt combining shared context, prior findings, and the
+ * task-specific prompt. The structured template ensures Claude receives full
+ * project awareness before executing the task.
+ *
+ * @param {Record<string, string>} context - Shared context key-value pairs
+ * @param {string[]} priorFindings         - Prior findings from other workers
+ * @param {string} taskPrompt              - Task-specific prompt from manager
+ * @returns {string}
+ */
+function buildEnrichedPrompt(context, priorFindings, taskPrompt) {
+  const sections = [];
+
+  // [Project Context] section
+  const ctxEntries = Object.entries(context);
+  if (ctxEntries.length > 0) {
+    sections.push('[Project Context]');
+    for (const [key, value] of ctxEntries) {
+      sections.push(`${key}: ${value}`);
+    }
+    sections.push('');
+  }
+
+  // [Prior Findings] section
+  if (priorFindings.length > 0) {
+    sections.push('[Prior Findings]');
+    for (const finding of priorFindings) {
+      sections.push(`- ${finding}`);
+    }
+    sections.push('');
+  }
+
+  // [Your Task] section
+  sections.push('[Your Task]');
+  sections.push(taskPrompt);
+  sections.push('');
+
+  // [Output Format] section
+  sections.push('[Output Format]');
+  sections.push(
+    'Respond with a JSON code block containing: ' +
+    '{ "summary": "...", "findings": [...], "status": "done"|"error" }'
+  );
+
+  return sections.join('\n');
+}
+
+// --- Claude execution -------------------------------------------------------
+
+/**
+ * Execute `claude -p` via spawnSync with stdin pipe. Using stdin pipe instead
+ * of shell argument interpolation prevents command injection.
+ *
+ * @param {string} enrichedPrompt - Full prompt to send via stdin
+ * @param {number} timeoutMs      - Execution timeout in milliseconds
+ * @returns {{ stdout: string, stderr: string, status: number|null, timedOut: boolean }}
+ */
+function executeClaude(enrichedPrompt, timeoutMs) {          // SRS-8.2.5
+  const result = spawnSync('claude', ['-p'], {
+    input: enrichedPrompt,                                   // stdin pipe (safe)
+    encoding: 'utf-8',
+    timeout: timeoutMs,
+    maxBuffer: MAX_BUFFER,
+    cwd: '/workspace',
+  });
+
+  return {
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    status: result.status,
+    timedOut: result.error?.code === 'ETIMEDOUT',
+  };
+}
+
+// --- Output parser ----------------------------------------------------------
+
+/**
+ * Parse structured JSON findings from Claude's raw output.
+ * Looks for the last ```json ... ``` code fence. If no JSON block is found,
+ * returns empty findings with status "partial" (SRS-8.2.13).
+ *
+ * @param {string} rawOutput - Raw stdout from claude -p
+ * @returns {{ summary: string, findings: any[], status: string }}
+ */
+function parseFindings(rawOutput) {                          // SRS-8.2.6, SRS-8.2.13
+  // Find the last ```json ... ``` block
+  const jsonBlockRegex = /```json\s*([\s\S]*?)```/g;
+  let lastMatch = null;
+  let match;
+  while ((match = jsonBlockRegex.exec(rawOutput)) !== null) {
+    lastMatch = match;
+  }
+
+  if (!lastMatch) {
+    // No JSON block found — return partial result (SRS-8.2.13)
+    return {
+      summary: rawOutput.slice(0, 500),
+      findings: [],
+      status: 'partial',
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(lastMatch[1].trim());
+    return {
+      summary: parsed.summary || '',
+      findings: Array.isArray(parsed.findings) ? parsed.findings : [],
+      status: parsed.status || 'done',
+    };
+  } catch {
+    return {
+      summary: rawOutput.slice(0, 500),
+      findings: [],
+      status: 'partial',
+    };
+  }
+}
+
+// --- Redis result writer ----------------------------------------------------
+
+/**
+ * Write task results back to Redis:
+ *  - SET result:{taskId} as a hash with TTL 3600s (SRS-8.2.16)
+ *  - RPUSH each finding to findings:{category} and findings:all (SRS-8.2.7)
+ *
+ * @param {string} taskId
+ * @param {object} result - Parsed result from parseFindings()
+ * @param {string} rawOutput
+ */
+async function writeResults(taskId, result, rawOutput) {     // SRS-8.2.7, SRS-8.2.16
+  const resultKey = `result:${taskId}`;
+  const resultData = {
+    taskId,
+    status: result.status,
+    summary: result.summary,
+    findings: JSON.stringify(result.findings),
+    rawOutput: rawOutput.slice(0, 50000),                    // cap stored output
+    completedAt: new Date().toISOString(),
+    worker: WORKER_NAME,
+  };
+
+  // Write result hash with TTL 3600s (SRS-8.2.16)
+  await redis.hSet(resultKey, resultData);
+  await redis.expire(resultKey, 3600);
+
+  // Accumulate findings (SRS-8.2.7)
+  for (const finding of result.findings) {
+    const findingStr = typeof finding === 'string' ? finding : JSON.stringify(finding);
+    const category = (typeof finding === 'object' && finding.category) || 'general';
+    await redis.rPush(`findings:${category}`, findingStr);
+    await redis.rPush('findings:all', findingStr);
+  }
+}
+
+// --- Worker heartbeat -------------------------------------------------------
+
+let heartbeatInterval = null;
+
+/**
+ * Maintain worker status and heartbeat keys in Redis.
+ *  - worker:{name}:status  — TTL 60s (SRS-8.2.8)
+ *  - worker:{name}:heartbeat — TTL 30s (SRS-8.2.9)
+ */
+function startHeartbeat() {                                  // SRS-8.2.8, SRS-8.2.9
+  const statusKey    = `worker:${WORKER_NAME}:status`;
+  const heartbeatKey = `worker:${WORKER_NAME}:heartbeat`;
+
+  const beat = async () => {
+    try {
+      await redis.set(statusKey, JSON.stringify({
+        state: 'idle',
+        lastTask: null,
+        timestamp: new Date().toISOString(),
+      }), { EX: 60 });                                      // TTL 60s
+      await redis.set(heartbeatKey, Date.now().toString(), { EX: 30 }); // TTL 30s
+    } catch (err) {
+      console.error(`[heartbeat] ${err.message}`);
+    }
+  };
+
+  beat();                                                    // initial beat
+  heartbeatInterval = setInterval(beat, 15000);              // every 15s
+}
+
+/**
+ * Update worker status to reflect an active task.
+ * @param {string} taskId
+ */
+async function setWorkerBusy(taskId) {
+  try {
+    const statusKey = `worker:${WORKER_NAME}:status`;
+    await redis.set(statusKey, JSON.stringify({
+      state: 'busy',
+      lastTask: taskId,
+      timestamp: new Date().toISOString(),
+    }), { EX: 60 });
+  } catch (err) {
+    console.error(`[status] ${err.message}`);
+  }
+}
+
+// --- HTTP server ------------------------------------------------------------
+
+/**
+ * POST /task handler — orchestrates the full pipeline:
+ *   read context → build prompt → execute claude → parse → write results
+ *
+ * Accepts JSON body: { taskId: string, prompt: string, timeout?: number }
+ */
+async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8.2.2
+  // Parse request body
+  let body = '';
+  for await (const chunk of req) body += chunk;
+
+  let taskId, prompt, timeout;
+  try {
+    const parsed = JSON.parse(body);
+    taskId  = parsed.taskId;
+    prompt  = parsed.prompt;
+    timeout = parsed.timeout || 300;                         // default 300s
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+    return;
+  }
+
+  if (!taskId || !prompt) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing taskId or prompt' }));
+    return;
+  }
+
+  console.log(`[task] ${taskId} — starting (timeout: ${timeout}s)`);
+  await setWorkerBusy(taskId);
+
+  try {
+    // Step 1: Read shared context from Redis (SRS-8.2.3, SRS-8.2.4)
+    const [context, priorFindings] = await Promise.all([
+      readSharedContext(),
+      readPriorFindings(),
+    ]);
+
+    // Step 2: Build enriched prompt
+    const enrichedPrompt = buildEnrichedPrompt(context, priorFindings, prompt);
+
+    // Step 3: Execute claude -p via stdin pipe (SRS-8.2.5)
+    const timeoutMs = timeout * 1000;
+    const claudeResult = executeClaude(enrichedPrompt, timeoutMs);
+
+    if (claudeResult.timedOut) {
+      console.error(`[task] ${taskId} — timed out after ${timeout}s`);
+      const errorResult = { summary: 'Task timed out', findings: [], status: 'error' };
+      await writeResults(taskId, errorResult, '');
+      res.writeHead(504, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'error', taskId, error: 'timeout' }));
+      return;
+    }
+
+    // Step 4: Parse findings from output (SRS-8.2.6, SRS-8.2.13)
+    const result = parseFindings(claudeResult.stdout);
+
+    // Step 5: Write results to Redis (SRS-8.2.7, SRS-8.2.16)
+    await writeResults(taskId, result, claudeResult.stdout);
+
+    // Step 6: Respond to manager (SRS-8.2.10)
+    console.log(`[task] ${taskId} — completed (status: ${result.status})`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: result.status,
+      taskId,
+      output: claudeResult.stdout.slice(0, 10000),
+      findings: result.findings,
+    }));
+
+  } catch (err) {
+    console.error(`[task] ${taskId} — error: ${err.message}`);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'error', taskId, error: err.message }));
+  }
+}
+
+/**
+ * GET /health handler — simple health check endpoint.
+ */
+function handleHealth(req, res) {
+  const healthy = redis !== null && redis.isOpen;
+  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    status: healthy ? 'ok' : 'unhealthy',
+    worker: WORKER_NAME,
+    redis: healthy ? 'connected' : 'disconnected',
+  }));
+}
+
+/**
+ * HTTP request router.
+ */
+const server = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/task') {
+    handleTask(req, res);
+  } else if (req.method === 'GET' && req.url === '/health') {
+    handleHealth(req, res);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  }
+});
+
+// --- Startup ----------------------------------------------------------------
+
+async function main() {
+  try {
+    redis = await connectRedis();                            // SRS-8.2.15
+    startHeartbeat();                                        // SRS-8.2.8, SRS-8.2.9
+
+    server.listen(WORKER_PORT, () => {
+      console.log(`[worker] ${WORKER_NAME} listening on :${WORKER_PORT}`);
+    });
+  } catch (err) {
+    console.error(`[fatal] ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// --- Graceful shutdown ------------------------------------------------------
+
+function shutdown(signal) {                                  // SRS-8.2.14
+  console.log(`[worker] Received ${signal}, shutting down...`);
+  clearInterval(heartbeatInterval);
+
+  server.close(async () => {
+    if (redis && redis.isOpen) {
+      // Clear status keys before disconnecting
+      try {
+        await redis.del(`worker:${WORKER_NAME}:status`);
+        await redis.del(`worker:${WORKER_NAME}:heartbeat`);
+      } catch { /* ignore during shutdown */ }
+      await redis.quit();
+    }
+    console.log('[worker] Shutdown complete.');
+    process.exit(0);
+  });
+
+  // Force exit if graceful shutdown takes too long
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));             // SRS-8.2.14
+process.on('SIGINT',  () => shutdown('SIGINT'));              // SRS-8.2.14
+
+main();
 ```
-┌─────────────────────────────────────────────────────┐
-│  Redis                                              │
-│  ┌──────────────┐  ┌──────────────┐                 │
-│  │context:shared│  │ findings:all │                 │
-│  │  (HASH)      │  │  (LIST)      │                 │
-│  └──────┬───────┘  └──────▲───────┘                 │
-│         │ HGETALL         │ RPUSH                   │
-└─────────┼─────────────────┼─────────────────────────┘
-          │                 │
-          ▼                 │
-   ┌─────────────┐  ┌──────┴──────┐
-   │ buildEnrich │  │ writeResults│
-   │ edPrompt()  │  │    ()       │
-   └──────┬──────┘  └──────▲──────┘
-          │                │
-          ▼                │
-   ┌─────────────┐  ┌──────┴──────┐
-   │executeClaude│──▶│parseFindings│
-   │    ()       │  │    ()       │
-   └─────────────┘  └─────────────┘
-```
 
-**Enriched prompt template:**
+**Design decisions:**
 
-```
-## Shared Context
-{context:shared fields as key-value pairs}
-
-## Prior Findings
-{findings:all entries, if any}
-
-## Your Task
-{task-specific prompt from manager}
-
-Respond with a JSON object: { "summary": "...", "findings": [...], "status": "done"|"error" }
-```
-
-**Error handling:**
-- **Timeout**: `executeClaude()` enforces a configurable timeout (default 300s); on timeout, writes error result to Redis and returns HTTP 504 (SRS-8.2.8)
-- **JSON parse failure**: If Claude output is not valid JSON, `parseFindings()` wraps raw text in a fallback structure (SRS-8.2.9)
-- **Redis connection error**: `connectRedis()` retries with exponential backoff (max 5 attempts); server returns HTTP 503 until connected (SRS-8.2.10)
-- **Worker status**: Periodically writes heartbeat to `SET status:<worker> "{state, lastTask, timestamp}"` (SRS-8.2.11)
+- **`spawnSync` with stdin pipe** — prevents command injection by never interpolating user input into a shell command; the prompt is written to the child process's stdin (SRS-8.2.5)
+- **Last ``` \`\`\`json\`\`\` ``` fence extraction** — Claude may produce conversational text before/after the JSON block; taking the last fence is the most reliable heuristic for structured output (SRS-8.2.6)
+- **Partial status on parse failure** — if no JSON block is found, returns `status: "partial"` with empty findings rather than failing the entire task, allowing the manager to decide on retry strategy (SRS-8.2.13)
+- **Result hash TTL 3600s** — prevents unbounded Redis memory growth while keeping results available for the manager's aggregation window (SRS-8.2.16)
+- **Dual findings lists** — findings are pushed to both `findings:{category}` and `findings:all` so workers can read the global list while the manager can query by category (SRS-8.2.7)
+- **15-second heartbeat interval** — ensures `worker:{name}:heartbeat` (TTL 30s) never expires during normal operation; the manager can detect dead workers within 30s (SRS-8.2.8, SRS-8.2.9)
+- **Redis retry with fixed intervals** — 3 retries at 2s intervals balances fast startup with resilience to transient connection issues during container orchestration (SRS-8.2.15)
+- **Graceful shutdown** — cleans up Redis status keys and closes the HTTP server on SIGTERM/SIGINT, with a 5s forced-exit safety net (SRS-8.2.14)
+- **10 MB maxBuffer** — accommodates large Claude outputs without risking OOM on the worker container
 
 ### 5.4 scripts/manager-helpers.sh (Phase 5)
 
@@ -636,18 +1025,28 @@ Reference: SRS-8.3.1~5.
 
 ```bash
 #!/usr/bin/env bash
-# Manager helper functions for orchestration (SRS-8.3.1~5)
-# Usage: source /scripts/manager-helpers.sh
+# SRS-8.3.1–5: Manager helper functions for orchestration
+# Source this file inside manager container: source /scripts/manager-helpers.sh
+set -euo pipefail
 
 # SRS-8.3.1: Dispatch a task to a specific worker
-# Args: $1 = worker name (e.g., worker-1), $2 = prompt text
+# Args: $1 = worker name, $2 = prompt text, $3 = timeout (default 300s)
 dispatch_task() {
-    local worker="$1" prompt="$2"
-    local payload
-    payload=$(jq -n --arg p "$prompt" '{"prompt": $p}')
-    curl -s -X POST "http://${worker}:9000/task" \
+    local worker="${1:?Usage: dispatch_task <worker> <prompt> [timeout]}"
+    local prompt="${2:?Usage: dispatch_task <worker> <prompt> [timeout]}"
+    local timeout="${3:-300}"
+    local task_id
+    task_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "task-$(date +%s)")"
+
+    curl -s --max-time "$((timeout + 30))" \
+        -X POST "http://${worker}:9000/task" \
         -H "Content-Type: application/json" \
-        -d "$payload"
+        -d "$(jq -n \
+            --arg taskId "$task_id" \
+            --arg prompt "$prompt" \
+            --argjson timeout "$timeout" \
+            '{taskId: $taskId, prompt: $prompt, timeout: $timeout}'
+        )"
 }
 
 # SRS-8.3.2: Dispatch same prompt to all workers in parallel
@@ -668,7 +1067,15 @@ dispatch_parallel() {
 
 # SRS-8.3.3: Retrieve all findings from Redis
 get_findings() {
-    redis-cli -u "$REDIS_URL" LRANGE findings:all 0 -1
+    local category="${1:-all}"
+    redis-cli -u "$REDIS_URL" PING > /dev/null 2>&1 || { echo "Error: Redis unreachable" >&2; return 1; }
+    redis-cli -u "$REDIS_URL" LRANGE "findings:${category}" 0 -1
+}
+
+# SRS-8.3.7: Clear findings before new session
+clear_findings() {
+    redis-cli -u "$REDIS_URL" DEL findings:all > /dev/null
+    echo "Findings cleared."
 }
 
 # SRS-8.3.4: Get status of all workers
@@ -685,6 +1092,201 @@ set_shared_context() {
     redis-cli -u "$REDIS_URL" HSET context:shared "$field" "$value"
 }
 ```
+
+### 5.5 scripts/test-orchestration.sh
+
+E2E test validating the full Phase 5 orchestration pipeline (SRS-8.4.1–5).
+
+```bash
+#!/usr/bin/env bash
+# E2E test for Phase 5 orchestration pipeline
+# Validates: SRS-8.4.1 (compose startup), SRS-8.4.2 (sequential dispatch),
+#            SRS-8.4.3 (result storage), SRS-8.4.4 (findings accumulation),
+#            SRS-8.4.5 (trap cleanup)
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+COMPOSE_CMD="docker compose -f docker-compose.yml -f docker-compose.orchestration.yml"
+HEALTH_TIMEOUT=60
+TASK_TIMEOUT=120
+PASS=0
+FAIL=0
+WARN=0
+
+# SRS-8.4.5: Reliable teardown via trap
+cleanup() {
+    echo ""
+    echo "=== Cleanup ==="
+    cd "$PROJECT_DIR"
+    $COMPOSE_CMD down --remove-orphans -v 2>/dev/null || true
+    echo "Cleanup complete."
+}
+trap cleanup EXIT
+
+# Helper: run command inside manager container
+mgr() {
+    docker compose -f docker-compose.yml -f docker-compose.orchestration.yml \
+        exec -T manager "$@"
+}
+
+record_pass() {
+    echo "  PASS: $1"
+    PASS=$((PASS + 1))
+}
+
+record_fail() {
+    echo "  FAIL: $1"
+    FAIL=$((FAIL + 1))
+}
+
+record_warn() {
+    echo "  WARN: $1"
+    WARN=$((WARN + 1))
+}
+
+# ── Stage 1: Build and start services (SRS-8.4.1) ──────────────────────
+
+echo "=== Stage 1: Build and Start Services ==="
+cd "$PROJECT_DIR"
+$COMPOSE_CMD build --quiet
+$COMPOSE_CMD up -d
+
+echo "  Services started. Waiting for health checks..."
+
+# ── Stage 2: Wait for worker health ─────────────────────────────────────
+
+echo "=== Stage 2: Wait for Worker Health ==="
+
+for worker in worker-1 worker-2 worker-3; do
+    elapsed=0
+    while [ $elapsed -lt $HEALTH_TIMEOUT ]; do
+        status=$(mgr curl -s -o /dev/null -w "%{http_code}" "http://${worker}:9000/health" 2>/dev/null || echo "000")
+        if [ "$status" = "200" ]; then
+            record_pass "${worker} is healthy"
+            break
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    if [ $elapsed -ge $HEALTH_TIMEOUT ]; then
+        record_fail "${worker} did not become healthy within ${HEALTH_TIMEOUT}s"
+    fi
+done
+
+# Bail early if any worker is not healthy
+if [ $FAIL -gt 0 ]; then
+    echo "Aborting: not all workers healthy."
+    echo ""
+    echo "=== Results: PASS=$PASS FAIL=$FAIL WARN=$WARN ==="
+    exit 1
+fi
+
+# ── Stage 3: Set shared context (SRS-8.4.2 prerequisite) ───────────────
+
+echo "=== Stage 3: Set Shared Context ==="
+
+mgr redis-cli -u redis://redis:6379 HSET context:shared \
+    project "test-project" \
+    guidelines "Follow best practices" \
+    language "TypeScript" > /dev/null
+
+ctx_fields=$(mgr redis-cli -u redis://redis:6379 HLEN context:shared 2>/dev/null || echo "0")
+if [ "$ctx_fields" -ge 3 ]; then
+    record_pass "Shared context set (${ctx_fields} fields)"
+else
+    record_fail "Shared context not set correctly (expected >=3, got ${ctx_fields})"
+fi
+
+# ── Stage 4: Dispatch tasks sequentially (SRS-8.4.2) ───────────────────
+# Sequential dispatch is critical: worker-2 must see worker-1's findings
+
+echo "=== Stage 4: Dispatch Tasks Sequentially ==="
+
+TASK_IDS=()
+
+for i in 1 2 3; do
+    worker="worker-${i}"
+    task_id="test-task-${i}-$(date +%s)"
+    TASK_IDS+=("$task_id")
+
+    echo "  Dispatching task ${i} to ${worker} (id: ${task_id})..."
+
+    response=$(mgr curl -s --max-time $((TASK_TIMEOUT + 30)) \
+        -X POST "http://${worker}:9000/task" \
+        -H "Content-Type: application/json" \
+        -d "{\"taskId\":\"${task_id}\",\"prompt\":\"Analyze the project structure and list key files. Task ${i} of 3.\",\"timeout\":${TASK_TIMEOUT}}" \
+        2>/dev/null || echo "")
+
+    if [ -n "$response" ]; then
+        record_pass "Task ${i} dispatched to ${worker}"
+    else
+        record_fail "Task ${i} dispatch to ${worker} returned empty response"
+    fi
+
+    # Brief pause to allow Redis writes to complete before next task
+    sleep 2
+done
+
+# ── Stage 5: Verify results in Redis (SRS-8.4.3) ───────────────────────
+
+echo "=== Stage 5: Verify Results in Redis ==="
+
+for i in 1 2 3; do
+    worker="worker-${i}"
+    task_id="${TASK_IDS[$((i - 1))]}"
+    result_key="result:${worker}:${task_id}"
+
+    result=$(mgr redis-cli -u redis://redis:6379 GET "$result_key" 2>/dev/null || echo "")
+
+    if [ -n "$result" ] && [ "$result" != "(nil)" ]; then
+        record_pass "Result stored for ${worker}:${task_id}"
+    else
+        record_fail "No result found at key ${result_key}"
+    fi
+done
+
+# ── Stage 6: Verify findings accumulation (SRS-8.4.4) ──────────────────
+
+echo "=== Stage 6: Verify Findings Accumulation ==="
+
+findings_len=$(mgr redis-cli -u redis://redis:6379 LLEN findings:all 2>/dev/null || echo "0")
+
+if [ "$findings_len" -gt 0 ]; then
+    record_pass "Findings accumulated (${findings_len} entries in findings:all)"
+else
+    # WARN not FAIL: Claude may not always produce structured JSON findings
+    record_warn "No structured findings in findings:all (Claude may not have produced JSON output)"
+fi
+
+# ── Summary ─────────────────────────────────────────────────────────────
+
+echo ""
+echo "=== Test Summary ==="
+echo "  PASS: $PASS"
+echo "  FAIL: $FAIL"
+echo "  WARN: $WARN"
+echo ""
+
+if [ $FAIL -gt 0 ]; then
+    echo "RESULT: FAIL"
+    exit 1
+else
+    echo "RESULT: PASS"
+    exit 0
+fi
+```
+
+**Test stages:**
+
+1. **Build and start services** — `docker compose up -d` with orchestration overlay (SRS-8.4.1)
+2. **Wait for worker health** — Poll `GET /health` on each worker with timeout
+3. **Set shared context** — Write project metadata to `context:shared` hash in Redis
+4. **Dispatch tasks sequentially** — Send 3 distinct tasks to 3 workers one at a time; sequential ordering ensures worker-2 sees worker-1's findings (SRS-8.4.2)
+5. **Verify results in Redis** — Check `result:<worker>:<taskId>` keys exist (SRS-8.4.3)
+6. **Verify findings accumulation** — Check `findings:all` list length > 0; WARN (not FAIL) if empty since Claude may not produce structured JSON (SRS-8.4.4)
+7. **Cleanup** — `trap cleanup EXIT` runs `docker compose down --remove-orphans -v` (SRS-8.4.5)
 
 ---
 
@@ -823,7 +1425,7 @@ Host                                    Docker
 
 | SRS Spec Range | SDS Section | Deliverable File |
 |---------------|-------------|-----------------|
-| SRS-5.1.1~10 (Image Build) | 2. Dockerfile Design | `Dockerfile` |
+| SRS-5.1.1~12 (Image Build) | 2. Dockerfile Design | `Dockerfile` |
 | SRS-5.2.1~11 (Orchestration) | 3.1 Base Compose | `docker-compose.yml` |
 | SRS-5.3.1 (Path A OAuth) | 6.1 First Run Path A | (operational procedure) |
 | SRS-5.3.2 (Path B API Key) | 6.2 First Run Path B | (operational procedure) |
@@ -841,13 +1443,13 @@ Host                                    Docker
 | SRS-8.1.1~9 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
 | SRS-8.2.1~11 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
 | SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
-| SRS-8.4.1~5 (Orchestration Tests) | 5.3 (test section) | `scripts/test-orchestration.sh` |
+| SRS-8.4.1~5 (Orchestration Tests) | 5.5 Test Script | `scripts/test-orchestration.sh` |
 
 ### Deliverable File Inventory
 
 | File | Phase | SRS Coverage |
 |------|-------|-------------|
-| `Dockerfile` | 1 | SRS-5.1.1~10 |
+| `Dockerfile` | 1 | SRS-5.1.1~12 |
 | `.dockerignore` | 1 | SRS-5.1.9 |
 | `docker-compose.yml` | 2 | SRS-5.2.1~11, 5.4.1, 5.4.3 |
 | `docker-compose.linux.yml` | 2 | SRS-6.1.1~3 |
