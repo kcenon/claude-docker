@@ -517,4 +517,5 @@ Bind mount not working
 | `.gitignore` | 2 | SRS-7.3 (security) |
 | `.gitattributes` | 2 | SRS-6.3.4 |
 | `scripts/setup-worktrees.sh` | 3 | SRS-5.4.2 |
+| `scripts/test-concurrent-git.sh` | 3 | SRS-5.4.2 (verification) |
 | `scripts/cleanup.sh` | 4 | SRS-5.5 (FR-17) |
