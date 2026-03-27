@@ -1,0 +1,11 @@
+# docker-compose.worktree.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.worktree.yml up
+
+services:
+  claude-a:
+    volumes:
+      - ${PROJECT_DIR_A}:/workspace   # Replaces shared PROJECT_DIR
+
+  claude-b:
+    volumes:
+      - ${PROJECT_DIR_B}:/workspace
