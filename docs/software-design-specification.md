@@ -221,6 +221,8 @@ services:
 
 ```yaml
 # docker-compose.firewall.yml
+# Phase 4 opt-in: Grants network capabilities for container-level firewall rules
+# Usage: append -f docker-compose.firewall.yml to any compose combination
 
 services:
   claude-a:
