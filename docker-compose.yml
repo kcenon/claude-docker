@@ -3,6 +3,10 @@
 
 services:
   claude-a:
+    build:
+      context: .
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
     image: claude-code-base:latest                          # SRS-5.2.1
     working_dir: /workspace                                 # SRS-5.2.2
     stdin_open: true                                        # SRS-5.2.3
@@ -13,11 +17,14 @@ services:
       - node_modules_a:/workspace/node_modules              # SRS-5.2.6
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude                # SRS-5.2.7
-      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_A:-}             # SRS-5.2.9
       - NODE_OPTIONS=--max-old-space-size=4096              # SRS-5.2.8
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_A:-}             # SRS-5.2.9
+    command: ["sleep", "infinity"]
 
   claude-b:
     image: claude-code-base:latest
+    depends_on:
+      - claude-a
     working_dir: /workspace
     stdin_open: true
     tty: true
@@ -27,8 +34,9 @@ services:
       - node_modules_b:/workspace/node_modules
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
-      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_B:-}
       - NODE_OPTIONS=--max-old-space-size=4096
+      - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_B:-}
+    command: ["sleep", "infinity"]
 
 volumes:                                                    # SRS-5.2.10
   node_modules_a:
