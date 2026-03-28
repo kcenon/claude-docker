@@ -314,6 +314,7 @@ Override files separate platform and feature concerns from the base compose:
 | `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
 | `docker-compose.firewall.yml` | Outbound network whitelist | Security hardening |
+| `docker-compose.orchestration.yml` | Manager-worker with Redis | Multi-agent orchestration |
 
 Combine with `-f`:
 
@@ -374,6 +375,7 @@ claude-docker/
 +-- docker-compose.linux.yml           Linux override
 +-- docker-compose.worktree.yml        Tier B override
 +-- docker-compose.firewall.yml        Firewall override
++-- docker-compose.orchestration.yml  Manager-worker orchestration
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
