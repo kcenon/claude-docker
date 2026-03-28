@@ -378,6 +378,7 @@ claude-docker/
 +-- .gitignore
 +-- .gitattributes                     LF line endings
 +-- scripts/
+|   +-- init-firewall.sh             Outbound firewall (iptables whitelist)
 |   +-- setup-worktrees.sh            Tier B worktree setup
 |   +-- test-concurrent-git.sh        E2E test: Tier B concurrent git safety
 |   +-- cleanup.sh                    Full cleanup
