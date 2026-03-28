@@ -60,7 +60,7 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro                            # Workers read-only
       - ${HOME}/.claude-state/account-w1:/home/node/.claude     # SRS-8.1.8
-      - node_modules_w1:/workspace/node_modules
+      # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
@@ -89,7 +89,7 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w2:/home/node/.claude
-      - node_modules_w2:/workspace/node_modules
+      # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
@@ -118,7 +118,7 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w3:/home/node/.claude
-      - node_modules_w3:/workspace/node_modules
+      # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
@@ -141,6 +141,3 @@ services:
 volumes:
   redis-data:
   node_modules_manager:
-  node_modules_w1:
-  node_modules_w2:
-  node_modules_w3:
