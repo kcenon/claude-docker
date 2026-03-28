@@ -50,18 +50,20 @@ prompt_select() {
     local options=("$@")
     local choice=""
 
-    echo -e "\n${YELLOW}${question}${NC}"
+    # UI output goes to /dev/tty so it's visible even inside $(...) substitution
+    echo -e "\n${YELLOW}${question}${NC}" > /dev/tty
     for i in "${!options[@]}"; do
-        echo -e "  ${BOLD}$((i + 1)))${NC} ${options[$i]}"
+        echo -e "  ${BOLD}$((i + 1)))${NC} ${options[$i]}" > /dev/tty
     done
 
     while true; do
-        read -rp "$(echo -e "${YELLOW}> Select [1-${#options[@]}]: ${NC}")" choice
+        read -rp "$(echo -e "${YELLOW}> Select [1-${#options[@]}]: ${NC}")" choice < /dev/tty > /dev/tty
         if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
+            # Only the selected value goes to stdout (captured by caller)
             echo "${options[$((choice - 1))]}"
             return 0
         fi
-        echo -e "${RED}  Invalid choice. Please enter 1-${#options[@]}.${NC}"
+        echo -e "${RED}  Invalid choice. Please enter 1-${#options[@]}.${NC}" > /dev/tty
     done
 }
 
@@ -71,12 +73,12 @@ prompt_input() {
     local value=""
 
     if [[ -n "$default" ]]; then
-        read -rp "$(echo -e "${YELLOW}${question} [${default}]: ${NC}")" value
+        read -rp "$(echo -e "${YELLOW}${question} [${default}]: ${NC}")" value < /dev/tty > /dev/tty
         echo "${value:-$default}"
     else
         while [[ -z "$value" ]]; do
-            read -rp "$(echo -e "${YELLOW}${question}: ${NC}")" value
-            [[ -z "$value" ]] && echo -e "${RED}  This field is required.${NC}"
+            read -rp "$(echo -e "${YELLOW}${question}: ${NC}")" value < /dev/tty > /dev/tty
+            [[ -z "$value" ]] && echo -e "${RED}  This field is required.${NC}" > /dev/tty
         done
         echo "$value"
     fi
@@ -85,8 +87,8 @@ prompt_input() {
 prompt_secret() {
     local question="$1"
     local value=""
-    read -rsp "$(echo -e "${YELLOW}${question}: ${NC}")" value
-    echo ""
+    read -rsp "$(echo -e "${YELLOW}${question}: ${NC}")" value < /dev/tty > /dev/tty
+    echo "" > /dev/tty
     echo "$value"
 }
 
