@@ -20,6 +20,17 @@ if [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
     done
 fi
 
+echo "=== Preserving analysis archive ==="
+if [ -d "${HOME}/.claude-state/analysis-archive" ]; then
+    read -p "Remove analysis archive (~/.claude-state/analysis-archive)? (y/N) " confirm_archive
+    if [ "$confirm_archive" = "y" ] || [ "$confirm_archive" = "Y" ]; then
+        rm -rf "${HOME}/.claude-state/analysis-archive"
+        echo "  Analysis archive removed."
+    else
+        echo "  Analysis archive preserved."
+    fi
+fi
+
 echo "=== Removing state directories ==="
 read -p "Remove ~/.claude-state/*? (y/N) " confirm
 if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then

@@ -341,6 +341,33 @@ docker compose \
   up -d
 ```
 
+### Session Archive (Cold Memory)
+
+Save and restore analysis sessions across container restarts:
+
+```bash
+# Inside manager container:
+source /scripts/manager-helpers.sh
+
+# Save current session to archive
+save_session
+
+# List all archived sessions
+list_sessions
+
+# Restore previous session's context and findings
+restore_session latest
+# or by specific ID:
+restore_session 20260328T143000Z_a1b2c3d4
+
+# View detailed session info
+show_session 20260328T143000Z_a1b2c3d4
+```
+
+Sessions persist in `~/.claude-state/analysis-archive/` on the host and survive
+`docker compose down -v`. Maximum 50 sessions are retained; oldest are pruned
+automatically.
+
 ## Troubleshooting
 
 **"Authentication expired" inside container:**
