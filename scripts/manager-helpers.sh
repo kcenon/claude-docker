@@ -289,3 +289,132 @@ restore_session() {
     echo "Session restored: ${session_id}"
     echo "  Workers will see prior findings on their next task."
 }
+
+# SRS-8.5.5: List all archived sessions from index.json
+# File-only — no Redis operations needed.
+list_sessions() {
+    local archive_dir="${ARCHIVE_DIR:-/archive}"
+    local index_file="$archive_dir/index.json"
+
+    if [ ! -f "$index_file" ]; then
+        echo "No sessions archived yet."
+        return 0
+    fi
+
+    local count
+    count="$(jq '.sessions | length' "$index_file")"
+    if [ "$count" -eq 0 ]; then
+        echo "No sessions archived yet."
+        return 0
+    fi
+
+    echo "Archived sessions ($count):"
+    echo ""
+    printf "  %-28s %-22s %8s %5s  %s\n" "SESSION ID" "ENDED" "FINDINGS" "TASKS" "CATEGORIES"
+    printf "  %-28s %-22s %8s %5s  %s\n" "----------------------------" "----------------------" "--------" "-----" "----------"
+
+    jq -r '.sessions[] | [
+        .id,
+        .endedAt,
+        (.findingsCount | tostring),
+        (.taskCount | tostring),
+        (.categoryCounts | keys | join(", "))
+    ] | @tsv' "$index_file" | while IFS=$'\t' read -r sid ended findings tasks cats; do
+        printf "  %-28s %-22s %8s %5s  %s\n" "$sid" "$ended" "$findings" "$tasks" "$cats"
+    done
+
+    echo ""
+    echo "Usage:"
+    echo "  restore_session <ID>    Restore session findings into Redis"
+    echo "  show_session <ID>       Show session details"
+}
+
+# SRS-8.5.6: Show detailed information for a specific archived session
+# File-only — no Redis operations needed.
+# Args: $1 = session ID (required)
+show_session() {
+    local session_id="${1:?Usage: show_session <session-id>}"
+    local archive_dir="${ARCHIVE_DIR:-/archive}"
+    local session_dir="$archive_dir/sessions/$session_id"
+
+    [ ! -d "$session_dir" ] && { echo "Error: Session not found: $session_id" >&2; return 1; }
+
+    # --- Metadata ---
+    echo "--- Metadata ---"
+    if [ -f "$session_dir/session.json" ]; then
+        jq -r '"  ID:             " + .id,
+               "  Started:        " + .startedAt,
+               "  Ended:          " + .endedAt,
+               "  Duration:       " + (.durationSeconds | tostring) + "s",
+               "  Workers:        " + (.workerCount | tostring),
+               "  Total tasks:    " + (.metrics.totalTasks | tostring),
+               "  Completed:      " + (.metrics.completedTasks | tostring),
+               "  Failed:         " + (.metrics.failedTasks | tostring),
+               "  Total findings: " + (.metrics.totalFindings | tostring)' \
+            "$session_dir/session.json"
+    else
+        echo "  (session.json missing)"
+    fi
+
+    # --- Findings by Category ---
+    echo ""
+    echo "--- Findings by Category ---"
+    if [ -f "$session_dir/session.json" ]; then
+        local cat_json
+        cat_json="$(jq '.metrics.findingsByCategory // {}' "$session_dir/session.json")"
+        if [ "$cat_json" = "{}" ]; then
+            echo "  (none)"
+        else
+            echo "$cat_json" | jq -r 'to_entries[] | "  " + .key + ": " + (.value | tostring)'
+        fi
+    fi
+
+    # --- Tasks ---
+    echo ""
+    echo "--- Tasks ---"
+    if [ -f "$session_dir/session.json" ]; then
+        local task_count
+        task_count="$(jq '.tasks | length' "$session_dir/session.json")"
+        if [ "$task_count" -eq 0 ]; then
+            echo "  (no tasks)"
+        else
+            jq -r '.tasks[] | "  [" + (.status // "unknown") + "] " + (.taskId // "?") + " -- " + (.worker // "?") + " -- " + (.summary // "(no summary)") + " (" + (.findingsCount | tostring) + " findings)"' \
+                "$session_dir/session.json"
+        fi
+    fi
+
+    # --- Shared Context ---
+    echo ""
+    echo "--- Shared Context ---"
+    if [ -f "$session_dir/context.json" ]; then
+        local field_count
+        field_count="$(jq '.fields | length' "$session_dir/context.json")"
+        if [ "$field_count" -eq 0 ]; then
+            echo "  (none)"
+        else
+            jq -r '.fields | to_entries[] | "  " + .key + ": " + .value' "$session_dir/context.json"
+        fi
+    else
+        echo "  (context.json missing)"
+    fi
+
+    # --- Findings Preview (first 10) ---
+    echo ""
+    echo "--- Findings Preview (first 10) ---"
+    if [ -f "$session_dir/findings.json" ]; then
+        local total
+        total="$(jq '.totalCount' "$session_dir/findings.json")"
+        if [ "$total" -eq 0 ]; then
+            echo "  (no findings)"
+        else
+            jq -r '.all[:10][] | if (. | type) == "string" then "  " + .
+                else "  [" + (.severity // "info") + "] [" + (.category // "general") + "] " + (.summary // .)
+                end' "$session_dir/findings.json"
+            if [ "$total" -gt 10 ]; then
+                echo "  ... and $((total - 10)) more"
+            fi
+        fi
+    else
+        echo "  (findings.json missing)"
+    fi
+}
