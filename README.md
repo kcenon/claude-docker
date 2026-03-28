@@ -384,6 +384,7 @@ claude-docker/
 |   +-- setup-worktrees.sh            Tier B worktree setup
 |   +-- test-concurrent-git.sh        E2E test: Tier B concurrent git safety
 |   +-- manager-helpers.sh             Orchestration manager helpers
+|   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
 +-- docs/
     +-- product-requirements-document.md
