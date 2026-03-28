@@ -437,6 +437,7 @@ create_state_dirs() {
             "$HOME/.claude-state/account-w1"
             "$HOME/.claude-state/account-w2"
             "$HOME/.claude-state/account-w3"
+            "$HOME/.claude-state/analysis-archive/sessions"
         )
     fi
 
