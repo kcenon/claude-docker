@@ -23,8 +23,8 @@ instances; scaling to more requires only a compose edit and additional RAM
 The solution supports Linux, macOS, and Windows (WSL2) with two
 configuration tiers — shared source (simplest) and git worktree (safest).
 Two authentication paths are provided: host-first OAuth for subscription
-accounts and API key for Console accounts. Implementation spans 5 phases
-over an estimated 9-15 days.
+accounts and API key for Console accounts. Implementation spans 6 phases
+over an estimated 10-17 days.
 
 ---
 
