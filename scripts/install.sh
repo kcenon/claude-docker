@@ -139,13 +139,89 @@ platform_label() {
 # --- Prerequisite Checks -----------------------------------------------------
 
 check_docker() {
-    if check_command docker; then
-        local version
-        version=$(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
-        log_success "Docker $version detected"
+    if ! check_command docker; then
+        # State 1: Not installed
+        return 1
+    fi
+
+    local version
+    version=$(docker --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+
+    # State 2 or 3: Installed — check if daemon is running
+    if docker info &>/dev/null; then
+        # State 3: Installed + running
+        log_success "Docker $version detected and running"
         return 0
     fi
-    return 1
+
+    # State 2: Installed but daemon not running
+    log_warn "Docker $version installed but daemon is not running"
+    start_docker_daemon
+}
+
+start_docker_daemon() {
+    case "$PLATFORM" in
+        macos)
+            if [[ -d "/Applications/Docker.app" ]]; then
+                log_info "Starting Docker Desktop..."
+                open -a Docker
+                log_info "Waiting for Docker daemon to start (up to 60s)..."
+                local elapsed=0
+                while ! docker info &>/dev/null && (( elapsed < 60 )); do
+                    sleep 2
+                    elapsed=$((elapsed + 2))
+                    printf "." > /dev/tty
+                done
+                echo "" > /dev/tty
+                if docker info &>/dev/null; then
+                    log_success "Docker Desktop is now running"
+                    return 0
+                else
+                    log_error "Docker Desktop failed to start within 60 seconds"
+                    log_info "Please start Docker Desktop manually and re-run this script."
+                    return 1
+                fi
+            else
+                log_error "Docker Desktop app not found at /Applications/Docker.app"
+                log_info "Please install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+                return 1
+            fi
+            ;;
+        linux)
+            log_info "Starting Docker daemon via systemctl..."
+            if check_command systemctl; then
+                sudo systemctl start docker 2>/dev/null && {
+                    sleep 2
+                    if docker info &>/dev/null; then
+                        log_success "Docker daemon started"
+                        return 0
+                    fi
+                }
+            fi
+            # Fallback: try service command
+            if check_command service; then
+                sudo service docker start 2>/dev/null && {
+                    sleep 2
+                    if docker info &>/dev/null; then
+                        log_success "Docker daemon started"
+                        return 0
+                    fi
+                }
+            fi
+            log_error "Failed to start Docker daemon"
+            log_info "Try manually: sudo systemctl start docker"
+            return 1
+            ;;
+        wsl2)
+            log_info "Checking Docker Desktop WSL2 integration..."
+            # WSL2 relies on Docker Desktop running on the Windows host
+            log_warn "Docker Desktop must be running on the Windows host."
+            log_info "Please start Docker Desktop from the Windows Start menu,"
+            log_info "ensure WSL2 integration is enabled (Settings > Resources > WSL integration),"
+            log_info "then re-run this script."
+            return 1
+            ;;
+    esac
 }
 
 check_docker_compose() {
@@ -208,10 +284,31 @@ install_prerequisite() {
                 log_info "Installing $tool via Homebrew..."
                 case "$tool" in
                     docker)
-                        log_warn "Docker Desktop is required on macOS."
-                        log_info "Please download from: https://www.docker.com/products/docker-desktop/"
-                        log_info "After installing, restart this script."
-                        return 1
+                        log_info "Installing Docker Desktop via Homebrew Cask..."
+                        if brew install --cask docker; then
+                            log_success "Docker Desktop installed"
+                            log_info "Starting Docker Desktop for the first time..."
+                            open -a Docker
+                            log_info "Waiting for Docker daemon to initialize (up to 90s)..."
+                            local elapsed=0
+                            while ! docker info &>/dev/null && (( elapsed < 90 )); do
+                                sleep 3
+                                elapsed=$((elapsed + 3))
+                                printf "." > /dev/tty
+                            done
+                            echo "" > /dev/tty
+                            if docker info &>/dev/null; then
+                                log_success "Docker Desktop is running"
+                            else
+                                log_warn "Docker Desktop installed but not yet ready."
+                                log_info "Please finish Docker Desktop setup and re-run this script."
+                                return 1
+                            fi
+                        else
+                            log_error "Homebrew cask install failed."
+                            log_info "Install manually: https://www.docker.com/products/docker-desktop/"
+                            return 1
+                        fi
                         ;;
                     node) brew install node@20 ;;
                     git)  brew install git ;;
