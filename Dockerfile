@@ -11,6 +11,7 @@ WORKDIR /workspace
 
 # SRS-5.1.4: Dev tools — single layer, cache cleaned
 # SRS-5.1.8: apt cache removed in same RUN to avoid layer bloat
+# SRS-5.1.11: redis-tools for Phase 5 orchestration (redis-cli)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -19,6 +20,7 @@ RUN apt-get update \
        fzf \
        zsh \
        sudo \
+       redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
@@ -34,6 +36,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # SRS-5.1.2: Install Claude Code globally
 # SRS-5.1.8: npm cache cleaned in same RUN
 RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
+    && npm cache clean --force
+
+# SRS-5.1.12: Redis client for worker-server.js orchestration (Phase 5)
+RUN npm install -g redis \
     && npm cache clean --force
 
 # SRS-5.1.5: Memory heap limit
