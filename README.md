@@ -30,7 +30,20 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 
 ## Quick Start
 
-### 1. Clone and configure
+### Option A: Interactive Setup (Recommended)
+
+```bash
+git clone <repo-url> claude-docker
+cd claude-docker
+scripts/install.sh
+```
+
+The script guides you through platform detection, authentication, source sharing,
+and container setup via interactive Q&A.
+
+### Option B: Manual Setup
+
+#### 1. Clone and configure
 
 ```bash
 git clone <repo-url> claude-docker
@@ -387,6 +400,7 @@ claude-docker/
 |   +-- manager-helpers.sh             Orchestration manager helpers
 |   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
+|   +-- install.sh                    Interactive setup script
 +-- docs/
     +-- product-requirements-document.md
     +-- software-requirements-specification.md
