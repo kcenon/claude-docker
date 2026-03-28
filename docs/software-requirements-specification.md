@@ -231,8 +231,8 @@ SHALL be provided with placeholder values and no real credentials.
 | SRS-5.1.8 | Package manager caches SHALL be cleaned: `apt-get` lists and `npm cache`. |
 | SRS-5.1.9 | A `.dockerignore` SHALL exclude: `.git`, `node_modules`, `dist`, `build`, `.env`, `.claude/`. |
 | SRS-5.1.10 | Final image size SHALL be under 1 GB. |
-| SRS-5.1.11 | Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. |
-| SRS-5.1.12 | Dockerfile SHALL install `redis` npm package (v4.6+) globally for worker-server.js. |
+| SRS-5.1.11 | *(Phase 5)* Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. Not required until Phase 5 orchestration is implemented. |
+| SRS-5.1.12 | *(Phase 5)* Dockerfile SHALL install `redis` npm package (v4.6+) globally for worker-server.js. Not required until Phase 5 orchestration is implemented. |
 
 ### SRS-5.2 Container Orchestration (docker-compose.yml)
 
@@ -362,6 +362,16 @@ is identical; only `.env` values and optional compose overrides differ.
 | Disk (shared image) | ~800 MB | ~800 MB (constant) |
 | CPU | 1-2 cores | N x 1-2 cores |
 
+**Phase 5 orchestration resource budget** (manager + 3 workers + Redis):
+
+| Resource | Amount | Notes |
+|----------|--------|-------|
+| Docker RAM | ~17 GB | 4 containers x 4 GB + Redis 256 MB |
+| Host RAM (Linux) | ~20 GB | Docker + host overhead |
+| Host RAM (macOS/Windows) | ~24 GB | Docker Desktop VM overhead |
+| CPU cores | 8+ recommended | 4 containers x 2 cores |
+| Anthropic accounts | 4 | 1 manager + 3 workers (separate auth each) |
+
 ### 7.3 Security
 
 | Constraint | Specification |
@@ -409,7 +419,7 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.2.2 | SHALL | Worker server SHALL accept JSON body `{taskId, prompt, timeout}` |
 | SRS-8.2.3 | SHALL | Before executing `claude -p`, worker SHALL read `context:shared` hash from Redis |
 | SRS-8.2.4 | SHALL | Before executing `claude -p`, worker SHALL read `findings:all` list from Redis |
-| SRS-8.2.5 | SHALL | Worker SHALL execute `claude -p` with configurable timeout via `child_process.execSync` |
+| SRS-8.2.5 | SHALL | Worker SHALL execute `claude -p` with configurable timeout via `child_process.spawn` (async, stdin pipe). Async execution ensures heartbeat and health check remain responsive during long-running tasks. |
 | SRS-8.2.6 | SHALL | Worker SHALL parse structured JSON findings block from Claude output |
 | SRS-8.2.7 | SHALL | Worker SHALL write `result:{taskId}` hash and RPUSH findings to Redis |
 | SRS-8.2.8 | SHALL | Worker SHALL maintain `worker:{name}:status` key with TTL 60s |
@@ -473,6 +483,7 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 | SRS Section | Specs | PRD FR | PRD Goal | Phase |
 |-------------|-------|--------|----------|-------|
 | 5.1 Image Build | SRS-5.1.1–10 | FR-1–5 | G1, G5 | 1 |
+| 5.1 Image Build (Phase 5 additions) | SRS-5.1.11–12 | — | G9 | 5 |
 | 5.2 Container Orchestration | SRS-5.2.1–11 | FR-6, FR-9, FR-10, FR-12 | G2, G3, G5 | 2, 3 |
 | 5.3 Authentication | SRS-5.3.1–3 | FR-7, FR-8 | G2, G7 | 2 |
 | 5.4 Source Sharing | SRS-5.4.1–3 | FR-10–13 | G3, G4 | 3 |
@@ -514,7 +525,7 @@ a test procedure.
 | FR-22 (overlay compatibility) | SRS-8.1.9 | `docker compose -f ... -f docker-compose.orchestration.yml config` validates |
 | FR-23 (worker status) | SRS-8.2.8–9 | `redis-cli GET worker:worker-1:status` returns current status |
 | FR-24 (E2E test) | SRS-8.4.1–5 | `test-orchestration.sh` exits with code 0 |
-| — (Redis tooling) | SRS-5.1.11–12 | `docker compose exec manager redis-cli --version` and `node -e "require('redis')"` both succeed |
+| — (Redis tooling, Phase 5) | SRS-5.1.11–12 | `docker compose exec manager redis-cli --version` and `node -e "require('redis')"` both succeed |
 | — (JSON findings schema) | SRS-8.2.12–14 | Worker returns structured findings for well-formed prompt; returns empty findings for prompt without JSON block |
 | — (error recovery) | SRS-8.2.15–16 | Worker reconnects after Redis restart; result keys expire after 1 hour |
 | — (manager resilience) | SRS-8.3.6–7 | `get_worker_status` fails gracefully if Redis unreachable; `findings:all` empty after session reset |

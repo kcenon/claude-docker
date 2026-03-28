@@ -85,7 +85,7 @@ RUN apt-get update \
        fzf \
        zsh \
        sudo \
-       redis-tools \
+       redis-tools \                                        # Phase 5 addition (SRS-5.1.11)
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
@@ -103,7 +103,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
     && npm cache clean --force
 
-# SRS-5.1.12: Redis client for worker-server.js orchestration (Phase 5)
+# SRS-5.1.12: Redis client for worker-server.js orchestration
+# Phase 5 addition — omit this RUN until Phase 5 implementation begins.
+# The current Dockerfile intentionally excludes this line (Phase 1–4 only).
 RUN npm install -g redis \
     && npm cache clean --force
 
@@ -242,6 +244,14 @@ services:
       - ${PROJECT_DIR_B}:/workspace
 ```
 
+**Volume merge behavior**: Docker Compose v2 appends override volumes to the
+base list. The base `${PROJECT_DIR}:/workspace` and the override
+`${PROJECT_DIR_A}:/workspace` both target `/workspace`; Docker uses the last
+mount listed, so the override wins. However, `PROJECT_DIR` must still be
+defined in `.env` even for Tier B — otherwise Compose fails during variable
+interpolation of the base file. Set it to the main repository path (e.g.,
+`PROJECT_DIR=/home/user/project`).
+
 ### 3.4 Firewall Override — docker-compose.firewall.yml (Phase 4)
 
 ```yaml
@@ -260,6 +270,15 @@ services:
       - NET_ADMIN
       - NET_RAW
 ```
+
+**Current scope**: This overlay only grants the Linux capabilities required to
+run iptables inside the container. It does **not** include an actual firewall
+script with iptables rules. Users must supply their own `init-firewall.sh`
+(modeled after the [official Claude Code DevContainer firewall script](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh))
+or run iptables commands manually after container startup. Without rules, the
+capabilities alone have no security effect and marginally increase the
+container's attack surface. A project-specific firewall entrypoint script is
+planned but not yet implemented.
 
 ### 3.5 Compose Combination Matrix
 
@@ -584,9 +603,9 @@ echo "=== Cleanup complete ==="
 
 Worker HTTP server with Redis shared context integration (SRS-8.2.1–16).
 Receives task prompts from the manager container, enriches them with shared
-context and prior findings from Redis, executes `claude -p` via stdin pipe,
-parses structured JSON findings from the output, and writes results back to
-Redis for downstream consumers.
+context and prior findings from Redis, executes `claude -p` via async stdin
+pipe, parses structured JSON findings from the output, and writes results back
+to Redis for downstream consumers.
 
 ```javascript
 #!/usr/bin/env node
@@ -594,7 +613,7 @@ Redis for downstream consumers.
 
 // --- Dependencies -----------------------------------------------------------
 const http = require('http');
-const { spawnSync } = require('child_process');              // SRS-8.2.5
+const { spawn } = require('child_process');                  // SRS-8.2.5
 const { createClient } = require('redis');                   // SRS-8.2.11
 
 // --- Configuration ----------------------------------------------------------
@@ -703,28 +722,45 @@ function buildEnrichedPrompt(context, priorFindings, taskPrompt) {
 // --- Claude execution -------------------------------------------------------
 
 /**
- * Execute `claude -p` via spawnSync with stdin pipe. Using stdin pipe instead
- * of shell argument interpolation prevents command injection.
+ * Execute `claude -p` via async spawn with stdin pipe. Using stdin pipe
+ * instead of shell argument interpolation prevents command injection.
+ * Async execution ensures the Node.js event loop remains free for heartbeats
+ * and health checks during long-running Claude tasks.
  *
  * @param {string} enrichedPrompt - Full prompt to send via stdin
  * @param {number} timeoutMs      - Execution timeout in milliseconds
- * @returns {{ stdout: string, stderr: string, status: number|null, timedOut: boolean }}
+ * @returns {Promise<{ stdout: string, stderr: string, status: number|null, timedOut: boolean }>}
  */
 function executeClaude(enrichedPrompt, timeoutMs) {          // SRS-8.2.5
-  const result = spawnSync('claude', ['-p'], {
-    input: enrichedPrompt,                                   // stdin pipe (safe)
-    encoding: 'utf-8',
-    timeout: timeoutMs,
-    maxBuffer: MAX_BUFFER,
-    cwd: '/workspace',
-  });
+  return new Promise((resolve) => {
+    const chunks = [];
+    const errChunks = [];
+    let timedOut = false;
 
-  return {
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-    status: result.status,
-    timedOut: result.error?.code === 'ETIMEDOUT',
-  };
+    const child = spawn('claude', ['-p'], {
+      cwd: '/workspace',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdout.on('data', (data) => chunks.push(data));
+    child.stderr.on('data', (data) => errChunks.push(data));
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(chunks).toString('utf-8').slice(0, MAX_BUFFER);
+      const stderr = Buffer.concat(errChunks).toString('utf-8').slice(0, MAX_BUFFER);
+      resolve({ stdout, stderr, status: code, timedOut });
+    });
+
+    // Write prompt to stdin and close
+    child.stdin.write(enrichedPrompt);
+    child.stdin.end();
+  });
 }
 
 // --- Output parser ----------------------------------------------------------
@@ -898,9 +934,9 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     // Step 2: Build enriched prompt
     const enrichedPrompt = buildEnrichedPrompt(context, priorFindings, prompt);
 
-    // Step 3: Execute claude -p via stdin pipe (SRS-8.2.5)
+    // Step 3: Execute claude -p via async stdin pipe (SRS-8.2.5)
     const timeoutMs = timeout * 1000;
-    const claudeResult = executeClaude(enrichedPrompt, timeoutMs);
+    const claudeResult = await executeClaude(enrichedPrompt, timeoutMs);
 
     if (claudeResult.timedOut) {
       console.error(`[task] ${taskId} — timed out after ${timeout}s`);
@@ -979,7 +1015,7 @@ async function main() {
 
 // --- Graceful shutdown ------------------------------------------------------
 
-function shutdown(signal) {                                  // SRS-8.2.14
+function shutdown(signal) {
   console.log(`[worker] Received ${signal}, shutting down...`);
   clearInterval(heartbeatInterval);
 
@@ -1000,22 +1036,22 @@ function shutdown(signal) {                                  // SRS-8.2.14
   setTimeout(() => process.exit(1), 5000);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));             // SRS-8.2.14
-process.on('SIGINT',  () => shutdown('SIGINT'));              // SRS-8.2.14
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 
 main();
 ```
 
 **Design decisions:**
 
-- **`spawnSync` with stdin pipe** — prevents command injection by never interpolating user input into a shell command; the prompt is written to the child process's stdin (SRS-8.2.5)
-- **Last ``` \`\`\`json\`\`\` ``` fence extraction** — Claude may produce conversational text before/after the JSON block; taking the last fence is the most reliable heuristic for structured output (SRS-8.2.6)
+- **Async `spawn` with stdin pipe** — prevents command injection by writing the prompt to stdin (never interpolated into a shell command). Async execution keeps the event loop free so heartbeats (15s interval) and `/health` requests continue to work during long-running Claude tasks. A synchronous `spawnSync` would block the event loop for the full task duration, causing heartbeat TTL (30s) to expire and health checks to time out. (SRS-8.2.5)
+- **Last ``` \`\`\`json\`\`\` ``` fence extraction** — Claude may produce conversational text before/after the JSON block; taking the last fence is the most reliable heuristic for structured output (SRS-8.2.6, SRS-8.2.14)
 - **Partial status on parse failure** — if no JSON block is found, returns `status: "partial"` with empty findings rather than failing the entire task, allowing the manager to decide on retry strategy (SRS-8.2.13)
 - **Result hash TTL 3600s** — prevents unbounded Redis memory growth while keeping results available for the manager's aggregation window (SRS-8.2.16)
 - **Dual findings lists** — findings are pushed to both `findings:{category}` and `findings:all` so workers can read the global list while the manager can query by category (SRS-8.2.7)
 - **15-second heartbeat interval** — ensures `worker:{name}:heartbeat` (TTL 30s) never expires during normal operation; the manager can detect dead workers within 30s (SRS-8.2.8, SRS-8.2.9)
 - **Redis retry with fixed intervals** — 3 retries at 2s intervals balances fast startup with resilience to transient connection issues during container orchestration (SRS-8.2.15)
-- **Graceful shutdown** — cleans up Redis status keys and closes the HTTP server on SIGTERM/SIGINT, with a 5s forced-exit safety net (SRS-8.2.14)
+- **Graceful shutdown** — cleans up Redis status keys and closes the HTTP server on SIGTERM/SIGINT, with a 5s forced-exit safety net
 - **10 MB maxBuffer** — accommodates large Claude outputs without risking OOM on the worker container
 
 ### 5.4 scripts/manager-helpers.sh (Phase 5)
@@ -1053,8 +1089,9 @@ dispatch_task() {
 # Args: $1 = prompt text (or unique prompts via stdin, one per line)
 dispatch_parallel() {
     local prompt="$1"
+    local count="${WORKER_COUNT:-3}"
     local pids=() tmpfiles=()
-    for i in 1 2 3; do
+    for i in $(seq 1 "$count"); do
         local tmp
         tmp=$(mktemp)
         tmpfiles+=("$tmp")
@@ -1080,8 +1117,9 @@ clear_findings() {
 
 # SRS-8.3.4: Get status of all workers
 get_worker_status() {
-    for i in 1 2 3; do
-        echo "worker-$i: $(redis-cli -u "$REDIS_URL" GET "status:worker-$i")"
+    local count="${WORKER_COUNT:-3}"
+    for i in $(seq 1 "$count"); do
+        echo "worker-$i: $(redis-cli -u "$REDIS_URL" GET "worker:worker-$i:status")"
     done
 }
 
@@ -1236,7 +1274,7 @@ echo "=== Stage 5: Verify Results in Redis ==="
 for i in 1 2 3; do
     worker="worker-${i}"
     task_id="${TASK_IDS[$((i - 1))]}"
-    result_key="result:${worker}:${task_id}"
+    result_key="result:${task_id}"
 
     result=$(mgr redis-cli -u redis://redis:6379 GET "$result_key" 2>/dev/null || echo "")
 
@@ -1425,7 +1463,7 @@ Host                                    Docker
 
 | SRS Spec Range | SDS Section | Deliverable File |
 |---------------|-------------|-----------------|
-| SRS-5.1.1~12 (Image Build) | 2. Dockerfile Design | `Dockerfile` |
+| SRS-5.1.1~10 (Image Build); SRS-5.1.11~12 (Phase 5) | 2. Dockerfile Design | `Dockerfile` |
 | SRS-5.2.1~11 (Orchestration) | 3.1 Base Compose | `docker-compose.yml` |
 | SRS-5.3.1 (Path A OAuth) | 6.1 First Run Path A | (operational procedure) |
 | SRS-5.3.2 (Path B API Key) | 6.2 First Run Path B | (operational procedure) |
@@ -1449,7 +1487,7 @@ Host                                    Docker
 
 | File | Phase | SRS Coverage |
 |------|-------|-------------|
-| `Dockerfile` | 1 | SRS-5.1.1~12 |
+| `Dockerfile` | 1 (+ Phase 5 additions) | SRS-5.1.1~10; SRS-5.1.11~12 deferred to Phase 5 |
 | `.dockerignore` | 1 | SRS-5.1.9 |
 | `docker-compose.yml` | 2 | SRS-5.2.1~11, 5.4.1, 5.4.3 |
 | `docker-compose.linux.yml` | 2 | SRS-6.1.1~3 |

@@ -311,8 +311,8 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 2. **Default tier**: Should Tier B (worktree) be the default compose config? Tier A is simpler for first-run; Tier B is safer for real use.
 3. **Upgrade path**: Rebuild image on new Claude Code release, or support in-place `npm update -g` inside running containers?
 4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate on the host?
-4. **Firewall default**: Should Phase 4 firewall be opt-in or opt-out?
-5. **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)?
+5. **Firewall default**: Should Phase 4 firewall be opt-in or opt-out?
+6. **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)?
 
 ---
 
