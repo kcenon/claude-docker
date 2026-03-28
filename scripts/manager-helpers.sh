@@ -234,3 +234,58 @@ save_session() {
 
     echo "Session saved: $session_id ($session_dir)"
 }
+
+# SRS-8.5.4, SRS-8.5.13: Restore a saved session from cold archive into Redis
+# Loads context and findings back into Redis. Does NOT clear existing data —
+# run clear_findings first if a clean restore is needed.
+# Args: $1 = session ID or "latest"
+restore_session() {
+    _require_redis || return 1
+    local session_id="${1:?Usage: restore_session <session-id|latest>}"
+    local archive_dir="${ARCHIVE_DIR:-/archive}"
+
+    # Resolve "latest" alias (SRS-8.5.13)
+    if [ "$session_id" = "latest" ]; then
+        [ ! -f "$archive_dir/index.json" ] && { echo "Error: No sessions found (index.json missing)" >&2; return 1; }
+        session_id="$(jq -r '.sessions[-1].id // empty' "$archive_dir/index.json")"
+        [ -z "$session_id" ] && { echo "Error: No sessions in archive" >&2; return 1; }
+    fi
+
+    local session_dir="${archive_dir}/sessions/${session_id}"
+    [ ! -d "$session_dir" ] && { echo "Error: Session not found: $session_id" >&2; return 1; }
+
+    # Restore context:shared from context.json
+    if [ -f "${session_dir}/context.json" ]; then
+        local field_count
+        field_count="$(jq '.fields | length' "${session_dir}/context.json")"
+        if [ "$field_count" -gt 0 ]; then
+            jq -c '.fields | to_entries[]' "${session_dir}/context.json" | while IFS= read -r entry; do
+                key="$(echo "$entry" | jq -r '.key')"
+                val="$(echo "$entry" | jq -r '.value')"
+                redis-cli -u "$REDIS_URL" HSET context:shared "$key" "$val" > /dev/null
+            done
+            echo "  Restored context:shared (${field_count} fields)"
+        fi
+    fi
+
+    # Restore findings:all and per-category findings from findings.json
+    if [ -f "${session_dir}/findings.json" ]; then
+        local count
+        count=$(jq '.totalCount' "${session_dir}/findings.json")
+        if [ "$count" -gt 0 ]; then
+            jq -r '.all[]' "${session_dir}/findings.json" | while IFS= read -r finding; do
+                redis-cli -u "$REDIS_URL" RPUSH findings:all "$finding" > /dev/null
+            done
+            # Restore per-category
+            jq -r '.byCategory | keys[]' "${session_dir}/findings.json" 2>/dev/null | while IFS= read -r cat; do
+                jq -r --arg c "$cat" '.byCategory[$c][]' "${session_dir}/findings.json" | while IFS= read -r f; do
+                    redis-cli -u "$REDIS_URL" RPUSH "findings:${cat}" "$f" > /dev/null
+                done
+            done
+            echo "  Restored findings: ${count} total"
+        fi
+    fi
+
+    echo "Session restored: ${session_id}"
+    echo "  Workers will see prior findings on their next task."
+}
