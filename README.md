@@ -434,6 +434,7 @@ claude-docker/
 |   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
+|   +-- claude-docker                  Unified CLI wrapper
 |   +-- reauth.sh                     Authentication manager
 |   +-- remove.sh                     Complete removal script
 +-- docs/

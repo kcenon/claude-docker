@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# claude-docker — unified CLI wrapper
+# Automatically builds the correct docker compose -f chain from your
+# environment and provides short subcommands for common operations.
+#
+# Usage:
+#   scripts/claude-docker <command> [args...]
+#
+# Commands:
+#   up            Start all containers (detached)
+#   down          Stop all containers
+#   restart       Restart all containers
+#   logs          Follow container logs (Ctrl+C to stop)
+#   ps            Show container status
+#   exec <svc>    Open interactive shell in a service
+#   claude [svc]  Start Claude Code in a service (default: claude-a or manager)
+#   dispatch <worker> <prompt>   Dispatch task to a worker
+#   status        Show worker status (orchestration)
+#   findings      Show accumulated findings (orchestration)
+#   save          Save session to cold archive
+#   restore [id]  Restore session from archive (default: latest)
+#   sessions      List archived sessions
+#   build         Build/rebuild Docker image
+#   config        Show resolved compose configuration
+#   compose ...   Pass raw args to docker compose (with auto -f flags)
+#   help          Show this help message
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# --- Colors -------------------------------------------------------------------
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# --- Compose Command Builder --------------------------------------------------
+
+# Detect which overlay files are active by checking:
+# 1. Which compose files exist on disk
+# 2. Platform detection for linux override
+# 3. .env hints for worktree/orchestration/firewall
+build_compose_cmd() {
+    local cmd="docker compose"
+    local project_root="$PROJECT_ROOT"
+
+    # Base compose (always required)
+    cmd+=" -f ${project_root}/docker-compose.yml"
+
+    # Linux override: auto-detect platform
+    if [[ "$(uname -s)" == "Linux" ]] && [[ -f "${project_root}/docker-compose.linux.yml" ]]; then
+        cmd+=" -f ${project_root}/docker-compose.linux.yml"
+        # Export UID/GID for linux override
+        export UID=$(id -u) GID=$(id -g)
+    fi
+
+    # Worktree override: check if PROJECT_DIR_A is set in .env
+    if [[ -f "${project_root}/.env" ]]; then
+        local pdir_a
+        pdir_a=$(grep -E '^PROJECT_DIR_A=' "${project_root}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+        if [[ -n "$pdir_a" ]] && [[ -f "${project_root}/docker-compose.worktree.yml" ]]; then
+            cmd+=" -f ${project_root}/docker-compose.worktree.yml"
+        fi
+    fi
+
+    # Orchestration overlay: check if compose file exists AND has orchestration env vars
+    if [[ -f "${project_root}/docker-compose.orchestration.yml" ]]; then
+        # Check if orchestration services are expected (manager state dir exists or API key set)
+        if [[ -d "$HOME/.claude-state/account-manager" ]] || \
+           grep -qE '^CLAUDE_API_KEY_MANAGER=' "${project_root}/.env" 2>/dev/null; then
+            cmd+=" -f ${project_root}/docker-compose.orchestration.yml"
+        fi
+    fi
+
+    # Firewall overlay: only if init-firewall.sh exists (user opted in)
+    if [[ -f "${project_root}/docker-compose.firewall.yml" ]] && \
+       [[ -f "${project_root}/scripts/init-firewall.sh" ]]; then
+        # Check if firewall was enabled during install (heuristic: firewall compose exists)
+        # User can force with: claude-docker compose -f docker-compose.firewall.yml ...
+        cmd+=" -f ${project_root}/docker-compose.firewall.yml"
+    fi
+
+    echo "$cmd"
+}
+
+# Cache the compose command for the session
+COMPOSE_CMD=""
+get_compose_cmd() {
+    if [[ -z "$COMPOSE_CMD" ]]; then
+        COMPOSE_CMD=$(build_compose_cmd)
+    fi
+    echo "$COMPOSE_CMD"
+}
+
+# Determine the primary interactive service
+get_primary_service() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    if [[ "$cmd" == *"orchestration"* ]]; then
+        echo "manager"
+    else
+        echo "claude-a"
+    fi
+}
+
+# --- Subcommands --------------------------------------------------------------
+
+cmd_up() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Starting containers...${NC}"
+    echo -e "${DIM}  $cmd up -d${NC}"
+    eval "$cmd up -d" "$@"
+    echo -e "${GREEN}Containers started.${NC}"
+    echo ""
+    eval "$cmd ps"
+}
+
+cmd_down() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Stopping containers...${NC}"
+    eval "$cmd down" "$@"
+    echo -e "${GREEN}Containers stopped.${NC}"
+}
+
+cmd_restart() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Restarting containers...${NC}"
+    eval "$cmd restart" "$@"
+    echo -e "${GREEN}Containers restarted.${NC}"
+}
+
+cmd_logs() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd logs -f" "$@"
+}
+
+cmd_ps() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd ps" "$@"
+}
+
+cmd_exec() {
+    local service="${1:?Usage: claude-docker exec <service> [command...]}"
+    shift
+    local cmd
+    cmd=$(get_compose_cmd)
+    if [[ $# -eq 0 ]]; then
+        eval "$cmd exec $service bash"
+    else
+        eval "$cmd exec $service" "$@"
+    fi
+}
+
+cmd_claude() {
+    local service="${1:-$(get_primary_service)}"
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
+    eval "$cmd exec $service claude"
+}
+
+cmd_dispatch() {
+    local worker="${1:?Usage: claude-docker dispatch <worker> <prompt>}"
+    local prompt="${2:?Usage: claude-docker dispatch <worker> <prompt>}"
+    shift 2
+    local timeout="${1:-300}"
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Dispatching task to $worker...${NC}"
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && dispatch_task \"$worker\" \"$prompt\" $timeout'"
+}
+
+cmd_status() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && get_worker_status'"
+}
+
+cmd_findings() {
+    local category="${1:-all}"
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && get_findings $category'"
+}
+
+cmd_save() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Saving session to cold archive...${NC}"
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && save_session'"
+}
+
+cmd_restore() {
+    local session_id="${1:-latest}"
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Restoring session: $session_id${NC}"
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && restore_session $session_id'"
+}
+
+cmd_sessions() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && list_sessions'"
+}
+
+cmd_build() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${CYAN}Building Docker image...${NC}"
+    eval "$cmd build" "$@"
+    echo -e "${GREEN}Build complete.${NC}"
+}
+
+cmd_config() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${DIM}Compose command: $cmd${NC}"
+    echo ""
+    eval "$cmd config" "$@"
+}
+
+cmd_compose() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    eval "$cmd" "$@"
+}
+
+cmd_help() {
+    local cmd
+    cmd=$(get_compose_cmd)
+    local primary
+    primary=$(get_primary_service)
+
+    cat <<HELP
+
+${BOLD}claude-docker${NC} — unified CLI wrapper
+
+${BOLD}USAGE${NC}
+  scripts/claude-docker <command> [args...]
+
+${BOLD}LIFECYCLE${NC}
+  ${GREEN}up${NC}                    Start all containers
+  ${GREEN}down${NC}                  Stop all containers
+  ${GREEN}restart${NC}               Restart all containers
+  ${GREEN}build${NC}                 Build/rebuild Docker image
+  ${GREEN}ps${NC}                    Show container status
+  ${GREEN}logs${NC}                  Follow container logs
+
+${BOLD}INTERACTIVE${NC}
+  ${GREEN}claude${NC} [service]      Start Claude Code (default: $primary)
+  ${GREEN}exec${NC} <service>        Open shell in a service
+
+${BOLD}ORCHESTRATION${NC}
+  ${GREEN}dispatch${NC} <worker> <prompt>   Send task to worker
+  ${GREEN}status${NC}                Show worker status
+  ${GREEN}findings${NC} [category]   Show accumulated findings
+
+${BOLD}COLD MEMORY${NC}
+  ${GREEN}save${NC}                  Save session to archive
+  ${GREEN}restore${NC} [id|latest]   Restore session from archive
+  ${GREEN}sessions${NC}              List archived sessions
+
+${BOLD}ADVANCED${NC}
+  ${GREEN}config${NC}                Show resolved compose configuration
+  ${GREEN}compose${NC} ...           Pass raw args to docker compose
+
+${BOLD}DETECTED COMPOSE COMMAND${NC}
+  ${DIM}$cmd${NC}
+
+HELP
+}
+
+# --- Main ---------------------------------------------------------------------
+
+main() {
+    local command="${1:-help}"
+    shift 2>/dev/null || true
+
+    case "$command" in
+        up)        cmd_up "$@" ;;
+        down)      cmd_down "$@" ;;
+        restart)   cmd_restart "$@" ;;
+        logs)      cmd_logs "$@" ;;
+        ps)        cmd_ps "$@" ;;
+        exec)      cmd_exec "$@" ;;
+        claude)    cmd_claude "$@" ;;
+        dispatch)  cmd_dispatch "$@" ;;
+        status)    cmd_status "$@" ;;
+        findings)  cmd_findings "$@" ;;
+        save)      cmd_save "$@" ;;
+        restore)   cmd_restore "$@" ;;
+        sessions)  cmd_sessions "$@" ;;
+        build)     cmd_build "$@" ;;
+        config)    cmd_config "$@" ;;
+        compose)   cmd_compose "$@" ;;
+        help|--help|-h)  cmd_help ;;
+        *)
+            echo -e "${RED}Unknown command: $command${NC}" >&2
+            cmd_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
