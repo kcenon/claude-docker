@@ -216,7 +216,7 @@ function parseFindings(rawOutput) {                          // SRS-8.2.6, SRS-8
  * @param {object} result - Parsed result from parseFindings()
  * @param {string} rawOutput
  */
-async function writeResults(taskId, result, rawOutput) {     // SRS-8.2.7, SRS-8.2.16
+async function writeResults(taskId, result, rawOutput, startedAt, startMs) { // SRS-8.2.7, SRS-8.2.16
   const resultKey = `result:${taskId}`;
   const resultData = {
     taskId,
@@ -226,6 +226,9 @@ async function writeResults(taskId, result, rawOutput) {     // SRS-8.2.7, SRS-8
     rawOutput: rawOutput.slice(0, 50000),                    // cap stored output
     completedAt: new Date().toISOString(),
     worker: WORKER_NAME,
+    // SRS-8.5.7: Optional timing fields for cold storage metrics
+    ...(startedAt && { startedAt }),
+    ...(startMs && { durationMs: String(Date.now() - startMs) }),
   };
 
   // Write result hash with TTL 3600s (SRS-8.2.16)
@@ -330,6 +333,8 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
   console.log(`[task] ${taskId} — starting (timeout: ${timeout}s)`);
   currentTaskId = taskId;
   await setWorkerBusy(taskId);
+  const taskStartedAt = new Date().toISOString();
+  const taskStartMs = Date.now();
 
   try {
     // Step 1: Read shared context from Redis (SRS-8.2.3, SRS-8.2.4)
@@ -358,7 +363,7 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     const result = parseFindings(claudeResult.stdout);
 
     // Step 5: Write results to Redis (SRS-8.2.7, SRS-8.2.16)
-    await writeResults(taskId, result, claudeResult.stdout);
+    await writeResults(taskId, result, claudeResult.stdout, taskStartedAt, taskStartMs);
 
     // Step 6: Respond to manager (SRS-8.2.10)
     console.log(`[task] ${taskId} — completed (status: ${result.status})`);
