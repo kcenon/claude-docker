@@ -268,6 +268,9 @@ docker compose down -v
 
 # Full cleanup (containers, volumes, worktrees, state)
 scripts/cleanup.sh ~/work/project
+
+# Complete removal (everything install.sh created)
+scripts/remove.sh
 ```
 
 ## Configuration Tiers
@@ -428,6 +431,7 @@ claude-docker/
 |   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
+|   +-- remove.sh                     Complete removal script
 +-- docs/
     +-- product-requirements-document.md
     +-- software-requirements-specification.md
