@@ -199,6 +199,16 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | FR-23 | P1 | Worker heartbeat and status tracking in Redis with TTL-based expiration |
 | FR-24 | P1 | E2E test script verifies parallel dispatch, Redis result storage, and findings accumulation |
 
+### Phase 6 — Cold Memory
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-25 | P0 | `save_session` dumps Redis state (context, findings, results) to JSON files in host-mounted archive directory |
+| FR-26 | P0 | `restore_session` loads a previous session's context and findings from archive back into Redis |
+| FR-27 | P1 | `list_sessions` displays all archived sessions with timestamps and finding counts |
+| FR-28 | P1 | Archive auto-prunes to 50 sessions maximum; oldest sessions deleted on save |
+| FR-29 | P1 | Cold memory layer is opt-in; orchestration works identically without archive mount |
+
 ---
 
 ## 7. Non-Functional Requirements
@@ -283,7 +293,13 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 - **Acceptance**: Manager dispatches to 3 workers; results stored in Redis; findings accumulate across sequential worker invocations
 - **Effort**: 3–5 days | **Depends on**: Phase 1–4
 
-**Total estimated effort: 9–15 days**
+### Phase 6 — Cold Memory
+
+- **Deliverables**: `manager-helpers.sh` additions (save/restore/list/show_session), `docker-compose.orchestration.yml` update (archive mount), `worker-server.js` update (timing fields), `install.sh`/`cleanup.sh` updates
+- **Acceptance**: Sessions persist across `docker compose down -v`; `restore_session latest` restores context + findings; auto-prune keeps <= 50 sessions
+- **Effort**: 1–2 days | **Depends on**: Phase 5
+
+**Total estimated effort: 10–17 days**
 
 ---
 
@@ -302,6 +318,8 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | SC-9 | Security baseline | No API keys in VCS; no Docker socket mounted; state dirs owner-only |
 | SC-10 | Manager dispatches tasks to 3 workers and all return results within timeout | Phase 5 |
 | SC-11 | Worker-2 prompt includes Worker-1's findings read from Redis shared context | Phase 5 |
+| SC-12 | `save_session` creates self-contained JSON archive; `restore_session latest` restores context + findings into Redis | Phase 6 |
+| SC-13 | Archive persists across `docker compose down -v`; auto-prunes at 50 sessions | Phase 6 |
 
 ---
 
@@ -331,7 +349,8 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 | G7 (subscription) | FR-7 | SRS-5.3.1 | SC-4 | 2 |
 | G8 (scalable N) | — | SRS-5.5 | SC-8 | 2, 3 |
 | G9 | FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24 | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | SC-10 | 5 |
-| G10 | FR-20 | SRS-8.2.3–4, SRS-8.2.7, SRS-8.3.3 | SC-11 | 5 |
+| G10 (hot) | FR-20 | SRS-8.2.3–4, SRS-8.2.7, SRS-8.3.3 | SC-11 | 5 |
+| G10 (cold) | FR-25, FR-26, FR-27, FR-28, FR-29 | SRS-8.5.1–15 | SC-12, SC-13 | 6 |
 
 **Reading the table**:
 - Left to right (forward): "Goal G2 is fulfilled by FR-6/7/8, specified in SRS-5.2.5/5.2.7/5.3.1/5.3.2, and verified by SC-3/SC-4."
