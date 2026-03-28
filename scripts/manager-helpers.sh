@@ -79,3 +79,158 @@ set_shared_context() {
     local field="$1" value="$2"
     redis-cli -u "$REDIS_URL" HSET context:shared "$field" "$value"
 }
+
+# SRS-8.5.1–8: Save current session to cold archive
+# Dumps context, findings, and task results from Redis into timestamped
+# session directory under $ARCHIVE_DIR/sessions/. Read-only on Redis (SRS-8.5.14).
+# TODO: accept optional start_ts argument for duration calculation
+save_session() {
+    _require_redis || return 1
+    ARCHIVE_DIR="${ARCHIVE_DIR:-/archive}"
+
+    # --- Session ID & directory ------------------------------------------------
+    local session_id
+    session_id="$(date -u +%Y%m%dT%H%M%SZ)_$(head -c4 /dev/urandom | xxd -p)"
+    local session_dir="$ARCHIVE_DIR/sessions/$session_id"
+    mkdir -p "$session_dir"
+
+    local now
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # --- Helper: Redis HGETALL → JSON object -----------------------------------
+    _hgetall_json() {
+        redis-cli -u "$REDIS_URL" HGETALL "$1" \
+            | jq -Rn '[inputs | select(length > 0)] | if length == 0 then {} else [range(0;length;2) as $i | {(.[  $i]): .[$i+1]}] | add end'
+    }
+
+    # --- 1. context.json (SDS 5.6.2) ------------------------------------------
+    local context_fields
+    context_fields="$(_hgetall_json "context:shared")"
+    jq -n \
+        --arg version "1.0.0" \
+        --arg capturedAt "$now" \
+        --argjson fields "$context_fields" \
+        '{version: $version, capturedAt: $capturedAt, fields: $fields}' \
+        > "$session_dir/context.json"
+
+    # --- 2. findings.json (SDS 5.6.2) -----------------------------------------
+    local all_findings
+    all_findings="$(redis-cli -u "$REDIS_URL" LRANGE findings:all 0 -1 \
+        | jq -Rn '[inputs | select(length > 0)]')"
+
+    local by_category="{}"
+    local cat_keys
+    cat_keys="$(redis-cli -u "$REDIS_URL" KEYS 'findings:*' | grep -v '^findings:all$' || true)"
+    if [[ -n "$cat_keys" ]]; then
+        by_category="$(echo "$cat_keys" | while IFS= read -r key; do
+            cat_name="${key#findings:}"
+            items="$(redis-cli -u "$REDIS_URL" LRANGE "$key" 0 -1 \
+                | jq -Rn '[inputs | select(length > 0)]')"
+            jq -n --arg k "$cat_name" --argjson v "$items" '{($k): $v}'
+        done | jq -s 'add // {}')"
+    fi
+
+    local total_count
+    total_count="$(echo "$all_findings" | jq 'length')"
+    jq -n \
+        --arg version "1.0.0" \
+        --arg capturedAt "$now" \
+        --argjson totalCount "$total_count" \
+        --argjson all "$all_findings" \
+        --argjson byCategory "$by_category" \
+        '{version: $version, capturedAt: $capturedAt, totalCount: $totalCount, all: $all, byCategory: $byCategory}' \
+        > "$session_dir/findings.json"
+
+    # --- 3. session.json (SDS 5.6.2) ------------------------------------------
+    local result_keys
+    result_keys="$(redis-cli -u "$REDIS_URL" KEYS 'result:*' || true)"
+
+    local tasks_json="[]"
+    local completed=0 failed=0 total_tasks=0
+    local findings_by_cat="{}"
+
+    if [[ -n "$result_keys" ]]; then
+        tasks_json="$(echo "$result_keys" | while IFS= read -r rkey; do
+            rdata="$(_hgetall_json "$rkey")"
+            findings_count="$(echo "$rdata" | jq '(.findings // "[]") | fromjson | length')"
+            duration_ms="$(echo "$rdata" | jq -r '.durationMs // "0"')"
+            jq -n \
+                --argjson d "$rdata" \
+                --argjson fc "$findings_count" \
+                --argjson dm "$duration_ms" \
+                '{taskId: $d.taskId, worker: $d.worker, status: $d.status, summary: $d.summary, findingsCount: $fc, durationMs: $dm, completedAt: $d.completedAt}'
+        done | jq -s '.')"
+
+        total_tasks="$(echo "$tasks_json" | jq 'length')"
+        completed="$(echo "$tasks_json" | jq '[.[] | select(.status == "done")] | length')"
+        failed="$(echo "$tasks_json" | jq '[.[] | select(.status == "error")] | length')"
+        findings_by_cat="$(echo "$by_category" | jq 'to_entries | map({(.key): (.value | length)}) | add // {}')"
+    fi
+
+    jq -n \
+        --arg version "1.0.0" \
+        --arg id "$session_id" \
+        --arg startedAt "$now" \
+        --arg endedAt "$now" \
+        --argjson durationSeconds 0 \
+        --arg projectDir "/workspace" \
+        --argjson workerCount "${WORKER_COUNT:-3}" \
+        --argjson tasks "$tasks_json" \
+        --argjson totalFindings "$total_count" \
+        --argjson findingsByCategory "$findings_by_cat" \
+        --argjson totalTasks "$total_tasks" \
+        --argjson completedTasks "$completed" \
+        --argjson failedTasks "$failed" \
+        '{version: $version, id: $id, startedAt: $startedAt, endedAt: $endedAt,
+          durationSeconds: $durationSeconds, projectDir: $projectDir, workerCount: $workerCount,
+          tasks: $tasks,
+          metrics: {totalFindings: $totalFindings, findingsByCategory: $findingsByCategory,
+                    totalTasks: $totalTasks, completedTasks: $completedTasks, failedTasks: $failedTasks}}' \
+        > "$session_dir/session.json"
+
+    # --- 4. Update index.json (SRS-8.5.8) -------------------------------------
+    local index_file="$ARCHIVE_DIR/index.json"
+    local context_field_names
+    context_field_names="$(echo "$context_fields" | jq '[keys[]]')"
+    local cat_counts
+    cat_counts="$(echo "$by_category" | jq 'to_entries | map({(.key): (.value | length)}) | add // {}')"
+
+    local new_entry
+    new_entry="$(jq -n \
+        --arg id "$session_id" \
+        --arg endedAt "$now" \
+        --argjson findingsCount "$total_count" \
+        --argjson categoryCounts "$cat_counts" \
+        --argjson taskCount "$total_tasks" \
+        --argjson contextFields "$context_field_names" \
+        '{id: $id, endedAt: $endedAt, findingsCount: $findingsCount, categoryCounts: $categoryCounts, taskCount: $taskCount, contextFields: $contextFields}')"
+
+    if [[ -f "$index_file" ]]; then
+        local updated
+        updated="$(jq --argjson entry "$new_entry" \
+            '.sessions += [$entry]' "$index_file")"
+        echo "$updated" > "${index_file}.tmp" && mv "${index_file}.tmp" "$index_file"
+    else
+        jq -n \
+            --arg version "1.0.0" \
+            --argjson maxSessions 50 \
+            --argjson entry "$new_entry" \
+            '{version: $version, maxSessions: $maxSessions, sessions: [$entry]}' \
+            > "$index_file"
+    fi
+
+    # --- 5. Auto-prune oldest sessions if > 50 (SRS-8.5.8) --------------------
+    local session_count
+    session_count="$(jq '.sessions | length' "$index_file")"
+    if (( session_count > 50 )); then
+        local prune_ids
+        prune_ids="$(jq -r ".sessions[:$((session_count - 50))][] | .id" "$index_file")"
+        echo "$prune_ids" | while IFS= read -r old_id; do
+            rm -rf "$ARCHIVE_DIR/sessions/$old_id"
+        done
+        jq ".sessions |= .[-50:]" "$index_file" > "${index_file}.tmp" \
+            && mv "${index_file}.tmp" "$index_file"
+    fi
+
+    echo "Session saved: $session_id ($session_dir)"
+}
