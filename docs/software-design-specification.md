@@ -271,14 +271,20 @@ services:
       - NET_RAW
 ```
 
-**Current scope**: This overlay only grants the Linux capabilities required to
-run iptables inside the container. It does **not** include an actual firewall
-script with iptables rules. Users must supply their own `init-firewall.sh`
+**Current scope**: This overlay grants the Linux capabilities required to
+run iptables inside the container. The project includes `scripts/init-firewall.sh`,
+an outbound firewall script
 (modeled after the [official Claude Code DevContainer firewall script](https://github.com/anthropics/claude-code/blob/main/.devcontainer/init-firewall.sh))
-or run iptables commands manually after container startup. Without rules, the
-capabilities alone have no security effect and marginally increase the
-container's attack surface. A project-specific firewall entrypoint script is
-planned but not yet implemented.
+that restricts egress to whitelisted services (DNS, SSH, npm, GitHub, Anthropic API).
+Run it inside the container after startup:
+
+```bash
+docker compose exec claude-a sudo bash /workspace/scripts/init-firewall.sh
+```
+
+Use `--dry-run` to preview rules without applying them. Without running the
+script, the capabilities alone have no security effect and marginally increase
+the container's attack surface.
 
 ### 3.5 Compose Combination Matrix
 
