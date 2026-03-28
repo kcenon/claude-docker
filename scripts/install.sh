@@ -324,11 +324,12 @@ collect_configuration() {
     log_info "Project directory: $SOURCE_DIR"
 
     # Claude Code version
-    CLAUDE_VERSION=$(prompt_input "Claude Code version (leave empty for latest)" "")
-    if [[ -n "$CLAUDE_VERSION" ]]; then
-        log_info "Claude Code version: $CLAUDE_VERSION"
-    else
+    CLAUDE_VERSION=$(prompt_input "Claude Code version (enter specific version or 'latest')" "latest")
+    if [[ "$CLAUDE_VERSION" == "latest" ]]; then
+        CLAUDE_VERSION=""
         log_info "Claude Code version: latest"
+    else
+        log_info "Claude Code version: $CLAUDE_VERSION"
     fi
 
     # API keys (Path B)
