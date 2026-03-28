@@ -383,6 +383,7 @@ claude-docker/
 |   +-- init-firewall.sh             Outbound firewall (iptables whitelist)
 |   +-- setup-worktrees.sh            Tier B worktree setup
 |   +-- test-concurrent-git.sh        E2E test: Tier B concurrent git safety
+|   +-- test-orchestration.sh         E2E test: orchestration manager-worker
 |   +-- manager-helpers.sh             Orchestration manager helpers
 |   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
