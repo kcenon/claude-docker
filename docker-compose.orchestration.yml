@@ -32,6 +32,7 @@ services:
       - ${HOME}/.claude-state/account-manager:/home/node/.claude # SRS-8.1.8
       - node_modules_manager:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+      - ${HOME}/.claude-state/analysis-archive:/archive          # SRS-8.5.1
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
@@ -39,6 +40,7 @@ services:
       - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
       - ROLE=manager
       - WORKER_COUNT=${WORKER_COUNT:-3}
+      - ARCHIVE_DIR=/archive                                     # SRS-8.5.2
     deploy:
       resources:
         limits:
