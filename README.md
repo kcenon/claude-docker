@@ -376,7 +376,10 @@ automatically.
 **"Authentication expired" inside container:**
 
 ```bash
-# Re-authenticate on HOST (not inside container)
+# Interactive authentication manager (recommended)
+scripts/reauth.sh
+
+# Or manually re-authenticate on HOST (not inside container)
 CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login
 docker compose restart claude-a
 ```
@@ -431,6 +434,7 @@ claude-docker/
 |   +-- worker-server.js              Orchestration worker HTTP server
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
+|   +-- reauth.sh                     Authentication manager
 |   +-- remove.sh                     Complete removal script
 +-- docs/
     +-- product-requirements-document.md
