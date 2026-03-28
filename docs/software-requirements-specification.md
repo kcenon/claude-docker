@@ -454,6 +454,26 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.4.4 | SHALL | E2E test SHALL verify findings accumulation (later workers see earlier findings) |
 | SRS-8.4.5 | SHALL | E2E test SHALL use `trap cleanup EXIT` for reliable teardown |
 
+### 8.5 Cold Memory Layer (`scripts/manager-helpers.sh` additions)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.5.1 | SHALL | Manager service SHALL mount `${HOME}/.claude-state/analysis-archive` to `/archive` as a read-write bind mount |
+| SRS-8.5.2 | SHALL | Manager helpers SHALL use `ARCHIVE_DIR` environment variable (default: `/archive`) for archive path |
+| SRS-8.5.3 | SHALL | `save_session` function SHALL dump `context:shared`, `findings:all`, `findings:{category}`, and `result:{taskId}` hashes from Redis to JSON files in `$ARCHIVE_DIR/sessions/<id>/` |
+| SRS-8.5.4 | SHALL | `restore_session` function SHALL load a previous session's context and findings from archive JSON files into Redis |
+| SRS-8.5.5 | SHALL | `list_sessions` function SHALL display all archived sessions from `$ARCHIVE_DIR/index.json` with timestamps, finding counts, and task counts |
+| SRS-8.5.6 | SHALL | `show_session` function SHALL display full metadata, context, and findings preview for a specified session |
+| SRS-8.5.7 | SHOULD | Worker server SHOULD record `startedAt` and `durationMs` fields in `result:{taskId}` hashes for session metrics |
+| SRS-8.5.8 | SHALL | Archive SHALL be bounded to a maximum of 50 sessions; oldest sessions SHALL be pruned automatically on save |
+| SRS-8.5.9 | SHALL | Each session archive SHALL be self-contained: `session.json`, `context.json`, and `findings.json` readable without Redis |
+| SRS-8.5.10 | SHALL | Cold memory layer SHALL be opt-in: orchestration works identically if `/archive` is not mounted |
+| SRS-8.5.11 | SHALL | Only the manager container SHALL write to the archive; workers SHALL NOT have archive mount |
+| SRS-8.5.12 | SHALL | Archive files SHALL be valid JSON parseable by `jq` |
+| SRS-8.5.13 | SHALL | `restore_session` SHALL accept `latest` as a session ID alias to restore the most recent session |
+| SRS-8.5.14 | SHALL | `save_session` SHALL NOT modify Redis state (read-only Redis operations during save) |
+| SRS-8.5.15 | SHALL | The archive directory SHALL persist across `docker compose down -v` because it is a host bind mount, not a Docker named volume |
+
 ---
 
 ## 9. Constraints and Assumptions
@@ -493,6 +513,7 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 | 6.3 Windows Adaptation | SRS-6.3.1–6 | — | G6 | 2 |
 | 7.3 Security | SRS-7.3 | FR-14 | G5 | 4 |
 | 8.1–8.4 Orchestration | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | FR-18–24 | G9, G10 | 5 |
+| 8.5 Cold Memory | SRS-8.5.1–15 | FR-25–29 | G10 | 6 |
 
 ### 10.2 Downstream Verification (PRD FR → SRS → Test)
 
@@ -529,3 +550,8 @@ a test procedure.
 | — (JSON findings schema) | SRS-8.2.12–14 | Worker returns structured findings for well-formed prompt; returns empty findings for prompt without JSON block |
 | — (error recovery) | SRS-8.2.15–16 | Worker reconnects after Redis restart; result keys expire after 1 hour |
 | — (manager resilience) | SRS-8.3.6–7 | `get_worker_status` fails gracefully if Redis unreachable; `findings:all` empty after session reset |
+| FR-25 (session save) | SRS-8.5.3 | Run analysis session, call `save_session`; verify 3 JSON files created in archive with `jq . < session.json` |
+| FR-26 (session restore) | SRS-8.5.4, 8.5.13 | Call `restore_session latest`; verify `redis-cli HGETALL context:shared` matches archived context |
+| FR-27 (session listing) | SRS-8.5.5 | Save 3 sessions; call `list_sessions`; verify all 3 appear with correct counts |
+| FR-28 (session pruning) | SRS-8.5.8 | Save 52 sessions; verify only 50 remain in index and on disk |
+| FR-29 (backward compat) | SRS-8.5.10 | Start orchestration without archive mount; verify all existing functions work |

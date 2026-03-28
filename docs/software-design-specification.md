@@ -1332,6 +1332,146 @@ fi
 6. **Verify findings accumulation** — Check `findings:all` list length > 0; WARN (not FAIL) if empty since Claude may not produce structured JSON (SRS-8.4.4)
 7. **Cleanup** — `trap cleanup EXIT` runs `docker compose down --remove-orphans -v` (SRS-8.4.5)
 
+### 5.6 Cold Memory Layer Design (Phase 6)
+
+File-based persistent archive for cross-session findings accumulation, context
+auto-restore, and worker performance metrics. SRS-8.5.1–15.
+
+#### 5.6.1 Archive Directory Structure
+
+Host path: `~/.claude-state/analysis-archive/` (bind-mounted to `/archive` in manager).
+
+```
+~/.claude-state/analysis-archive/
+├── sessions/
+│   ├── 20260328T143000Z_a1b2c3d4/
+│   │   ├── session.json          # Session metadata + task metrics
+│   │   ├── context.json          # Snapshot of context:shared hash
+│   │   └── findings.json         # findings:all + per-category findings
+│   └── ...
+└── index.json                    # Lightweight session index for fast listing
+```
+
+Directory naming: `<ISO8601-compact>_<8-char-hex-id>`. Timestamp prefix enables
+chronological `ls` sorting. Max 50 sessions; oldest auto-pruned on save (SRS-8.5.8).
+
+#### 5.6.2 JSON Schemas
+
+**session.json**:
+```json
+{
+  "version": "1.0.0",
+  "id": "<session-id>",
+  "startedAt": "<ISO8601>",
+  "endedAt": "<ISO8601>",
+  "durationSeconds": 0,
+  "projectDir": "/workspace",
+  "workerCount": 3,
+  "tasks": [
+    {
+      "taskId": "<uuid>",
+      "worker": "worker-1",
+      "status": "done|partial|error",
+      "summary": "<text>",
+      "findingsCount": 0,
+      "durationMs": 0,
+      "completedAt": "<ISO8601>"
+    }
+  ],
+  "metrics": {
+    "totalFindings": 0,
+    "findingsByCategory": { "<category>": 0 },
+    "totalTasks": 0,
+    "completedTasks": 0,
+    "failedTasks": 0
+  }
+}
+```
+
+**context.json**:
+```json
+{
+  "version": "1.0.0",
+  "capturedAt": "<ISO8601>",
+  "fields": { "<key>": "<value>" }
+}
+```
+
+**findings.json**:
+```json
+{
+  "version": "1.0.0",
+  "capturedAt": "<ISO8601>",
+  "totalCount": 0,
+  "all": ["<finding-json-string>", "..."],
+  "byCategory": { "<category>": ["<finding-json-string>"] }
+}
+```
+
+**index.json** (top-level):
+```json
+{
+  "version": "1.0.0",
+  "maxSessions": 50,
+  "sessions": [
+    {
+      "id": "<session-id>",
+      "endedAt": "<ISO8601>",
+      "findingsCount": 0,
+      "categoryCounts": {},
+      "taskCount": 0,
+      "contextFields": ["<key>"]
+    }
+  ]
+}
+```
+
+#### 5.6.3 Manager Helper Functions (additions to manager-helpers.sh)
+
+| Function | SRS | Args | Redis Ops | File Ops |
+|----------|-----|------|-----------|----------|
+| `save_session` | 8.5.3 | `[start_ts]` | HGETALL context:shared, LRANGE findings:all, KEYS findings:*, KEYS result:*, HGETALL result:* | Write 3 JSON files + update index.json |
+| `restore_session` | 8.5.4 | `<id\|latest>` | HSET context:shared, RPUSH findings:all, RPUSH findings:{cat} | Read context.json + findings.json |
+| `list_sessions` | 8.5.5 | none | none | Read index.json |
+| `show_session` | 8.5.6 | `<id>` | none | Read session.json + context.json + findings.json |
+
+All functions use `ARCHIVE_DIR` env var (default `/archive`) and `_require_redis`
+guard for Redis-dependent operations. `save_session` is Redis-read-only (SRS-8.5.14).
+
+#### 5.6.4 Docker Compose Change
+
+One bind mount added to manager service in `docker-compose.orchestration.yml`:
+
+```yaml
+volumes:
+  - ${HOME}/.claude-state/analysis-archive:/archive          # SRS-8.5.1
+environment:
+  - ARCHIVE_DIR=/archive                                     # SRS-8.5.2
+```
+
+Workers do NOT mount `/archive` — they access archived data via Redis after
+`restore_session` loads it (SRS-8.5.11).
+
+#### 5.6.5 Worker Server Timing Hook (optional)
+
+`writeResults()` in `worker-server.js` gains two optional fields: `startedAt`
+(ISO8601 timestamp) and `durationMs` (wall-clock milliseconds). These are
+recorded by `handleTask()` before Claude execution and passed through. The
+change is backward-compatible: existing callers without timing args omit the
+fields silently (SRS-8.5.7).
+
+#### 5.6.6 Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **JSON files** (not SQLite) | jq is already installed; no new dependencies; human-readable |
+| **Manager-only writes** | Avoids concurrent write races from multiple workers |
+| **Redis read-only on save** | Hot path completely untouched; no risk of disrupting active analysis |
+| **50-session cap** | ~100KB/session × 50 = ~5MB max; prevents unbounded growth |
+| **Opt-in** | `/archive` not mounted → functions error clearly; existing flow unaffected |
+| **index.json** | Fast listing without scanning session directories |
+| **Host bind mount** | Survives `docker compose down -v` (named volumes are deleted) |
+
 ---
 
 ## 6. Operational Flows
@@ -1488,6 +1628,7 @@ Host                                    Docker
 | SRS-8.2.1~11 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
 | SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
 | SRS-8.4.1~5 (Orchestration Tests) | 5.5 Test Script | `scripts/test-orchestration.sh` |
+| SRS-8.5.1~15 (Cold Memory) | 5.6 Cold Memory Layer | `scripts/manager-helpers.sh` (additions), `docker-compose.orchestration.yml` (mount) |
 
 ### Deliverable File Inventory
 
