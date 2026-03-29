@@ -294,12 +294,11 @@ save_session() {
 
     # --- 6. Size-based pruning: enforce MAX_ARCHIVE_SIZE_MB -------------------
     local max_size_mb="${MAX_ARCHIVE_SIZE_MB:-500}"
-    local max_size_kb=$((max_size_mb * 1024))
-    local archive_size_kb
-    archive_size_kb="$(du -sk "$ARCHIVE_DIR/sessions" 2>/dev/null | awk '{print $1}')"
-    archive_size_kb="${archive_size_kb:-0}"
+    local archive_size_mb
+    archive_size_mb="$(du -sm "$ARCHIVE_DIR" 2>/dev/null | awk '{print $1}')"
+    archive_size_mb="${archive_size_mb:-0}"
 
-    while (( archive_size_kb > max_size_kb )); do
+    while (( archive_size_mb > max_size_mb )); do
         local oldest_id
         oldest_id="$(jq -r '.sessions[0].id // empty' "$index_file")"
         [[ -z "$oldest_id" ]] && break
@@ -311,8 +310,13 @@ save_session() {
         jq '.sessions |= .[1:]' "$index_file" > "${index_file}.tmp" \
             && mv "${index_file}.tmp" "$index_file"
 
-        archive_size_kb="$(du -sk "$ARCHIVE_DIR/sessions" 2>/dev/null | awk '{print $1}')"
-        archive_size_kb="${archive_size_kb:-0}"
+        log_audit "session_prune" \
+            "prunedSessionId=${oldest_id}" \
+            "reason=archive_size_exceeded" \
+            "limitMB=${max_size_mb}"
+
+        archive_size_mb="$(du -sm "$ARCHIVE_DIR" 2>/dev/null | awk '{print $1}')"
+        archive_size_mb="${archive_size_mb:-0}"
     done
 
     log_audit "session_save" \
