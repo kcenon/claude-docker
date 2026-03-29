@@ -5,7 +5,20 @@ set -euo pipefail
 
 # SRS-8.3.6: Verify Redis connectivity before any Redis operation
 _require_redis() {
-    redis-cli -u "$REDIS_URL" PING > /dev/null 2>&1 || { echo "Error: Redis unreachable" >&2; return 1; }
+    _redis_cmd PING > /dev/null 2>&1 || { echo "Error: Redis unreachable" >&2; return 1; }
+}
+
+# Helper: run redis-cli with optional password authentication (SRS-8.6.2)
+# Constructs REDIS_URL at runtime from REDIS_HOST/REDIS_PORT/REDIS_PASSWORD
+_redis_cmd() {
+    local _host="${REDIS_HOST:-redis}"
+    local _port="${REDIS_PORT:-6379}"
+    local _url="redis://${_host}:${_port}"
+    if [[ -n "${REDIS_PASSWORD:-}" ]]; then
+        redis-cli -u "$_url" -a "$REDIS_PASSWORD" --no-auth-warning "$@"
+    else
+        redis-cli -u "$_url" "$@"
+    fi
 }
 
 # SRS-8.3.1: Dispatch a task to a specific worker
@@ -17,9 +30,15 @@ dispatch_task() {
     local task_id
     task_id="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "task-$(date +%s)")"
 
+    local auth_header=()
+    if [[ -n "${WORKER_AUTH_TOKEN:-}" ]]; then
+        auth_header=(-H "Authorization: Bearer ${WORKER_AUTH_TOKEN}")
+    fi
+
     curl -s --max-time "$((timeout + 30))" \
         -X POST "http://${worker}:9000/task" \
         -H "Content-Type: application/json" \
+        "${auth_header[@]}" \
         -d "$(jq -n \
             --arg taskId "$task_id" \
             --arg prompt "$prompt" \
@@ -53,13 +72,13 @@ dispatch_parallel() {
 get_findings() {
     local category="${1:-all}"
     _require_redis || return 1
-    redis-cli -u "$REDIS_URL" LRANGE "findings:${category}" 0 -1
+    _redis_cmd LRANGE "findings:${category}" 0 -1
 }
 
 # SRS-8.3.7: Clear findings before new session
 clear_findings() {
     _require_redis || return 1
-    redis-cli -u "$REDIS_URL" DEL findings:all > /dev/null
+    _redis_cmd DEL findings:all > /dev/null
     echo "Findings cleared."
 }
 
@@ -68,7 +87,7 @@ get_worker_status() {
     _require_redis || return 1
     local count="${WORKER_COUNT:-3}"
     for i in $(seq 1 "$count"); do
-        echo "worker-$i: $(redis-cli -u "$REDIS_URL" GET "worker:worker-$i:status")"
+        echo "worker-$i: $(_redis_cmd GET "worker:worker-$i:status")"
     done
 }
 
@@ -77,7 +96,7 @@ get_worker_status() {
 set_shared_context() {
     _require_redis || return 1
     local field="$1" value="$2"
-    redis-cli -u "$REDIS_URL" HSET context:shared "$field" "$value"
+    _redis_cmd HSET context:shared "$field" "$value"
 }
 
 # SRS-8.5.1–8: Save current session to cold archive
@@ -99,7 +118,7 @@ save_session() {
 
     # --- Helper: Redis HGETALL → JSON object -----------------------------------
     _hgetall_json() {
-        redis-cli -u "$REDIS_URL" HGETALL "$1" \
+        _redis_cmd HGETALL "$1" \
             | jq -Rn '[inputs | select(length > 0)] | if length == 0 then {} else [range(0;length;2) as $i | {(.[  $i]): .[$i+1]}] | add end'
     }
 
@@ -115,16 +134,16 @@ save_session() {
 
     # --- 2. findings.json (SDS 5.6.2) -----------------------------------------
     local all_findings
-    all_findings="$(redis-cli -u "$REDIS_URL" LRANGE findings:all 0 -1 \
+    all_findings="$(_redis_cmd LRANGE findings:all 0 -1 \
         | jq -Rn '[inputs | select(length > 0)]')"
 
     local by_category="{}"
     local cat_keys
-    cat_keys="$(redis-cli -u "$REDIS_URL" KEYS 'findings:*' | grep -v '^findings:all$' || true)"
+    cat_keys="$(_redis_cmd KEYS 'findings:*' | grep -v '^findings:all$' || true)"
     if [[ -n "$cat_keys" ]]; then
         by_category="$(echo "$cat_keys" | while IFS= read -r key; do
             cat_name="${key#findings:}"
-            items="$(redis-cli -u "$REDIS_URL" LRANGE "$key" 0 -1 \
+            items="$(_redis_cmd LRANGE "$key" 0 -1 \
                 | jq -Rn '[inputs | select(length > 0)]')"
             jq -n --arg k "$cat_name" --argjson v "$items" '{($k): $v}'
         done | jq -s 'add // {}')"
@@ -143,7 +162,7 @@ save_session() {
 
     # --- 3. session.json (SDS 5.6.2) ------------------------------------------
     local result_keys
-    result_keys="$(redis-cli -u "$REDIS_URL" KEYS 'result:*' || true)"
+    result_keys="$(_redis_cmd KEYS 'result:*' || true)"
 
     local tasks_json="[]"
     local completed=0 failed=0 total_tasks=0
@@ -262,7 +281,7 @@ restore_session() {
             jq -c '.fields | to_entries[]' "${session_dir}/context.json" | while IFS= read -r entry; do
                 key="$(echo "$entry" | jq -r '.key')"
                 val="$(echo "$entry" | jq -r '.value')"
-                redis-cli -u "$REDIS_URL" HSET context:shared "$key" "$val" > /dev/null
+                _redis_cmd HSET context:shared "$key" "$val" > /dev/null
             done
             echo "  Restored context:shared (${field_count} fields)"
         fi
@@ -274,12 +293,12 @@ restore_session() {
         count=$(jq '.totalCount' "${session_dir}/findings.json")
         if [ "$count" -gt 0 ]; then
             jq -r '.all[]' "${session_dir}/findings.json" | while IFS= read -r finding; do
-                redis-cli -u "$REDIS_URL" RPUSH findings:all "$finding" > /dev/null
+                _redis_cmd RPUSH findings:all "$finding" > /dev/null
             done
             # Restore per-category
             jq -r '.byCategory | keys[]' "${session_dir}/findings.json" 2>/dev/null | while IFS= read -r cat; do
                 jq -r --arg c "$cat" '.byCategory[$c][]' "${session_dir}/findings.json" | while IFS= read -r f; do
-                    redis-cli -u "$REDIS_URL" RPUSH "findings:${cat}" "$f" > /dev/null
+                    _redis_cmd RPUSH "findings:${cat}" "$f" > /dev/null
                 done
             done
             echo "  Restored findings: ${count} total"
@@ -496,7 +515,7 @@ run_analysis() {
 
     # --- Get total findings count from Redis -----------------------------------
     local total_findings
-    total_findings="$(redis-cli -u "$REDIS_URL" LLEN findings:all 2>/dev/null || echo "0")"
+    total_findings="$(_redis_cmd LLEN findings:all 2>/dev/null || echo "0")"
 
     local elapsed="$SECONDS"
 
@@ -514,7 +533,7 @@ run_analysis() {
 
         # Get category findings count from Redis
         local cat_findings_count
-        cat_findings_count="$(redis-cli -u "$REDIS_URL" LLEN "findings:${categories[$i]}" 2>/dev/null || echo "0")"
+        cat_findings_count="$(_redis_cmd LLEN "findings:${categories[$i]}" 2>/dev/null || echo "0")"
 
         echo "${categories[$i]} ($cat_findings_count):"
 

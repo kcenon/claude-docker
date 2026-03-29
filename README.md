@@ -275,6 +275,26 @@ scripts/claude-docker exec claude-b git commit -am "fix: resolve bug"
 
 ### Orchestration (Multi-Agent)
 
+#### Security
+
+`install.sh` auto-generates two secrets and writes them to `.env`:
+
+```bash
+WORKER_AUTH_TOKEN=<random 64-char hex>   # Bearer token for worker HTTP API
+REDIS_PASSWORD=<random 64-char hex>      # Redis --requirepass password
+```
+
+You can regenerate them at any time with:
+
+```bash
+echo "WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
+echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> .env
+```
+
+All orchestration services (Redis, manager, workers) communicate over an isolated
+internal Docker network (`orchestration-internal`) that has no outbound access.
+The worker HTTP API (`POST /task`) rejects requests without a valid `Authorization: Bearer <token>` header.
+
 When orchestration is enabled (Phase 5), the CLI detects it automatically:
 
 ```bash

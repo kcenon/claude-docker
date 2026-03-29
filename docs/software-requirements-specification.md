@@ -427,6 +427,8 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.1.7 | SHALL | Each service SHALL receive `REDIS_URL`, `WORKER_NAME`, `WORKER_PORT`, and `ROLE` environment variables |
 | SRS-8.1.8 | SHALL | Each worker and manager SHALL mount its own dedicated account state directory |
 | SRS-8.1.9 | SHALL | The overlay SHALL NOT modify the base `docker-compose.yml` services |
+| SRS-8.1.10 | SHALL | Redis service SHALL require password authentication via `--requirepass ${REDIS_PASSWORD}`. All clients (manager, workers) SHALL connect using `redis://:${REDIS_PASSWORD}@redis:6379` |
+| SRS-8.1.11 | SHALL | All orchestration services (redis, manager, worker-1~3) SHALL be attached exclusively to an `orchestration-internal` Docker bridge network with `internal: true`, isolating orchestration traffic from the base compose network |
 
 ### 8.2 Worker Server (`scripts/worker-server.js`)
 
@@ -448,6 +450,8 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.2.14 | SHALL | Worker SHALL extract findings from the last markdown code fence tagged `json` in Claude output |
 | SRS-8.2.15 | SHALL | Worker SHALL retry Redis connection up to 3 times with 2-second intervals on connection failure |
 | SRS-8.2.16 | SHALL | Result keys (`result:{taskId}`) SHALL have TTL of 3600 seconds (1 hour) |
+| SRS-8.2.17 | SHALL | Worker HTTP POST `/task` endpoint SHALL require a Bearer token matching `WORKER_AUTH_TOKEN`. Requests without a valid token SHALL be rejected with HTTP 401. Token comparison SHALL use `crypto.timingSafeEqual` to prevent timing attacks |
+| SRS-8.2.18 | SHOULD | If `WORKER_AUTH_TOKEN` is unset at startup, worker SHALL log a warning and allow unauthenticated requests for backward compatibility |
 
 ### 8.3 Manager Helpers (`scripts/manager-helpers.sh`)
 
