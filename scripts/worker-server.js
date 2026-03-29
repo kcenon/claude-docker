@@ -3,6 +3,7 @@
 
 // --- Dependencies -----------------------------------------------------------
 const http = require('http');
+const crypto = require('crypto');                              // SRS-8.6.1
 const { spawn } = require('child_process');                  // SRS-8.2.5
 const { createClient } = require('redis');                   // SRS-8.2.11
 
@@ -417,7 +418,13 @@ function validateAuth(req, res) {
   const authHeader = req.headers['authorization'] || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
-  if (token !== WORKER_AUTH_TOKEN) {
+  // Timing-safe comparison to prevent timing attacks (SRS-8.6.1)
+  const tokenBuf = Buffer.from(token);
+  const expectedBuf = Buffer.from(WORKER_AUTH_TOKEN);
+  const valid = tokenBuf.length === expectedBuf.length &&
+                crypto.timingSafeEqual(tokenBuf, expectedBuf);
+
+  if (!valid) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Unauthorized' }));
     return false;
