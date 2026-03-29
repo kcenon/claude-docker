@@ -517,6 +517,11 @@ generate_env() {
                 echo "CLAUDE_API_KEY_3=$API_KEY_W3"
             fi
             echo ""
+
+            echo "# ==== Security: Worker & Redis Auth ===="
+            echo "WORKER_AUTH_TOKEN=$(openssl rand -hex 32)"
+            echo "REDIS_PASSWORD=$(openssl rand -hex 32)"
+            echo ""
         fi
     } > "$env_file"
 
