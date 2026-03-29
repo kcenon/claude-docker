@@ -151,16 +151,6 @@ build_merged_config_dir() {
         done
     done < <(list_account_dirs)
 
-    # Also include host's own ~/.claude/projects (if present and different)
-    if [[ -d "$HOME/.claude/projects" ]]; then
-        for proj in "$HOME/.claude/projects"/*/; do
-            [[ -d "$proj" ]] || continue
-            local proj_name
-            proj_name=$(basename "$proj")
-            ln -sf "$proj" "$tmpdir/projects/host_${proj_name}"
-        done
-    fi
-
     echo "$tmpdir"
 }
 
@@ -441,11 +431,6 @@ cmd_usage() {
         fi
     done < <(list_account_dirs)
 
-    if [[ -d "$HOME/.claude/projects" ]]; then
-        local host_count
-        host_count=$(find "$HOME/.claude/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
-        [[ "$host_count" -gt 0 ]] && echo -e "  ${GREEN}*${NC} host ${DIM}(${host_count} projects)${NC}"
-    fi
     echo ""
 
     # Run ccusage with merged directory
