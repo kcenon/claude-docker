@@ -488,10 +488,10 @@ run_analysis() {
         if wait "$pid" 2>/dev/null; then
             :
         else
-            ((failures++))
+            failures=$((failures + 1))
             echo "  Warning: ${names[$i]} (${workers[$i]}) failed or timed out" >&2
         fi
-        ((i++))
+        i=$((i + 1))
     done
 
     # --- Get total findings count from Redis -----------------------------------
@@ -534,7 +534,7 @@ run_analysis() {
             echo "  (no response)"
         fi
 
-        ((i++))
+        i=$((i + 1))
     done
 
     # --- Auto-save session -----------------------------------------------------
