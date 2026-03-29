@@ -152,6 +152,7 @@ save_session() {
     session_id="$(date -u +%Y%m%dT%H%M%SZ)_$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     local session_dir="$ARCHIVE_DIR/sessions/$session_id"
     mkdir -p "$session_dir"
+    chmod 700 "$ARCHIVE_DIR" "$ARCHIVE_DIR/sessions" "$session_dir" 2>/dev/null || true
 
     local now
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -290,6 +291,29 @@ save_session() {
         jq ".sessions |= .[-50:]" "$index_file" > "${index_file}.tmp" \
             && mv "${index_file}.tmp" "$index_file"
     fi
+
+    # --- 6. Size-based pruning: enforce MAX_ARCHIVE_SIZE_MB -------------------
+    local max_size_mb="${MAX_ARCHIVE_SIZE_MB:-500}"
+    local max_size_kb=$((max_size_mb * 1024))
+    local archive_size_kb
+    archive_size_kb="$(du -sk "$ARCHIVE_DIR/sessions" 2>/dev/null | awk '{print $1}')"
+    archive_size_kb="${archive_size_kb:-0}"
+
+    while (( archive_size_kb > max_size_kb )); do
+        local oldest_id
+        oldest_id="$(jq -r '.sessions[0].id // empty' "$index_file")"
+        [[ -z "$oldest_id" ]] && break
+
+        # Don't prune the session we just saved
+        [[ "$oldest_id" == "$session_id" ]] && break
+
+        rm -rf "$ARCHIVE_DIR/sessions/$oldest_id"
+        jq '.sessions |= .[1:]' "$index_file" > "${index_file}.tmp" \
+            && mv "${index_file}.tmp" "$index_file"
+
+        archive_size_kb="$(du -sk "$ARCHIVE_DIR/sessions" 2>/dev/null | awk '{print $1}')"
+        archive_size_kb="${archive_size_kb:-0}"
+    done
 
     log_audit "session_save" \
         "sessionId=${session_id}" \

@@ -24,6 +24,9 @@ services:
 
   manager:
     image: claude-code-base:latest                              # SRS-8.1.4
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     depends_on:
       redis:
         condition: service_healthy
@@ -60,6 +63,9 @@ services:
 
   worker-1:
     image: claude-code-base:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     depends_on:
       redis:
         condition: service_healthy
@@ -94,6 +100,9 @@ services:
 
   worker-2:
     image: claude-code-base:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     depends_on:
       redis:
         condition: service_healthy
@@ -128,6 +137,9 @@ services:
 
   worker-3:
     image: claude-code-base:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     depends_on:
       redis:
         condition: service_healthy
