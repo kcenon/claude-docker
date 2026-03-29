@@ -335,6 +335,11 @@ run_prerequisite_checks() {
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         log_success "All prerequisites satisfied"
+        # Soft check: Node.js for host-side usage tracking (not required for core functionality)
+        if ! check_command npx; then
+            log_warn "Node.js/npx not found on host. The 'usage' subcommand requires it."
+            log_info "Install Node.js for token usage reports: https://nodejs.org/"
+        fi
         return 0
     fi
 

@@ -1643,7 +1643,7 @@ Host                                    Docker
 | `scripts/worker-server.js` | 5 | SRS-8.2.1~11 |
 | `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
 | `scripts/init-firewall.sh` | 4 | SRS-7.3 |
-| `scripts/claude-docker` | — | Utility: CLI wrapper |
+| `scripts/claude-docker` | — | Utility: CLI wrapper (includes usage tracking via ccusage) |
 | `scripts/install.sh` | — | Utility: project installer |
 | `scripts/remove.sh` | — | Utility: project uninstaller |
 | `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |

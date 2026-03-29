@@ -17,7 +17,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) 24.0+ (Linux) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS / Windows)
-- [Node.js](https://nodejs.org/) 20+ (optional -- only needed if running Claude Code on host)
+- [Node.js](https://nodejs.org/) 20+ (optional -- needed for `usage` subcommand token reports)
 - Git
 
 **Platform-specific:**
@@ -370,6 +370,34 @@ show_session 20260328T143000Z_a1b2c3d4
 Sessions persist in `~/.claude-state/analysis-archive/` on the host and survive
 `docker compose down -v`. Maximum 50 sessions are retained; oldest are pruned
 automatically.
+
+### Token Usage Reports
+
+View aggregated token usage across all container accounts using
+[ccusage](https://github.com/ryoppippi/ccusage). Runs on the host (not
+inside containers) and requires Node.js/npx.
+
+```bash
+# Daily usage (default)
+scripts/claude-docker usage
+
+# Monthly or per-session breakdown
+scripts/claude-docker usage monthly
+scripts/claude-docker usage session
+
+# Filter by date range
+scripts/claude-docker usage daily --since 20260301 --until 20260329
+
+# JSON output for scripting
+scripts/claude-docker usage daily --json
+
+# Per-model cost breakdown
+scripts/claude-docker usage daily --breakdown
+```
+
+The command automatically detects all account state directories under
+`~/.claude-state/` and combines their data into a unified report.
+Containers do not need to be running.
 
 ## Troubleshooting
 

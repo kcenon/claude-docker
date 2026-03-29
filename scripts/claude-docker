@@ -20,6 +20,7 @@
 #   save          Save session to cold archive
 #   restore [id]  Restore session from archive (default: latest)
 #   sessions      List archived sessions
+#   usage [type]  Show token usage report (requires Node.js on host)
 #   build         Build/rebuild Docker image
 #   config        Show resolved compose configuration
 #   compose ...   Pass raw args to docker compose (with auto -f flags)
@@ -38,6 +39,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
+
+log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Compose Command Builder --------------------------------------------------
 
@@ -106,6 +111,28 @@ get_primary_service() {
     else
         echo "claude-a"
     fi
+}
+
+# --- Config Dir Path Builder ---------------------------------------------------
+
+# Scan ~/.claude-state/account-* and return comma-separated path string
+# for CLAUDE_CONFIG_DIR (used by ccusage for multi-directory aggregation).
+build_config_dir_path() {
+    local state_base="$HOME/.claude-state"
+    local dirs=()
+
+    if [[ ! -d "$state_base" ]]; then
+        echo ""
+        return
+    fi
+
+    for dir in "$state_base"/account-*; do
+        [[ -d "$dir" ]] || continue
+        dirs+=("$dir")
+    done
+
+    local IFS=','
+    echo "${dirs[*]}"
 }
 
 # --- Subcommands --------------------------------------------------------------
@@ -266,6 +293,58 @@ cmd_compose() {
     eval "$cmd" "$@"
 }
 
+cmd_usage() {
+    # Check for npx availability (runs on host, not in container)
+    if ! command -v npx &>/dev/null; then
+        log_error "npx not found. Node.js is required to run ccusage."
+        echo -e "  Install Node.js 20+: ${CYAN}https://nodejs.org/${NC}"
+        echo -e "  macOS: ${DIM}brew install node@20${NC}"
+        echo -e "  Linux: ${DIM}curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs${NC}"
+        exit 1
+    fi
+
+    # Build aggregated config dir path from all account state directories
+    local config_dir_path
+    config_dir_path=$(build_config_dir_path)
+
+    if [[ -z "$config_dir_path" ]]; then
+        log_error "No account state directories found in $HOME/.claude-state/"
+        echo -e "  Run ${GREEN}scripts/install.sh${NC} or create directories manually:"
+        echo -e "  ${DIM}mkdir -p ~/.claude-state/account-a ~/.claude-state/account-b${NC}"
+        exit 1
+    fi
+
+    # Parse report type: first positional arg if it matches a known ccusage type
+    local report_type="daily"
+    local pass_args=()
+
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            daily|monthly|session|blocks|statusline)
+                report_type="$1"
+                shift
+                ;;
+        esac
+    fi
+    pass_args=("$@")
+
+    # Display aggregation header
+    echo -e "${BOLD}Token Usage Report${NC}"
+    echo -e "${DIM}Report type: $report_type${NC}"
+    echo -e "${DIM}Aggregating accounts:${NC}"
+
+    local IFS=','
+    for dir in $config_dir_path; do
+        local name
+        name=$(basename "$dir")
+        echo -e "  ${GREEN}*${NC} $name ${DIM}($dir)${NC}"
+    done
+    echo ""
+
+    # Run ccusage with combined CLAUDE_CONFIG_DIR
+    CLAUDE_CONFIG_DIR="$config_dir_path" npx ccusage@latest "$report_type" "${pass_args[@]}"
+}
+
 cmd_help() {
     local cmd
     cmd=$(get_compose_cmd)
@@ -302,6 +381,11 @@ ${BOLD}COLD MEMORY${NC}
   ${GREEN}restore${NC} [id|latest]   Restore session from archive
   ${GREEN}sessions${NC}              List archived sessions
 
+${BOLD}USAGE TRACKING${NC}
+  ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
+                        Types: daily, monthly, session, blocks, statusline
+                        Flags: --since, --until, --json, --breakdown, --compact
+
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration
   ${GREEN}compose${NC} ...           Pass raw args to docker compose
@@ -333,6 +417,7 @@ main() {
         save)      cmd_save "$@" ;;
         restore)   cmd_restore "$@" ;;
         sessions)  cmd_sessions "$@" ;;
+        usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
         config)    cmd_config "$@" ;;
         compose)   cmd_compose "$@" ;;
