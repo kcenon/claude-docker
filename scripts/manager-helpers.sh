@@ -418,3 +418,126 @@ show_session() {
         echo "  (findings.json missing)"
     fi
 }
+
+# SRS-8.7.2: Run multi-persona analysis across all workers
+# Loads personas from /scripts/personas.json, wraps the user prompt with each
+# persona's instructions, dispatches in parallel, collects results, prints a
+# categorized summary, and auto-saves the session.
+# Args: $1 = user prompt, $2 = timeout per worker (default 300s)
+run_analysis() {
+    local prompt="${1:?Usage: run_analysis <prompt> [timeout]}"
+    local timeout="${2:-300}"
+    local personas_file="/scripts/personas.json"
+    SECONDS=0
+
+    # --- Validate prerequisites ------------------------------------------------
+    _require_redis || return 1
+    if [ ! -f "$personas_file" ]; then
+        echo "Error: Personas file not found: $personas_file" >&2
+        return 1
+    fi
+
+    local persona_count
+    persona_count="$(jq '.personas | length' "$personas_file")"
+    if [ "$persona_count" -eq 0 ]; then
+        echo "Error: No personas defined in $personas_file" >&2
+        return 1
+    fi
+
+    echo "=== Analysis started ($persona_count personas, timeout: ${timeout}s) ==="
+    echo ""
+
+    # --- Clear previous findings for clean run ---------------------------------
+    clear_findings > /dev/null 2>&1
+
+    # --- Dispatch each persona in parallel -------------------------------------
+    local pids=() tmpfiles=() workers=() names=() categories=() icons=()
+
+    while IFS= read -r entry; do
+        local key name role worker icon category
+        key="$(echo "$entry" | jq -r '.key')"
+        name="$(echo "$entry" | jq -r '.value.name')"
+        role="$(echo "$entry" | jq -r '.value.role')"
+        worker="$(echo "$entry" | jq -r '.value.worker')"
+        icon="$(echo "$entry" | jq -r '.value.icon')"
+        category="$(echo "$entry" | jq -r '.value.category')"
+
+        # Wrap user prompt with persona instructions
+        local wrapped_prompt
+        wrapped_prompt="Analyze the following from your perspective as ${role}: ${prompt}. Respond with JSON: {\"summary\":\"...\",\"findings\":[{\"category\":\"${category}\",\"summary\":\"...\"}],\"status\":\"done\"}"
+
+        local tmp
+        tmp=$(mktemp)
+        tmpfiles+=("$tmp")
+        workers+=("$worker")
+        names+=("$name")
+        categories+=("$category")
+        icons+=("$icon")
+
+        echo "  [$icon] Dispatching to $worker ($name — $role)..."
+        dispatch_task "$worker" "$wrapped_prompt" "$timeout" > "$tmp" 2>&1 &
+        pids+=($!)
+    done < <(jq -c '.personas | to_entries[]' "$personas_file")
+
+    echo ""
+
+    # --- Wait for all workers --------------------------------------------------
+    local failures=0
+    local i=0
+    for pid in "${pids[@]}"; do
+        if wait "$pid" 2>/dev/null; then
+            :
+        else
+            failures=$((failures + 1))
+            echo "  Warning: ${names[$i]} (${workers[$i]}) failed or timed out" >&2
+        fi
+        i=$((i + 1))
+    done
+
+    # --- Get total findings count from Redis -----------------------------------
+    local total_findings
+    total_findings="$(redis-cli -u "$REDIS_URL" LLEN findings:all 2>/dev/null || echo "0")"
+
+    local elapsed="$SECONDS"
+
+    # --- Print categorized summary ---------------------------------------------
+    echo "=== Analysis Complete ($total_findings findings, ${elapsed}s) ==="
+    echo ""
+
+    i=0
+    for tmp in "${tmpfiles[@]}"; do
+        local result_json status
+        result_json="$(cat "$tmp")"
+        rm -f "$tmp"
+
+        status="$(echo "$result_json" | jq -r '.status // "unknown"' 2>/dev/null || echo "error")"
+
+        # Get category findings count from Redis
+        local cat_findings_count
+        cat_findings_count="$(redis-cli -u "$REDIS_URL" LLEN "findings:${categories[$i]}" 2>/dev/null || echo "0")"
+
+        echo "${categories[$i]} ($cat_findings_count):"
+
+        if [ "$status" = "done" ] || [ "$status" = "partial" ]; then
+            local findings_count
+            findings_count="$(echo "$result_json" | jq '.findings | length' 2>/dev/null || echo "0")"
+            if [ "$findings_count" -gt 0 ]; then
+                echo "$result_json" | jq -r '.findings[] | "  - " + (.summary // "no description")' 2>/dev/null || true
+            else
+                echo "  (no findings)"
+            fi
+        elif [ "$status" = "error" ]; then
+            local error_msg
+            error_msg="$(echo "$result_json" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unknown error")"
+            echo "  Error: $error_msg"
+        else
+            echo "  (no response)"
+        fi
+
+        i=$((i + 1))
+    done
+
+    # --- Auto-save session -----------------------------------------------------
+    echo ""
+    save_session
+}
