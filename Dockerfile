@@ -43,7 +43,9 @@ RUN npm install -g redis \
     && npm cache clean --force
 
 # SRS-5.1.5: Memory heap limit
-ENV NODE_OPTIONS=--max-old-space-size=4096
+# NODE_PATH: Allow require() to find globally installed npm packages (e.g. redis)
+ENV NODE_OPTIONS=--max-old-space-size=4096 \
+    NODE_PATH=/usr/local/lib/node_modules
 
 # SRS-5.1.7: Run as non-root user
 # Why: node user (UID 1000) comes pre-created in node:20-slim

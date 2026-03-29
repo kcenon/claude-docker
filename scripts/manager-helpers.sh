@@ -90,7 +90,7 @@ save_session() {
 
     # --- Session ID & directory ------------------------------------------------
     local session_id
-    session_id="$(date -u +%Y%m%dT%H%M%SZ)_$(head -c4 /dev/urandom | xxd -p)"
+    session_id="$(date -u +%Y%m%dT%H%M%SZ)_$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     local session_dir="$ARCHIVE_DIR/sessions/$session_id"
     mkdir -p "$session_dir"
 
