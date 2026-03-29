@@ -9,11 +9,15 @@ _require_redis() {
 }
 
 # Helper: run redis-cli with optional password authentication (SRS-8.6.2)
+# Constructs REDIS_URL at runtime from REDIS_HOST/REDIS_PORT/REDIS_PASSWORD
 _redis_cmd() {
+    local _host="${REDIS_HOST:-redis}"
+    local _port="${REDIS_PORT:-6379}"
+    local _url="redis://${_host}:${_port}"
     if [[ -n "${REDIS_PASSWORD:-}" ]]; then
-        redis-cli -u "$REDIS_URL" -a "$REDIS_PASSWORD" --no-auth-warning "$@"
+        redis-cli -u "$_url" -a "$REDIS_PASSWORD" --no-auth-warning "$@"
     else
-        redis-cli -u "$REDIS_URL" "$@"
+        redis-cli -u "$_url" "$@"
     fi
 }
 

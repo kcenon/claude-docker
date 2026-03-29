@@ -9,7 +9,12 @@ const { createClient } = require('redis');                   // SRS-8.2.11
 
 // --- Configuration ----------------------------------------------------------
 const WORKER_PORT = parseInt(process.env.WORKER_PORT, 10) || 9000; // SRS-8.2.1
-const REDIS_URL   = process.env.REDIS_URL || 'redis://redis:6379';
+const REDIS_HOST  = process.env.REDIS_HOST || 'redis';
+const REDIS_PORT  = process.env.REDIS_PORT || '6379';
+const REDIS_PASS  = process.env.REDIS_PASSWORD || '';           // SRS-8.6.2
+const REDIS_URL   = REDIS_PASS
+  ? `redis://:${REDIS_PASS}@${REDIS_HOST}:${REDIS_PORT}`
+  : `redis://${REDIS_HOST}:${REDIS_PORT}`;
 const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
 const WORKER_PERSONA = process.env.WORKER_PERSONA || '';      // SRS-8.7.1
 const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN || ''; // SRS-8.6.1
