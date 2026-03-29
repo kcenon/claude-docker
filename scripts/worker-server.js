@@ -380,7 +380,7 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
   if (Buffer.byteLength(prompt, 'utf-8') > MAX_PROMPT_SIZE) {
     logEvent('task_rejected', { taskId, reason: 'prompt_too_large', promptBytes: Buffer.byteLength(prompt, 'utf-8'), limitBytes: MAX_PROMPT_SIZE });
     res.writeHead(413, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: `Prompt exceeds maximum size (${MAX_PROMPT_SIZE} bytes)`, taskId }));
+    res.end(JSON.stringify({ error: 'Prompt too large', maxBytes: MAX_PROMPT_SIZE }));
     return;
   }
 
