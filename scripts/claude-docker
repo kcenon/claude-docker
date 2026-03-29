@@ -169,6 +169,36 @@ cmd_claude() {
     eval "$cmd exec $service claude"
 }
 
+cmd_auth() {
+    local service="${1:-}"
+    local cmd
+    cmd=$(get_compose_cmd)
+
+    if [[ -z "$service" ]]; then
+        # Auth all services that have state directories
+        local services=()
+        if [[ "$cmd" == *"orchestration"* ]]; then
+            services=("manager" "worker-1" "worker-2" "worker-3")
+        else
+            services=("claude-a" "claude-b")
+        fi
+
+        for svc in "${services[@]}"; do
+            echo -e "\n${BOLD}=== Authenticating: $svc ===${NC}"
+            if eval "$cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$svc"; then
+                eval "$cmd exec $svc claude auth login" || {
+                    log_warn "$svc: auth failed or skipped"
+                }
+            else
+                log_warn "$svc: container not running (start with: claude-docker up)"
+            fi
+        done
+    else
+        echo -e "${CYAN}Authenticating in ${BOLD}$service${NC}${CYAN}...${NC}"
+        eval "$cmd exec $service claude auth login"
+    fi
+}
+
 cmd_dispatch() {
     local worker="${1:?Usage: claude-docker dispatch <worker> <prompt>}"
     local prompt="${2:?Usage: claude-docker dispatch <worker> <prompt>}"
@@ -259,6 +289,7 @@ ${BOLD}LIFECYCLE${NC}
 
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: $primary)
+  ${GREEN}auth${NC} [service]        Authenticate Claude Code (OAuth login in container)
   ${GREEN}exec${NC} <service>        Open shell in a service
 
 ${BOLD}ORCHESTRATION${NC}
@@ -295,6 +326,7 @@ main() {
         ps)        cmd_ps "$@" ;;
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
+        auth)      cmd_auth "$@" ;;
         dispatch)  cmd_dispatch "$@" ;;
         status)    cmd_status "$@" ;;
         findings)  cmd_findings "$@" ;;

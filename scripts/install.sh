@@ -331,10 +331,7 @@ run_prerequisite_checks() {
     check_docker_compose || missing+=("docker-compose")
     check_git || missing+=("git")
 
-    # Node.js only required for Path A (OAuth) authentication
-    if [[ "$AUTH_PATH" == "A" ]]; then
-        check_node || missing+=("node")
-    fi
+    # Node.js no longer required on host — auth happens inside containers
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         log_success "All prerequisites satisfied"
@@ -581,41 +578,15 @@ run_authentication() {
         return 0
     fi
 
-    # Path A: OAuth browser login
-    log_info "Path A: Browser login required for each account"
-
-    if ! check_command claude; then
-        log_info "Installing Claude Code on host for authentication..."
-        npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
-    fi
-
-    local accounts=("account-a" "account-b")
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        accounts+=("account-manager" "account-w1" "account-w2" "account-w3")
-    fi
-
-    for account in "${accounts[@]}"; do
-        local state_dir="$HOME/.claude-state/$account"
-
-        if [[ -f "$state_dir/.credentials.json" ]]; then
-            log_info "$account: credentials already exist, skipping"
-            continue
-        fi
-
-        echo -e "\n${BOLD}Authenticating: $account${NC}"
-        log_info "A browser window will open for OAuth login..."
-
-        if CLAUDE_CONFIG_DIR="$state_dir" claude auth login; then
-            log_success "$account: authenticated"
-        else
-            log_error "$account: authentication failed"
-            if ! prompt_confirm "Continue without authenticating $account?"; then
-                exit 1
-            fi
-        fi
-    done
-
-    log_success "Authentication complete"
+    # Path A: OAuth — authenticate inside containers, not on the host.
+    # On macOS, host 'claude auth login' stores tokens in Keychain which
+    # cannot be bind-mounted into Linux containers. Container-internal auth
+    # stores tokens in .credentials.json inside the bind-mounted state dir,
+    # ensuring persistence across restarts.
+    log_info "Path A: OAuth will be configured inside containers after startup"
+    log_info "Each container stores credentials in its bind-mounted state directory"
+    log_info "You will authenticate when running 'claude' for the first time in each container"
+    log_success "Authentication will be handled after container startup"
 }
 
 # --- Worktree Setup (Tier B) -------------------------------------------------
@@ -842,8 +813,9 @@ print_summary() {
     echo ""
 
     if [[ "$AUTH_PATH" == "A" ]]; then
-        echo -e "${DIM}  Token expired? Run on HOST (not in container):${NC}"
-        echo -e "${DIM}  CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login${NC}"
+        echo -e "${DIM}  First run? Authenticate inside the container:${NC}"
+        echo -e "${DIM}  scripts/claude-docker claude${NC}"
+        echo -e "${DIM}  (Follow the OAuth prompt — credentials persist in bind-mounted state dir)${NC}"
     fi
 
     echo ""

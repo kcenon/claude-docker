@@ -376,12 +376,11 @@ automatically.
 **"Authentication expired" inside container:**
 
 ```bash
-# Interactive authentication manager (recommended)
-scripts/reauth.sh
+# Re-authenticate inside the container
+scripts/claude-docker auth
 
-# Or manually re-authenticate on HOST (not inside container)
-CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login
-docker compose restart claude-a
+# Or authenticate a specific service
+scripts/claude-docker auth claude-a
 ```
 
 **Permission denied on bind mount (Linux):**
@@ -435,7 +434,6 @@ claude-docker/
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
 |   +-- claude-docker                  Unified CLI wrapper
-|   +-- reauth.sh                     Authentication manager
 |   +-- remove.sh                     Complete removal script
 +-- docs/
     +-- product-requirements-document.md
