@@ -461,7 +461,7 @@ cmd_analyze() {
     echo -e "${BOLD}Multi-Persona Analysis${NC}"
     echo -e "${DIM}Dispatching to Sentinel, Reviewer, and Profiler...${NC}"
     echo ""
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && run_analysis \"$prompt\" $timeout'"
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && run_analysis \"\$1\" \"\$2\"' -- \"$prompt\" \"$timeout\""
 }
 
 cmd_help() {
@@ -495,14 +495,14 @@ ${BOLD}ORCHESTRATION${NC}
   ${GREEN}status${NC}                Show worker status
   ${GREEN}findings${NC} [category]   Show accumulated findings
 
+${BOLD}ANALYSIS${NC}
+  ${GREEN}analyze${NC} <prompt> [timeout]  Multi-persona project analysis (default: 300s)
+                              Dispatches to Sentinel, Reviewer, and Profiler
+
 ${BOLD}COLD MEMORY${NC}
   ${GREEN}save${NC}                  Save session to archive
   ${GREEN}restore${NC} [id|latest]   Restore session from archive
   ${GREEN}sessions${NC}              List archived sessions
-
-${BOLD}ANALYSIS${NC}
-  ${GREEN}analyze${NC} <prompt> [timeout]  Multi-persona project analysis (default: 300s)
-                              Dispatches to Sentinel, Reviewer, and Profiler
 
 ${BOLD}USAGE TRACKING${NC}
   ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
