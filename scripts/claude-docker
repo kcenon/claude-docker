@@ -213,7 +213,7 @@ cmd_auth() {
         for svc in "${services[@]}"; do
             echo -e "\n${BOLD}=== Authenticating: $svc ===${NC}"
             if eval "$cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$svc"; then
-                eval "$cmd exec $svc claude auth login" || {
+                eval "$cmd exec $svc claude auth login" < /dev/tty || {
                     log_warn "$svc: auth failed or skipped"
                 }
             else
