@@ -2,3 +2,7 @@
 .env.*
 !.env.example
 .claude-state/
+
+# npm cache (from host claude install)
+.npm-cache/
+package-lock.json
