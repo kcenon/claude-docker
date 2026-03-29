@@ -34,10 +34,23 @@ let currentTaskId = null;
 async function connectRedis() {                              // SRS-8.2.15
   for (let attempt = 1; attempt <= REDIS_RETRY_LIMIT; attempt++) {
     try {
-      const client = createClient({ url: REDIS_URL });
+      const client = createClient({
+        url: REDIS_URL,
+        socket: {
+          connectTimeout: 5000,                                  // 5s connect timeout
+          reconnectStrategy: (retries) => {                      // SRS-8.2.15
+            if (retries > 20) return new Error('Max reconnect attempts reached');
+            const base = Math.min(100 * Math.pow(2, retries), 3000); // 100ms..3s
+            const jitter = Math.floor(Math.random() * base * 0.2);   // up to 20% jitter
+            const delay = base + jitter;
+            console.log(`[redis] Reconnecting in ${delay}ms (attempt ${retries})`);
+            return delay;
+          },
+        },
+      });
       client.on('error', (err) => console.error(`[redis] ${err.message}`));
       await client.connect();
-      console.log(`[redis] Connected to ${REDIS_URL} (attempt ${attempt})`);
+      console.log(`[redis] Connected to ${REDIS_HOST}:${REDIS_PORT} (attempt ${attempt})`);
       return client;
     } catch (err) {
       console.error(`[redis] Attempt ${attempt}/${REDIS_RETRY_LIMIT} failed: ${err.message}`);
@@ -400,16 +413,32 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
 }
 
 /**
- * GET /health handler — simple health check endpoint.
+ * GET /health handler — health check with Redis memory usage.
  */
-function handleHealth(req, res) {
+async function handleHealth(req, res) {
   const healthy = redis !== null && redis.isOpen;
-  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
+  const payload = {
     status: healthy ? 'ok' : 'unhealthy',
     worker: WORKER_NAME,
     redis: healthy ? 'connected' : 'disconnected',
-  }));
+  };
+
+  if (healthy) {
+    try {
+      const info = await redis.info('memory');
+      const usedMatch = info.match(/used_memory_human:(\S+)/);
+      const maxMatch = info.match(/maxmemory_human:(\S+)/);
+      payload.redisMemory = {
+        used: usedMatch ? usedMatch[1] : 'unknown',
+        max: maxMatch ? maxMatch[1] : 'unknown',
+      };
+    } catch (err) {
+      console.warn(`[health] Could not fetch Redis memory info: ${err.message}`);
+    }
+  }
+
+  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
 }
 
 /**
@@ -451,7 +480,12 @@ const server = http.createServer((req, res) => {
       }
     });
   } else if (req.method === 'GET' && req.url === '/health') {
-    handleHealth(req, res);
+    handleHealth(req, res).catch((err) => {
+      if (!res.headersSent) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'unhealthy', error: err.message }));
+      }
+    });
   } else {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
