@@ -525,7 +525,8 @@ generate_env() {
         fi
     } > "$env_file"
 
-    log_success ".env generated at $env_file"
+    chmod 600 "$env_file"
+    log_success ".env generated at $env_file (permissions: 600)"
 }
 
 # --- Directory Creation -------------------------------------------------------
@@ -550,13 +551,25 @@ create_state_dirs() {
 
     for dir in "${dirs[@]}"; do
         if [[ -d "$dir" ]]; then
-            log_info "Already exists: $dir"
+            # Enforce permissions on existing dirs (may have been created with defaults)
+            chmod 700 "$dir"
+            log_info "Already exists (permissions enforced): $dir"
         else
             mkdir -p "$dir"
             chmod 700 "$dir"
             log_success "Created: $dir"
         fi
     done
+
+    # Harden any existing credential files (Path A OAuth stores .credentials.json)
+    local cred_files
+    cred_files=$(find "$HOME/.claude-state" -name "*.credentials.json" -o -name ".credentials.json" 2>/dev/null || true)
+    if [[ -n "$cred_files" ]]; then
+        while IFS= read -r cfile; do
+            chmod 600 "$cfile"
+        done <<< "$cred_files"
+        log_success "Credential file permissions set to 600"
+    fi
 }
 
 # --- Docker Build -------------------------------------------------------------

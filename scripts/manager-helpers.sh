@@ -8,6 +8,37 @@ _require_redis() {
     _redis_cmd PING > /dev/null 2>&1 || { echo "Error: Redis unreachable" >&2; return 1; }
 }
 
+# Structured audit logging for security-sensitive operations
+# Appends timestamped JSON entries to ${ARCHIVE_DIR}/audit.log
+# Args: $1 = event type, $2..N = key=value pairs
+# Sensitive values (tokens, passwords) are never logged.
+log_audit() {
+    [[ "${AUDIT_LOG:-true}" != "true" ]] && return 0
+
+    local event="${1:?Usage: log_audit <event> [key=value ...]}"
+    shift
+    local archive_dir="${ARCHIVE_DIR:-/archive}"
+    local audit_file="${archive_dir}/audit.log"
+
+    # Build JSON object from key=value pairs
+    local json_pairs=""
+    for pair in "$@"; do
+        local key="${pair%%=*}"
+        local val="${pair#*=}"
+        json_pairs="${json_pairs}, \"${key}\": \"${val}\""
+    done
+
+    local entry
+    entry=$(jq -nc \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg event "$event" \
+        --arg host "$(hostname 2>/dev/null || echo 'unknown')" \
+        "{timestamp: \$ts, event: \$event, host: \$host${json_pairs}}")
+
+    mkdir -p "$archive_dir"
+    echo "$entry" >> "$audit_file"
+}
+
 # Helper: run redis-cli with optional password authentication (SRS-8.6.2)
 # Constructs REDIS_URL at runtime from REDIS_HOST/REDIS_PORT/REDIS_PASSWORD
 _redis_cmd() {
@@ -34,6 +65,12 @@ dispatch_task() {
     if [[ -n "${WORKER_AUTH_TOKEN:-}" ]]; then
         auth_header=(-H "Authorization: Bearer ${WORKER_AUTH_TOKEN}")
     fi
+
+    log_audit "task_dispatch" \
+        "taskId=${task_id}" \
+        "worker=${worker}" \
+        "timeout=${timeout}" \
+        "promptLength=${#prompt}"
 
     curl -s --max-time "$((timeout + 30))" \
         -X POST "http://${worker}:9000/task" \
@@ -251,6 +288,11 @@ save_session() {
             && mv "${index_file}.tmp" "$index_file"
     fi
 
+    log_audit "session_save" \
+        "sessionId=${session_id}" \
+        "findings=${total_count}" \
+        "tasks=${total_tasks}"
+
     echo "Session saved: $session_id ($session_dir)"
 }
 
@@ -304,6 +346,8 @@ restore_session() {
             echo "  Restored findings: ${count} total"
         fi
     fi
+
+    log_audit "session_restore" "sessionId=${session_id}"
 
     echo "Session restored: ${session_id}"
     echo "  Workers will see prior findings on their next task."
