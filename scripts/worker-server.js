@@ -22,6 +22,24 @@ const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
 const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
 const REDIS_RETRY_DELAY_MS = 2000;
 
+// --- Structured logging -----------------------------------------------------
+
+/**
+ * Emit a structured JSON audit log entry to stdout.
+ * Sensitive fields (tokens, passwords) are never included.
+ * @param {string} event - Event name
+ * @param {Record<string, any>} fields - Additional fields
+ */
+function logEvent(event, fields = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    worker: WORKER_NAME,
+    ...fields,
+  };
+  console.log(JSON.stringify(entry));
+}
+
 // --- State ------------------------------------------------------------------
 let redis = null;
 let currentTaskId = null;
@@ -358,7 +376,7 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     return;
   }
 
-  console.log(`[task] ${taskId} — starting (timeout: ${timeout}s)`);
+  logEvent('task_start', { taskId, timeout, promptLength: prompt.length });
   currentTaskId = taskId;
   await setWorkerBusy(taskId);
   const taskStartedAt = new Date().toISOString();
@@ -379,7 +397,7 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     const claudeResult = await executeClaude(enrichedPrompt, timeoutMs);
 
     if (claudeResult.timedOut) {
-      console.error(`[task] ${taskId} — timed out after ${timeout}s`);
+      logEvent('task_timeout', { taskId, timeout });
       const errorResult = { summary: 'Task timed out', findings: [], status: 'error' };
       await writeResults(taskId, errorResult, '');
       res.writeHead(504, { 'Content-Type': 'application/json' });
@@ -394,7 +412,11 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     await writeResults(taskId, result, claudeResult.stdout, taskStartedAt, taskStartMs);
 
     // Step 6: Respond to manager (SRS-8.2.10)
-    console.log(`[task] ${taskId} — completed (status: ${result.status})`);
+    logEvent('task_complete', {
+      taskId, status: result.status,
+      findingsCount: result.findings.length,
+      durationMs: Date.now() - taskStartMs,
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: result.status,
@@ -404,7 +426,7 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
     }));
 
   } catch (err) {
-    console.error(`[task] ${taskId} — error: ${err.message}`);
+    logEvent('task_error', { taskId, error: err.message, durationMs: Date.now() - taskStartMs });
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'error', taskId, error: err.message }));
   } finally {
