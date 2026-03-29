@@ -75,16 +75,28 @@ dispatch_task() {
         "promptLength=${#prompt}" \
         "promptHash=${prompt_hash}"
 
-    curl -s --connect-timeout 10 --max-time "$((timeout + 30))" \
+    # Use -w to capture HTTP status, -o to capture body
+    local tmp_body
+    tmp_body=$(mktemp)
+    local http_status
+    http_status=$(curl -s --connect-timeout 10 --max-time "$((timeout + 30))" \
+        -o "$tmp_body" -w "%{http_code}" \
         -X POST "http://${worker}:9000/task" \
         -H "Content-Type: application/json" \
         "${auth_header[@]}" \
-        -d "$(jq -n \
-            --arg taskId "$task_id" \
-            --arg prompt "$prompt" \
-            --argjson timeout "$timeout" \
-            '{taskId: $taskId, prompt: $prompt, timeout: $timeout}'
-        )"
+        -d "$(jq -nc --arg id "$task_id" --arg p "$prompt" --arg t "$timeout" \
+            '{taskId: $id, prompt: $p, timeout: ($t | tonumber)}')")
+
+    local body
+    body=$(cat "$tmp_body")
+    rm -f "$tmp_body"
+
+    # Output body for callers that need it
+    echo "$body"
+
+    # Return non-zero for client/server errors so retry activates
+    [[ "$http_status" =~ ^[45] ]] && return 1
+    return 0
 }
 
 # Dispatch a task with retry and exponential backoff
