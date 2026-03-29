@@ -115,24 +115,52 @@ get_primary_service() {
 
 # --- Config Dir Path Builder ---------------------------------------------------
 
-# Scan ~/.claude-state/account-* and return comma-separated path string
-# for CLAUDE_CONFIG_DIR (used by ccusage for multi-directory aggregation).
-build_config_dir_path() {
+# List account state directories under ~/.claude-state/account-*.
+# Outputs one path per line.
+list_account_dirs() {
     local state_base="$HOME/.claude-state"
-    local dirs=()
-
-    if [[ ! -d "$state_base" ]]; then
-        echo ""
-        return
-    fi
-
+    [[ -d "$state_base" ]] || return
     for dir in "$state_base"/account-*; do
         [[ -d "$dir" ]] || continue
-        dirs+=("$dir")
+        echo "$dir"
     done
+}
 
-    local IFS=','
-    echo "${dirs[*]}"
+# Build a temporary merged directory for ccusage.
+# ccusage expects CLAUDE_CONFIG_DIR/projects/<hash>/*.jsonl.
+# Since it does not support multiple directories, we symlink each
+# account's project subdirectories into a single temporary tree.
+# Also includes the host's ~/.claude/projects if present.
+# Prints the temp dir path; caller is responsible for cleanup.
+build_merged_config_dir() {
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/projects"
+
+    # Merge container account projects
+    while IFS= read -r acct_dir; do
+        [[ -d "$acct_dir/projects" ]] || continue
+        local acct_name
+        acct_name=$(basename "$acct_dir")
+        for proj in "$acct_dir/projects"/*/; do
+            [[ -d "$proj" ]] || continue
+            local proj_name
+            proj_name=$(basename "$proj")
+            ln -sf "$proj" "$tmpdir/projects/${acct_name}_${proj_name}"
+        done
+    done < <(list_account_dirs)
+
+    # Also include host's own ~/.claude/projects (if present and different)
+    if [[ -d "$HOME/.claude/projects" ]]; then
+        for proj in "$HOME/.claude/projects"/*/; do
+            [[ -d "$proj" ]] || continue
+            local proj_name
+            proj_name=$(basename "$proj")
+            ln -sf "$proj" "$tmpdir/projects/host_${proj_name}"
+        done
+    fi
+
+    echo "$tmpdir"
 }
 
 # --- Subcommands --------------------------------------------------------------
@@ -366,17 +394,6 @@ cmd_usage() {
         exit 1
     fi
 
-    # Build aggregated config dir path from all account state directories
-    local config_dir_path
-    config_dir_path=$(build_config_dir_path)
-
-    if [[ -z "$config_dir_path" ]]; then
-        log_error "No account state directories found in $HOME/.claude-state/"
-        echo -e "  Run ${GREEN}scripts/install.sh${NC} or create directories manually:"
-        echo -e "  ${DIM}mkdir -p ~/.claude-state/account-a ~/.claude-state/account-b${NC}"
-        exit 1
-    fi
-
     # Parse report type: first positional arg if it matches a known ccusage type
     local report_type="daily"
     local pass_args=()
@@ -391,21 +408,47 @@ cmd_usage() {
     fi
     pass_args=("$@")
 
+    # Build merged config directory with symlinks from all sources
+    local merged_dir
+    merged_dir=$(build_merged_config_dir)
+    trap "rm -rf '$merged_dir'" EXIT
+
+    # Check if any project data was found
+    local project_count
+    project_count=$(find "$merged_dir/projects" -mindepth 1 -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$project_count" -eq 0 ]]; then
+        rm -rf "$merged_dir"
+        log_error "No session data found."
+        echo -e "  Run Claude Code in a container first to generate usage data:"
+        echo -e "  ${DIM}scripts/claude-docker claude${NC}"
+        exit 1
+    fi
+
     # Display aggregation header
     echo -e "${BOLD}Token Usage Report${NC}"
     echo -e "${DIM}Report type: $report_type${NC}"
-    echo -e "${DIM}Aggregating accounts:${NC}"
+    echo -e "${DIM}Data sources (${project_count} projects):${NC}"
 
-    local IFS=','
-    for dir in $config_dir_path; do
-        local name
-        name=$(basename "$dir")
-        echo -e "  ${GREEN}*${NC} $name ${DIM}($dir)${NC}"
-    done
+    while IFS= read -r acct_dir; do
+        local acct_name
+        acct_name=$(basename "$acct_dir")
+        if [[ -d "$acct_dir/projects" ]]; then
+            local count
+            count=$(find "$acct_dir/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+            [[ "$count" -gt 0 ]] && echo -e "  ${GREEN}*${NC} $acct_name ${DIM}(${count} projects)${NC}"
+        fi
+    done < <(list_account_dirs)
+
+    if [[ -d "$HOME/.claude/projects" ]]; then
+        local host_count
+        host_count=$(find "$HOME/.claude/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        [[ "$host_count" -gt 0 ]] && echo -e "  ${GREEN}*${NC} host ${DIM}(${host_count} projects)${NC}"
+    fi
     echo ""
 
-    # Run ccusage with combined CLAUDE_CONFIG_DIR
-    CLAUDE_CONFIG_DIR="$config_dir_path" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
+    # Run ccusage with merged directory
+    CLAUDE_CONFIG_DIR="$merged_dir" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
 }
 
 cmd_help() {
