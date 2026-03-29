@@ -133,6 +133,7 @@ scripts/claude-docker help       # Show all available commands
 | | `auth [service]` | Authenticate via OAuth login |
 | | `exec <service>` | Open shell in a container |
 | **Orchestration** | `dispatch <worker> <prompt>` | Send task to worker |
+| | `analyze <prompt>` | Multi-persona project analysis |
 | | `status` | Show worker status |
 | | `findings [category]` | Show accumulated findings |
 | **Cold Memory** | `save` | Save session to archive |
@@ -274,6 +275,36 @@ scripts/claude-docker status
 scripts/claude-docker findings
 scripts/claude-docker findings security
 ```
+
+### Analysis (Multi-Persona)
+
+Run a comprehensive project analysis using all three specialized worker
+personas in parallel:
+
+```bash
+# Analyze with default timeout (300s)
+scripts/claude-docker analyze "evaluate production readiness of this project"
+
+# Analyze with custom timeout
+scripts/claude-docker analyze "audit the authentication module" 600
+```
+
+Each analysis dispatches the prompt to three workers simultaneously:
+
+| Persona | Worker | Focus Area |
+|---------|--------|------------|
+| **Sentinel** | worker-1 | Security vulnerabilities, hardcoded secrets, injection flaws |
+| **Reviewer** | worker-2 | Dead code, duplication, SOLID violations, complexity |
+| **Profiler** | worker-3 | N+1 queries, blocking I/O, memory leaks, bundle size |
+
+Results are collected and displayed in a categorized summary. Sessions are
+automatically saved to cold storage after each analysis.
+
+#### Interactive Analysis
+
+When using `scripts/claude-docker claude` to enter the manager, the manager
+Claude Code reads `CLAUDE.md` and can automatically orchestrate analysis
+when you ask it to analyze, audit, or review code.
 
 ### Session Archive (Cold Memory)
 
@@ -461,6 +492,7 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 
 ```
 claude-docker/
++-- CLAUDE.md                          Manager orchestration guide
 +-- Dockerfile                         Base image (Phase 1)
 +-- .dockerignore
 +-- docker-compose.yml                 Base config -- Tier A
@@ -478,6 +510,7 @@ claude-docker/
 |   +-- test-orchestration.sh         E2E test: orchestration manager-worker
 |   +-- manager-helpers.sh             Orchestration manager helpers
 |   +-- worker-server.js              Orchestration worker HTTP server
+|   +-- personas.json                 Worker persona definitions
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
 |   +-- claude-docker                  Unified CLI wrapper
