@@ -20,20 +20,19 @@ log_audit() {
     local archive_dir="${ARCHIVE_DIR:-/archive}"
     local audit_file="${archive_dir}/audit.log"
 
-    # Build JSON object from key=value pairs
-    local json_pairs=""
-    for pair in "$@"; do
-        local key="${pair%%=*}"
-        local val="${pair#*=}"
-        json_pairs="${json_pairs}, \"${key}\": \"${val}\""
-    done
-
     local entry
     entry=$(jq -nc \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg event "$event" \
         --arg host "$(hostname 2>/dev/null || echo 'unknown')" \
-        "{timestamp: \$ts, event: \$event, host: \$host${json_pairs}}")
+        '{timestamp: $ts, event: $event, host: $host}')
+
+    for pair in "$@"; do
+        local key="${pair%%=*}"
+        local val="${pair#*=}"
+        entry=$(jq -nc --argjson base "$entry" --arg k "$key" --arg v "$val" \
+            '$base + {($k): $v}')
+    done
 
     mkdir -p "$archive_dir"
     echo "$entry" >> "$audit_file"
