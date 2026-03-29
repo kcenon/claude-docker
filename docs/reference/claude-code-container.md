@@ -112,15 +112,42 @@ The `CLAUDE_CONFIG_DIR` environment variable overrides the default
 
 | | Subscription (Pro/Max/Team) | Console API Key |
 |---|---|---|
-| Method | Container-internal OAuth → credentials in bind-mounted state dir | `ANTHROPIC_API_KEY` env var |
-| Browser | Once per account, opened from container via forwarded URL | Never |
+| Method (macOS) | Keychain extraction via `claude-docker auth` | `ANTHROPIC_API_KEY` env var |
+| Method (Linux/WSL2) | Container-internal OAuth → credentials in bind-mounted state dir | `ANTHROPIC_API_KEY` env var |
+| Browser | Once per account (macOS: on host; Linux: forwarded URL from container) | Never |
 | Container config | Mount `~/.claude-state/account-X` | Set env var in `.env` |
 
-**Subscription accounts**: Bind-mount the state directory into the
-container, then authenticate inside the container with
-`claude auth login`. The container forwards the OAuth URL to the
-host browser; credentials are written to the bind-mounted state
-directory and persist across container restarts.
+#### macOS Keychain Extraction (Primary for macOS)
+
+On macOS, `claude auth login` on the host stores OAuth tokens in the
+macOS Keychain under the service name `Claude Code-credentials`. Since
+Docker containers cannot access the host Keychain, and container-internal
+OAuth fails due to the localhost callback boundary (GitHub #34917, #30369),
+the `claude-docker auth` command extracts tokens from the Keychain
+and writes them to bind-mounted state directories:
+
+```bash
+# How it works (inside scripts/claude-docker):
+security find-generic-password -s "Claude Code-credentials" -w
+# Returns JSON with claudeAiOauth tokens
+
+# The auth command writes .credentials.json to each state dir:
+scripts/claude-docker auth              # All services
+scripts/claude-docker auth manager      # Specific service
+```
+
+#### Container-Internal OAuth (Linux / WSL2)
+
+On Linux and WSL2, container-internal OAuth works because the container
+can forward the OAuth URL to the host browser. Bind-mount the state
+directory into the container, then authenticate:
+
+```bash
+docker compose exec claude-a claude auth login
+```
+
+Credentials are written to the bind-mounted state directory and persist
+across container restarts.
 
 **Console API keys**: Set `ANTHROPIC_API_KEY` in `.env`. Takes
 precedence over any OAuth credentials in the mounted state directory.
@@ -157,12 +184,19 @@ Credential file structure after successful OAuth:
 - Refresh works silently as long as the container has network access to `api.anthropic.com`
 - Full re-authentication is needed only on password change or account revocation
 
-**Why container-internal OAuth with bind mount is correct**:
+**Why Keychain extraction on macOS, container OAuth on Linux**:
 
 On macOS, host-side `claude auth login` stores tokens in the macOS
-Keychain — which cannot be shared with a container. Running OAuth
-inside the container instead writes `.credentials.json` to the
-bind-mounted state directory, making tokens portable and persistent.
+Keychain, which cannot be shared with a container. Container-internal
+`claude auth login` fails in Docker because the localhost OAuth callback
+cannot cross the Docker network boundary (GitHub #34917, #30369).
+The solution is Keychain extraction: read tokens from the host Keychain
+and write `.credentials.json` to the bind-mounted state directory.
+
+On Linux/WSL2, container-internal OAuth works because the container
+can forward the OAuth URL to the host browser, and the callback
+succeeds. Credentials are written directly to the bind-mounted state
+directory.
 
 | Issue | Container OAuth (no bind mount) | Container OAuth + bind mount |
 |-------|-------------------------------|------------------------------|
@@ -182,11 +216,12 @@ the credential file (`docker compose restart claude-a`).
 
 ## Known Container Issues
 
-### OAuth Fails Headless (GitHub #34917)
+### OAuth Fails Headless (GitHub #34917, #30369)
 
 - "Redirect URI not supported by client" error
-- Browser-based flow incompatible with headless Docker
-- **Fix**: Container OAuth works because the container forwards the OAuth URL to the host browser
+- Browser-based flow incompatible with headless Docker; localhost callback cannot cross Docker network boundary
+- **Fix (macOS)**: Keychain extraction via `scripts/claude-docker auth` — extracts host OAuth tokens and injects into container state dirs
+- **Fix (Linux/WSL2)**: Container-internal OAuth works because the container forwards the OAuth URL to the host browser
 
 ### OAuth Not Persisting (GitHub #22066, #1736)
 
@@ -198,6 +233,12 @@ the credential file (`docker compose restart claude-a`).
 
 - Anthropic Console auth broken in VS Code DevContainers
 - **Fix**: Use API key or container-internal Claude.ai OAuth with bind mount
+
+### NODE_PATH Required for Global npm Packages
+
+- Globally installed npm packages (e.g., `redis`) are not found by `require()` without `NODE_PATH`
+- **Root cause**: Node.js does not search `/usr/local/lib/node_modules` by default
+- **Fix**: Set `NODE_PATH=/usr/local/lib/node_modules` in the Dockerfile `ENV` line
 
 ### Installation Hangs at Root (/)
 

@@ -44,6 +44,32 @@ These aspects of the architecture require **zero changes**:
 
 7. **Firewall script** — iptables inside the container is Linux regardless of host.
 
+## Authentication Comparison
+
+| Platform | Primary Auth Method | Credential Storage |
+|----------|--------------------|--------------------|
+| macOS | Keychain extraction via `claude-docker auth` | macOS Keychain → `.credentials.json` in bind-mounted state dir |
+| Linux | Container-internal OAuth (`claude auth login` inside container) | `.credentials.json` (bind mount) |
+| WSL2 | Container-internal OAuth (`claude auth login` inside container) | `.credentials.json` (bind mount) |
+
+**Why macOS differs**: Docker containers on macOS run inside a Linux VM
+(Apple Virtualization Framework) and cannot access the host macOS Keychain.
+Additionally, container-internal `claude auth login` fails because the
+OAuth localhost callback cannot cross the Docker network boundary — the
+container's localhost is not the host's localhost. (See GitHub #34917, #30369.)
+
+The `scripts/claude-docker auth` command solves this by extracting OAuth
+tokens from the macOS Keychain on the host side
+(`security find-generic-password -s "Claude Code-credentials" -w`) and
+writing `.credentials.json` to each service's bind-mounted state directory.
+The tokens themselves follow the same OAuth lifecycle regardless of
+platform — auto-refresh works identically once credentials are in place.
+
+On Linux and WSL2, the container can forward the OAuth URL to the host
+browser, and the localhost callback succeeds because Docker uses host
+networking or proper port forwarding. Container-internal OAuth works
+directly, so no Keychain extraction is needed.
+
 ## What Requires Platform-Specific Adjustment
 
 ### A. Source Code Location

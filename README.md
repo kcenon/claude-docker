@@ -63,16 +63,26 @@ Choose your authentication path:
 
 **Path A -- Subscription accounts (Pro / Max / Team):**
 
+macOS:
 ```bash
-# Create state directories
-mkdir -p ~/.claude-state/account-a ~/.claude-state/account-b
+# 1. Authenticate on host (one-time, opens browser)
+claude auth login
 
-# Authentication happens inside containers on first launch.
-# After starting containers (step 3-4), run:
-#   scripts/claude-docker claude
-# Claude Code will prompt for OAuth login in your browser.
-# Credentials persist in the bind-mounted state directory.
+# 2. Inject credentials into all containers
+scripts/claude-docker auth
 ```
+
+Linux / WSL2:
+```bash
+# Authenticate inside each container after starting
+scripts/claude-docker claude claude-a
+# Inside container: claude auth login
+# (follow OAuth URL in browser, paste code)
+```
+
+Note: On macOS, container-internal OAuth fails due to Docker network
+boundary limitations ([#34917](https://github.com/anthropics/claude-code/issues/34917)).
+The `auth` command extracts tokens from macOS Keychain instead.
 
 **Path B -- Console API keys:**
 
@@ -185,17 +195,23 @@ history, settings, and credentials.
 
 ### Authentication
 
-Authentication runs inside containers. Credentials are persisted in the
-bind-mounted state directory (`~/.claude-state/account-*/`).
+On macOS, `scripts/claude-docker auth` extracts OAuth credentials from the
+host's macOS Keychain and injects them into each container's state directory.
+Host-side authentication (`claude auth login`) must be completed first.
+
+On Linux/WSL2, authenticate directly inside containers.
 
 ```bash
-# Authenticate all containers at once
+# macOS: extract from Keychain → inject to all containers
 scripts/claude-docker auth
 
-# Authenticate a specific container
+# macOS: inject to specific container only
 scripts/claude-docker auth claude-a
 
-# Check authentication status
+# Linux/WSL2: authenticate inside container
+scripts/claude-docker exec claude-a claude auth login
+
+# Check status in any container
 scripts/claude-docker exec claude-a claude auth status
 ```
 
@@ -453,12 +469,17 @@ scripts/claude-docker up
 
 **"Authentication expired" inside container:**
 
+macOS:
 ```bash
-# Re-authenticate inside the container
+# Re-authenticate on host first
+claude auth login
+# Then re-inject to containers
 scripts/claude-docker auth
+```
 
-# Or authenticate a specific service
-scripts/claude-docker auth claude-a
+Linux/WSL2:
+```bash
+scripts/claude-docker exec claude-a claude auth login
 ```
 
 **Permission denied on bind mount (Linux):**

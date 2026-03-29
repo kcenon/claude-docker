@@ -110,7 +110,9 @@ RUN npm install -g redis \
     && npm cache clean --force
 
 # SRS-5.1.5: Memory heap limit
-ENV NODE_OPTIONS=--max-old-space-size=4096
+# NODE_PATH: Allow require() to find globally installed npm packages (e.g. redis)
+ENV NODE_OPTIONS=--max-old-space-size=4096 \
+    NODE_PATH=/usr/local/lib/node_modules
 
 # SRS-5.1.7: Run as non-root user
 # Why: node user (UID 1000) comes pre-created in node:20-slim
@@ -457,6 +459,7 @@ volumes:
 - Redis healthcheck ensures workers don't start before Redis is ready
 - Each worker has its own account state and node_modules volume
 - No port exposure to host — all communication via internal bridge network
+- Each worker service includes a `WORKER_PERSONA` env var containing the full persona system prompt (Sentinel for worker-1, Reviewer for worker-2, Profiler for worker-3). This is read by `worker-server.js` and prepended as a `[Role]` section in `buildEnrichedPrompt()`
 
 ---
 
@@ -626,6 +629,7 @@ const { createClient } = require('redis');                   // SRS-8.2.11
 const WORKER_PORT = parseInt(process.env.WORKER_PORT, 10) || 9000; // SRS-8.2.1
 const REDIS_URL   = process.env.REDIS_URL || 'redis://redis:6379';
 const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
+const WORKER_PERSONA = process.env.WORKER_PERSONA || '';      // SRS-8.7.1
 const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
 const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
 const REDIS_RETRY_DELAY_MS = 2000;
@@ -690,6 +694,13 @@ async function readPriorFindings() {                         // SRS-8.2.4
  */
 function buildEnrichedPrompt(context, priorFindings, taskPrompt) {
   const sections = [];
+
+  // [Role] section — injected from WORKER_PERSONA env var (SRS-8.7.1)
+  if (WORKER_PERSONA) {
+    sections.push('[Role]');
+    sections.push(WORKER_PERSONA);
+    sections.push('');
+  }
 
   // [Project Context] section
   const ctxEntries = Object.entries(context);
@@ -1063,7 +1074,8 @@ main();
 ### 5.4 scripts/manager-helpers.sh (Phase 5)
 
 Bash helper functions sourced by the manager to dispatch tasks and query state.
-Reference: SRS-8.3.1~5.
+Reference: SRS-8.3.1~5, SRS-8.7.2.
+12 functions total.
 
 ```bash
 #!/usr/bin/env bash
@@ -1434,9 +1446,19 @@ chronological `ls` sorting. Max 50 sessions; oldest auto-pruned on save (SRS-8.5
 | `restore_session` | 8.5.4 | `<id\|latest>` | HSET context:shared, RPUSH findings:all, RPUSH findings:{cat} | Read context.json + findings.json |
 | `list_sessions` | 8.5.5 | none | none | Read index.json |
 | `show_session` | 8.5.6 | `<id>` | none | Read session.json + context.json + findings.json |
+| `run_analysis` | 8.7.2 | `<prompt> [timeout]` | clear_findings, LLEN findings:all, LLEN findings:{cat} | Read personas.json; auto-calls save_session |
 
 All functions use `ARCHIVE_DIR` env var (default `/archive`) and `_require_redis`
 guard for Redis-dependent operations. `save_session` is Redis-read-only (SRS-8.5.14).
+
+**`run_analysis`** (SRS-8.7.2): Loads worker personas from `/scripts/personas.json`,
+wraps the user prompt with each persona's role instructions, dispatches all workers
+in parallel, collects results, prints a categorized summary (security, quality,
+performance), and auto-saves the session via `save_session`.
+
+**Implementation note**: `save_session` generates session IDs using `od` instead of
+`xxd` for session hex generation (`head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n'`),
+since `xxd` is not available in the `node:20-slim` base image.
 
 #### 5.6.4 Docker Compose Change
 
@@ -1472,11 +1494,56 @@ fields silently (SRS-8.5.7).
 | **index.json** | Fast listing without scanning session directories |
 | **Host bind mount** | Survives `docker compose down -v` (named volumes are deleted) |
 
+### 5.7 scripts/claude-docker (CLI Wrapper)
+
+Unified host-side CLI wrapper that auto-detects compose overlay files and
+provides short subcommands for common operations.
+
+**Key functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `cmd_usage()` | Token usage report via `ccusage`; merges session data from all account state dirs |
+| `cmd_analyze()` | Multi-persona project analysis; delegates to `run_analysis` inside manager container |
+| `get_keychain_credentials()` | Extracts OAuth tokens from macOS Keychain via `security find-generic-password -s "Claude Code-credentials" -w` |
+| `inject_credentials()` | Writes credential JSON to a service's bind-mounted state directory on the host |
+| `build_merged_config_dir()` | Creates a temp directory with symlinks to all account project dirs for `ccusage` aggregation |
+| `list_account_dirs()` | Enumerates `~/.claude-state/account-*` directories |
+
+**Authentication rewrite**: The `cmd_auth` subcommand was rewritten from
+container-internal OAuth (`claude auth login` inside the container) to macOS
+Keychain extraction. On macOS, `get_keychain_credentials()` reads the host's
+OAuth tokens from the system Keychain, and `inject_credentials()` writes them
+to each service's bind-mounted `~/.claude-state/account-*/` directory as
+`.credentials.json`. This bypasses the container OAuth boundary problem
+(localhost callback fails across the Docker network boundary; see GitHub #34917,
+#30369). On non-macOS platforms, the command falls back to prompting the user
+to authenticate on the host first or use API keys.
+
 ---
 
 ## 6. Operational Flows
 
 ### 6.1 First Run — Path A (Subscription)
+
+**macOS (Keychain extraction):**
+
+```
+Host                                    Docker
+─────                                   ──────
+1. claude auth login                    (authenticate on host — tokens saved to macOS Keychain)
+2. mkdir -p ~/.claude-state/account-{a,b}
+3. cp .env.example .env
+   └─ Set PROJECT_DIR only (no API keys)
+4.                                      docker compose build
+5.                                      docker compose up -d
+6. scripts/claude-docker auth           (extracts Keychain credentials → writes .credentials.json
+                                         to each bind-mounted state dir)
+7.                                      docker compose exec claude-a claude
+   └─ Claude Code starts with injected OAuth tokens ✓
+```
+
+**Linux / WSL2 (container-internal OAuth):**
 
 ```
 Host                                    Docker
@@ -1486,11 +1553,10 @@ Host                                    Docker
    └─ Set PROJECT_DIR only (no API keys)
 3.                                      docker compose build
 4.                                      docker compose up -d
-5.                                      docker compose exec claude-a npm install
-6.                                      docker compose exec claude-b npm install
-7.                                      docker compose exec claude-a claude
+5.                                      docker compose exec claude-a claude auth login
    └─ Claude Code initiates OAuth → browser opens
    └─ .credentials.json created in bind-mounted state dir ✓
+6.                                      docker compose exec claude-a claude
 ```
 
 ### 6.2 First Run — Path B (Console API Key)
@@ -1550,9 +1616,10 @@ Container won't start
 
 Claude Code won't authenticate
 ├── Path A (OAuth)
-│   ├── "No credentials" → Re-run claude auth login INSIDE the container
-│   ├── "Token expired" → Re-run claude auth login INSIDE the container; restart container
-│   └── "Redirect URI error" → Ensure container can reach OAuth callback URL
+│   ├── macOS → Run: scripts/claude-docker auth (extracts Keychain → injects to state dirs)
+│   ├── "No credentials" → Linux/WSL2: re-run claude auth login INSIDE the container
+│   ├── "Token expired" → Re-run auth (Keychain or container-internal); restart container
+│   └── "Redirect URI error" → Use Keychain extraction on macOS; container OAuth on Linux
 └── Path B (API key)
     ├── "Invalid API key" → Check .env; ensure no quotes around key value
     └── "API key not found" → Check variable name matches compose: CLAUDE_API_KEY_A
@@ -1578,8 +1645,10 @@ Host                                    Docker
                                           -f docker-compose.orchestration.yml build
 4.                                      docker compose -f docker-compose.yml \
                                           -f docker-compose.orchestration.yml up -d
-5. Authenticate each account inside containers (Path A only):
-                                        docker compose exec manager claude auth login
+5. Authenticate (Path A only):
+   macOS:                               scripts/claude-docker auth
+   └─ Extracts Keychain credentials → writes .credentials.json to all state dirs
+   Linux/WSL2:                          docker compose exec manager claude auth login
                                         docker compose exec worker-1 claude auth login
                                         docker compose exec worker-2 claude auth login
                                         docker compose exec worker-3 claude auth login
@@ -1594,6 +1663,27 @@ Host                                    Docker
    dispatch_task worker-3 "analyze API routes"
 10. get_findings
     └─ Returns combined findings from all workers
+```
+
+### 6.7 Analyze Flow (Multi-Persona)
+
+```
+Host                                    Docker (manager)             Docker (workers)
+─────                                   ────────────────             ────────────────
+1. scripts/claude-docker analyze \
+     "Review this codebase"
+                                        2. source manager-helpers.sh
+                                           run_analysis "..."
+                                           ├─ Load /scripts/personas.json
+                                           ├─ clear_findings
+                                           ├─ dispatch_task worker-1   ──→  3a. [Sentinel] security analysis
+                                           ├─ dispatch_task worker-2   ──→  3b. [Reviewer] quality analysis
+                                           └─ dispatch_task worker-3   ──→  3c. [Profiler] performance analysis
+                                                                            (each writes findings to Redis)
+                                        4. Collect results from Redis
+                                           ├─ Print categorized summary
+                                           └─ save_session (auto-archive)
+5. View summary output
 ```
 
 ---
@@ -1645,7 +1735,7 @@ Host                                    Docker
 | `scripts/init-firewall.sh` | 4 | SRS-7.3 |
 | `scripts/personas.json` | 7 | Worker persona definitions (Sentinel, Reviewer, Profiler) |
 | `CLAUDE.md` | 7 | Manager auto-orchestration instructions |
-| `scripts/claude-docker` | — | Utility: CLI wrapper (includes usage tracking via ccusage, analyze command) |
+| `scripts/claude-docker` | — | Utility: CLI wrapper (Keychain auth, usage tracking via ccusage, analyze command) |
 | `scripts/install.sh` | — | Utility: project installer |
 | `scripts/remove.sh` | — | Utility: project uninstaller |
 | `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |

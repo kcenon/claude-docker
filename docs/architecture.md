@@ -232,6 +232,32 @@ Manager <──JSON resp── Worker-N
 | `worker:{name}:status` | STRING | Worker status with 60s TTL (idle/busy/error) |
 | `worker:{name}:heartbeat` | STRING | Heartbeat timestamp with 30s TTL |
 
+### Worker Personas (Phase 7)
+
+Each worker runs a specialized persona injected via the `WORKER_PERSONA`
+environment variable in the orchestration compose file. The worker HTTP server
+(`worker-server.js`) reads `WORKER_PERSONA` and prepends it as a system prompt
+section to every task it receives.
+
+| Persona | Worker | Focus Area | Findings Category |
+|---------|--------|------------|-------------------|
+| **Sentinel** (Security Analyst) | worker-1 | Vulnerabilities, hardcoded secrets, injection flaws, auth weaknesses | `security` |
+| **Reviewer** (Code Quality Engineer) | worker-2 | Dead code, duplication, SOLID violations, excessive complexity | `quality` |
+| **Profiler** (Performance Engineer) | worker-3 | N+1 queries, blocking I/O, memory leaks, bundle size issues | `performance` |
+
+The `run_analysis()` function in `scripts/manager-helpers.sh` reads persona
+definitions from `scripts/personas.json`, wraps the user prompt with each
+persona's role instructions, and dispatches to all workers in parallel via
+`dispatch_task`. Results are collected, deduplicated, and presented in a
+categorized summary.
+
+**CLI entry point**: `scripts/claude-docker analyze <prompt> [timeout]`
+
+The project `CLAUDE.md` is configured so that a manager Claude Code session
+auto-orchestrates when the user mentions analysis-related keywords (analyze,
+audit, review, inspect, scan). The manager sources `manager-helpers.sh` and
+calls `run_analysis` automatically.
+
 ### Key Design Decisions
 
 - **HTTP over raw TCP**: `curl` and `jq` already in the image; HTTP provides framing and error codes
@@ -245,11 +271,39 @@ Manager <──JSON resp── Worker-N
 Two authentication paths, each primary for its account type.
 Choose based on what kind of Anthropic account you have.
 
-### Path A: Subscription Accounts (Pro / Max / Team) — Container-Internal OAuth
+### Path A: Subscription Accounts (Pro / Max / Team) — OAuth
 
-Subscription accounts use OAuth. Since the container runs headless, **authenticate
-inside the container on first launch**, then credentials persist in the bind-mounted
-state directory.
+Subscription accounts use OAuth. The authentication method differs by platform.
+
+#### macOS: Host-Side OAuth with Keychain Extraction
+
+On macOS, container-internal `claude auth login` fails because the OAuth
+localhost callback cannot cross the Docker network boundary (see upstream
+GitHub [#34917](https://github.com/anthropics/claude-code/issues/34917),
+[#30369](https://github.com/anthropics/claude-code/issues/30369)).
+
+The working solution is host-side OAuth with Keychain extraction:
+
+```bash
+# 1. Authenticate on the host (outside Docker)
+claude auth login
+
+# 2. Extract from Keychain and inject into container state directories
+scripts/claude-docker auth          # Injects into all active services
+scripts/claude-docker auth claude-a # Or target a specific service
+
+# 3. Verify
+docker compose exec claude-a claude auth status
+```
+
+Under the hood, `scripts/claude-docker auth` calls
+`security find-generic-password -s "Claude Code-credentials" -w` to extract
+the OAuth token from macOS Keychain, then writes `.credentials.json` to each
+container's bind-mounted state directory (`~/.claude-state/account-*/`).
+
+#### Linux / WSL2: Container-Internal OAuth
+
+On Linux and WSL2, container-internal OAuth works normally:
 
 ```bash
 # 1. Start the containers
@@ -274,14 +328,8 @@ PROJECT_DIR=/path/to/your/project
 
 > **Token refresh**: Claude Code automatically refreshes tokens using the
 > `refreshToken` in `.credentials.json`. If a token expires beyond refresh
-> (e.g., password change, account revocation), re-run `claude auth login`
-> inside the corresponding container.
-
-> **Why container-internal**: On macOS, host auth stores tokens in Keychain
-> which cannot be bind-mounted. Container-internal auth stores
-> `.credentials.json` in the bind-mounted state directory, persisting
-> across restarts on all platforms.
-> See [reference/claude-code-container.md](reference/claude-code-container.md#oauth-token-persistence) for details.
+> (e.g., password change, account revocation), re-run the appropriate auth
+> method for your platform.
 
 ### Path B: Console API Keys — Environment Variable
 
@@ -303,7 +351,7 @@ it takes precedence over OAuth credentials in the mounted state directory.
 | | Path A: Subscription | Path B: API Key |
 |---|---|---|
 | Account type | Pro, Max, Team | Console (usage-based) |
-| Auth method | OAuth (container-internal) | Environment variable |
+| Auth method | macOS: host OAuth + Keychain extraction; Linux/WSL2: container-internal OAuth | Environment variable |
 | Browser needed | Once per account, on any device | Never |
 | Token management | Auto-refresh; re-auth on revocation | Manual key rotation |
 | Container restart | Credentials persist via bind mount | Always available via `.env` |
@@ -346,6 +394,8 @@ For 3+ instances, see [Scaling Beyond Two Instances](#scaling-beyond-two-instanc
 - [ ] Install Claude Code via npm (Node 20 base)
 - [ ] Include essential dev tools (git, gh, fzf, jq)
 - [ ] Set NODE_OPTIONS for 4 GB heap
+- [ ] Set `NODE_PATH=/usr/local/lib/node_modules` for global npm package resolution
+  (needed by `worker-server.js` which `require('redis')` from the global install)
 - [ ] Test image build and basic `claude --version`
 
 ### Phase 2 — Account State Separation
@@ -429,13 +479,35 @@ claude-docker/
 ├── .gitignore                        # (Phase 2)
 ├── .gitattributes                    # (Phase 2) LF line endings (Windows teams)
 └── scripts/
+    ├── claude-docker                 # Unified CLI wrapper (build, auth, analyze, usage, ...)
     ├── setup-worktrees.sh            # (Phase 3, Tier B)
     ├── test-concurrent-git.sh        # (Phase 3, Tier B — E2E concurrent git test)
     ├── cleanup.sh                    # (Phase 4)
     ├── worker-server.js              # (Phase 5) worker HTTP server with Redis
     ├── manager-helpers.sh            # (Phase 5) manager dispatch functions
+    ├── personas.json                 # (Phase 7) worker persona definitions
     └── test-orchestration.sh         # (Phase 5) E2E orchestration test
 ```
+
+## Usage Tracking
+
+`scripts/claude-docker usage` aggregates token usage across all containers and
+the host into a single report. It runs on the host (requires Node.js / `npx`)
+and does not need containers to be running.
+
+Under the hood, the command builds a temporary directory with symlinks that
+merge each account's `~/.claude-state/account-*/projects/` subdirectories
+together with the host's `~/.claude/projects/`. It then invokes
+[ccusage](https://github.com/ryoppippi/ccusage) against the merged directory
+so that all session data appears as a single config root.
+
+```bash
+scripts/claude-docker usage           # daily report (default)
+scripts/claude-docker usage monthly   # monthly report
+scripts/claude-docker usage session   # per-session breakdown
+```
+
+Supported report types: `daily`, `monthly`, `session`, `blocks`, `statusline`.
 
 ## References
 

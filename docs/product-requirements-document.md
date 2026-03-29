@@ -22,9 +22,10 @@ instances; scaling to more requires only a compose edit and additional RAM
 
 The solution supports Linux, macOS, and Windows (WSL2) with two
 configuration tiers — shared source (simplest) and git worktree (safest).
-Two authentication paths are provided: container-internal OAuth for subscription
-accounts and API key for Console accounts. Implementation spans 6 phases
-over an estimated 10-17 days.
+Two authentication paths are provided: host-side Keychain extraction
+(`scripts/claude-docker auth`) on macOS and container-internal OAuth on
+Linux/WSL2 for subscription accounts, plus API key for Console accounts.
+Implementation spans 7 phases over an estimated 12-20 days.
 
 ---
 
@@ -64,7 +65,7 @@ stays under 100 MB.
 | G4 | Concurrent access stability | Tier B eliminates lock contention |
 | G5 | Simple and reproducible setup | `docker compose up` on all 3 platforms |
 | G6 | Cross-platform support | Linux, macOS, Windows (WSL2) |
-| G7 | Support subscription accounts | Container-internal OAuth for Pro/Max/Team |
+| G7 | Support subscription accounts | macOS: host-side Keychain extraction; Linux/WSL2: container-internal OAuth; both for Pro/Max/Team |
 | G8 | Scalable to N instances | Compose pattern extends to 3+ accounts |
 | G9 | Manager-worker orchestration | 1 manager dispatches tasks to N workers via HTTP; results aggregated via Redis |
 | G10 | Shared context accumulation | Worker N reads structured findings from workers 1..N-1 before processing |
@@ -84,8 +85,9 @@ stays under 100 MB.
 ### P1: Solo Developer with Two Subscription Accounts
 
 Has a personal Pro subscription and a work Team subscription. Both are
-OAuth-based (no API keys). Authenticates each account on the host,
-then runs two containers. Only one session writes at a time. Linux or macOS.
+OAuth-based (no API keys). On macOS, authenticates via host-side Keychain
+extraction (`scripts/claude-docker auth`); on Linux, uses container-internal
+OAuth. Runs two containers. Only one session writes at a time.
 **Uses Tier A** (shared source).
 
 ### P2: Pair Programming Team
@@ -165,7 +167,7 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | ID | Priority | Requirement |
 |----|----------|-------------|
 | FR-6 | P0 | Each container mounts a separate `CLAUDE_CONFIG_DIR` from host `~/.claude-state/account-{a,b}/` |
-| FR-7 | P0 | Auth Path A: container-internal OAuth for subscription accounts — user authenticates inside container on first launch; credentials stored in bind-mounted state directory |
+| FR-7 | P0 | Auth Path A: subscription OAuth — on macOS, host-side Keychain extraction via `scripts/claude-docker auth` (container-internal OAuth fails on macOS Docker per GitHub #34917); on Linux/WSL2, container-internal OAuth on first launch. Credentials stored in bind-mounted state directory. |
 | FR-8 | P0 | Auth Path B: `ANTHROPIC_API_KEY` env var for Console accounts |
 | FR-9 | P0 | `.env.example` with `PROJECT_DIR` (and API key vars for Path B users) |
 
@@ -209,6 +211,15 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | FR-28 | P1 | Archive auto-prunes to 50 sessions maximum; oldest sessions deleted on save |
 | FR-29 | P1 | Cold memory layer is opt-in; orchestration works identically without archive mount |
 
+### Phase 7 — Orchestration UX
+
+| ID | Priority | Requirement |
+|----|----------|-------------|
+| FR-30 | P0 | Worker persona system: `personas.json` defines worker personas (Sentinel/Reviewer/Profiler) with name, role, worker, icon, system prompt, and category fields. `WORKER_PERSONA` env var injected at dispatch time. |
+| FR-31 | P0 | CLI analyze command: `scripts/claude-docker analyze` dispatches parallel analysis using persona-wrapped prompts and prints categorized summary |
+| FR-32 | P1 | Manager auto-orchestration: Manager `CLAUDE.md` defines trigger keywords (analyze, audit, review, inspect, scan) that invoke `run_analysis` automatically |
+| FR-33 | P1 | Unified usage tracking: `scripts/claude-docker usage` aggregates container and host token data via ccusage, including symlink merge and host inclusion |
+
 ---
 
 ## 7. Non-Functional Requirements
@@ -219,7 +230,7 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | **Resources** | Host RAM: 12 GB (Linux), 16 GB (macOS/Windows). 4 GB heap per container. 4+ CPU cores. 2 GB free disk. | [architecture.md](architecture.md) |
 | **Security** | API keys via `.env` only. No Docker socket mounting. State dirs mode 0700. Optional firewall whitelist. | [claude-code-container.md](reference/claude-code-container.md) |
 | **Portability** | Identical `docker-compose.yml` on all platforms; only `.env` values and Linux `user:` field differ. | [cross-platform.md](cross-platform.md) |
-| **Reliability** | Two primary auth paths: container-internal OAuth (subscriptions) and API key (Console). Both are production-grade with documented recovery procedures. | [claude-code-container.md](reference/claude-code-container.md) |
+| **Reliability** | Three auth paths: host-side Keychain extraction on macOS, container-internal OAuth on Linux/WSL2 (subscriptions), and API key (Console). All are production-grade with documented recovery procedures. | [claude-code-container.md](reference/claude-code-container.md) |
 
 ---
 
@@ -252,7 +263,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|------|-----------|--------|------------|
 | R1 | Concurrent file corruption (Tier A) | High (if both write) | High | Use Tier B (worktrees) |
-| R2 | OAuth token expiry beyond refresh | Low | Medium | Container-internal auth; re-run `claude auth login` inside container to recover |
+| R2 | OAuth token expiry beyond refresh | Low | Medium | macOS: re-run `scripts/claude-docker auth`; Linux/WSL2: re-run `claude auth login` inside container to recover |
 | R3 | macOS bind mount slowness | Certain | Low-Medium | Named volumes for `node_modules`; document OrbStack |
 | R4 | Windows NTFS path performance | High (if misconfigured) | High | Document WSL2 fs requirement prominently |
 | R5 | UID/GID mismatch on Linux | Medium | Medium | `user:` field + `HOME=/home/node` in compose |
@@ -299,7 +310,13 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 - **Acceptance**: Sessions persist across `docker compose down -v`; `restore_session latest` restores context + findings; auto-prune keeps <= 50 sessions
 - **Effort**: 1–2 days | **Depends on**: Phase 5
 
-**Total estimated effort: 10–17 days**
+### Phase 7 — Orchestration UX
+
+- **Deliverables**: `personas.json`, `scripts/claude-docker` CLI updates (`analyze`, `usage` subcommands), Manager `CLAUDE.md` auto-orchestration triggers
+- **Acceptance**: `scripts/claude-docker analyze` dispatches to 3 workers with persona-wrapped prompts; `scripts/claude-docker usage` aggregates token data; Manager auto-invokes `run_analysis` on trigger keywords
+- **Effort**: 2–3 days | **Depends on**: Phase 5, 6
+
+**Total estimated effort: 12–20 days**
 
 ---
 
@@ -310,7 +327,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | SC-1 | Storage efficiency | Each additional instance adds <= 70 MB disk overhead |
 | SC-2 | Startup time | All containers reach Claude Code prompt within 30s of `docker compose up` |
 | SC-3 | Account isolation | Each container's history, credentials, and settings are fully independent |
-| SC-4 | Subscription auth | Container-internal OAuth tokens persist across container restarts via bind mount |
+| SC-4 | Subscription auth | macOS: Keychain-extracted credentials injected via `scripts/claude-docker auth`; Linux/WSL2: container-internal OAuth tokens persist across container restarts via bind mount |
 | SC-5 | Concurrent safety (Tier B) | Two containers commit to different branches without errors |
 | SC-6 | Cross-platform parity | Same compose file works on Linux, macOS, and Windows (WSL2) |
 | SC-7 | Reproducibility | New user goes from zero to two running containers in < 15 min (Linux) / < 30 min (macOS, Windows) |
@@ -320,6 +337,9 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | SC-11 | Worker-2 prompt includes Worker-1's findings read from Redis shared context | Phase 5 |
 | SC-12 | `save_session` creates self-contained JSON archive; `restore_session latest` restores context + findings into Redis | Phase 6 |
 | SC-13 | Archive persists across `docker compose down -v`; auto-prunes at 50 sessions | Phase 6 |
+| SC-14 | `scripts/claude-docker analyze` dispatches persona-wrapped prompts to 3 workers; categorized summary printed | Phase 7 |
+| SC-15 | Manager auto-invokes `run_analysis` on trigger keywords without explicit user command | Phase 7 |
+| SC-16 | `scripts/claude-docker usage` aggregates container + host token data via ccusage | Phase 7 |
 
 ---
 
@@ -328,7 +348,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 1. **Pre-built image**: Should we publish to Docker Hub / GHCR, or require local builds only? Trade-off: convenience vs version pinning and license compliance.
 2. **Default tier**: Should Tier B (worktree) be the default compose config? Tier A is simpler for first-run; Tier B is safer for real use.
 3. **Upgrade path**: Rebuild image on new Claude Code release, or support in-place `npm update -g` inside running containers?
-4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate inside the container?
+4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate (via `scripts/claude-docker auth` on macOS or `claude auth login` inside the container on Linux/WSL2)?
 5. **Firewall default**: Should Phase 4 firewall be opt-in or opt-out?
 6. **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)?
 
@@ -351,6 +371,8 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 | G9 | FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24 | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | SC-10 | 5 |
 | G10 (hot) | FR-20 | SRS-8.2.3–4, SRS-8.2.7, SRS-8.3.3 | SC-11 | 5 |
 | G10 (cold) | FR-25, FR-26, FR-27, FR-28, FR-29 | SRS-8.5.1–15 | SC-12, SC-13 | 6 |
+| G9 (orchestration UX) | FR-30, FR-31, FR-32 | SRS-8.6.1–5 | SC-14, SC-15 | 7 |
+| — (usage tracking) | FR-33 | SRS-8.7.1–3 | SC-16 | 7 |
 
 **Reading the table**:
 - Left to right (forward): "Goal G2 is fulfilled by FR-6/7/8, specified in SRS-5.2.5/5.2.7/5.3.1/5.3.2, and verified by SC-3/SC-4."
