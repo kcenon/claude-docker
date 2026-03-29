@@ -6,15 +6,17 @@
 services:
   redis:
     image: redis:7-alpine                                       # SRS-8.1.2
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice"]
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice", "--requirepass", "${REDIS_PASSWORD:-}"]
     volumes:
       - redis-data:/data                                        # SRS-8.1.3
+    networks:
+      - orchestration-internal                                  # SRS-8.6.2
     deploy:
       resources:
         limits:
           memory: 256M
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -33,11 +35,15 @@ services:
       - node_modules_manager:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
       - ${HOME}/.claude-state/analysis-archive:/archive          # SRS-8.5.1
+    networks:
+      - orchestration-internal                                  # SRS-8.6.2
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_MANAGER:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.6.2
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.6.1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}                      # SRS-8.6.2
       - ROLE=manager
       - WORKER_COUNT=${WORKER_COUNT:-3}
       - ARCHIVE_DIR=/archive                                     # SRS-8.5.2
@@ -62,11 +68,14 @@ services:
       - ${HOME}/.claude-state/account-w1:/home/node/.claude     # SRS-8.1.8
       # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.6.2
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_1:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.6.2
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.6.1
       - WORKER_NAME=worker-1                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -92,11 +101,14 @@ services:
       - ${HOME}/.claude-state/account-w2:/home/node/.claude
       # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.6.2
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_2:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.6.2
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.6.1
       - WORKER_NAME=worker-2                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -122,11 +134,14 @@ services:
       - ${HOME}/.claude-state/account-w3:/home/node/.claude
       # node_modules not needed: worker-server.js uses only global packages (redis)
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.6.2
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_3:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.6.2
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.6.1
       - WORKER_NAME=worker-3                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -140,6 +155,11 @@ services:
           cpus: "1"
           memory: 2G
     command: ["node", "/scripts/worker-server.js"]
+
+networks:
+  orchestration-internal:
+    driver: bridge
+    internal: true                                               # SRS-8.6.2
 
 volumes:
   redis-data:

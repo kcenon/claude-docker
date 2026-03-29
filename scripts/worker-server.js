@@ -11,6 +11,7 @@ const WORKER_PORT = parseInt(process.env.WORKER_PORT, 10) || 9000; // SRS-8.2.1
 const REDIS_URL   = process.env.REDIS_URL || 'redis://redis:6379';
 const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
 const WORKER_PERSONA = process.env.WORKER_PERSONA || '';      // SRS-8.7.1
+const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN || ''; // SRS-8.6.1
 const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
 const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
 const REDIS_RETRY_DELAY_MS = 2000;
@@ -406,10 +407,30 @@ function handleHealth(req, res) {
 }
 
 /**
+ * Validate Bearer token on authenticated endpoints.            SRS-8.6.1
+ * Returns true if the request is authorized, false otherwise.
+ * If WORKER_AUTH_TOKEN is not set, allows all requests (backward compatibility).
+ */
+function validateAuth(req, res) {
+  if (!WORKER_AUTH_TOKEN) return true;
+
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+  if (token !== WORKER_AUTH_TOKEN) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return false;
+  }
+  return true;
+}
+
+/**
  * HTTP request router.
  */
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/task') {
+    if (!validateAuth(req, res)) return;
     handleTask(req, res).catch((err) => {
       console.error(`[task] Unhandled error: ${err.message}`);
       if (!res.headersSent) {
@@ -429,6 +450,10 @@ const server = http.createServer((req, res) => {
 
 async function main() {
   try {
+    if (!WORKER_AUTH_TOKEN) {
+      console.warn('[worker] WARNING: WORKER_AUTH_TOKEN not set — task endpoint is unauthenticated');
+    }
+
     redis = await connectRedis();                            // SRS-8.2.15
     startHeartbeat();                                        // SRS-8.2.8, SRS-8.2.9
 

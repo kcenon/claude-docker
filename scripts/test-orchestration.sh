@@ -15,6 +15,14 @@ PASS=0
 FAIL=0
 WARN=0
 
+# Load auth credentials from .env if available
+if [ -f "$PROJECT_DIR/.env" ]; then
+    WORKER_AUTH_TOKEN="$(grep -E '^WORKER_AUTH_TOKEN=' "$PROJECT_DIR/.env" | cut -d= -f2- || true)"
+    REDIS_PASSWORD="$(grep -E '^REDIS_PASSWORD=' "$PROJECT_DIR/.env" | cut -d= -f2- || true)"
+fi
+WORKER_AUTH_TOKEN="${WORKER_AUTH_TOKEN:-}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-}"
+
 # SRS-8.4.5: Reliable teardown via trap
 cleanup() {
     echo ""
@@ -87,12 +95,18 @@ fi
 
 echo "=== Stage 3: Set Shared Context ==="
 
-mgr redis-cli -u redis://redis:6379 HSET context:shared \
+# Build redis-cli auth args
+REDIS_AUTH_ARGS=()
+if [ -n "$REDIS_PASSWORD" ]; then
+    REDIS_AUTH_ARGS=(-a "$REDIS_PASSWORD" --no-auth-warning)
+fi
+
+mgr redis-cli -u redis://redis:6379 "${REDIS_AUTH_ARGS[@]}" HSET context:shared \
     project "test-project" \
     guidelines "Follow best practices" \
     language "TypeScript" > /dev/null
 
-ctx_fields=$(mgr redis-cli -u redis://redis:6379 HLEN context:shared 2>/dev/null || echo "0")
+ctx_fields=$(mgr redis-cli -u redis://redis:6379 "${REDIS_AUTH_ARGS[@]}" HLEN context:shared 2>/dev/null || echo "0")
 if [ "$ctx_fields" -ge 3 ]; then
     record_pass "Shared context set (${ctx_fields} fields)"
 else
@@ -113,9 +127,15 @@ for i in 1 2 3; do
 
     echo "  Dispatching task ${i} to ${worker} (id: ${task_id})..."
 
+    AUTH_HEADER_ARGS=()
+    if [ -n "$WORKER_AUTH_TOKEN" ]; then
+        AUTH_HEADER_ARGS=(-H "Authorization: Bearer ${WORKER_AUTH_TOKEN}")
+    fi
+
     response=$(mgr curl -s --max-time $((TASK_TIMEOUT + 30)) \
         -X POST "http://${worker}:9000/task" \
         -H "Content-Type: application/json" \
+        "${AUTH_HEADER_ARGS[@]}" \
         -d "{\"taskId\":\"${task_id}\",\"prompt\":\"Analyze the project structure and list key files. Task ${i} of 3.\",\"timeout\":${TASK_TIMEOUT}}" \
         2>/dev/null || echo "")
 
@@ -138,7 +158,7 @@ for i in 1 2 3; do
     task_id="${TASK_IDS[$((i - 1))]}"
     result_key="result:${task_id}"
 
-    exists=$(mgr redis-cli -u redis://redis:6379 EXISTS "$result_key" 2>/dev/null || echo "0")
+    exists=$(mgr redis-cli -u redis://redis:6379 "${REDIS_AUTH_ARGS[@]}" EXISTS "$result_key" 2>/dev/null || echo "0")
 
     if [ "$exists" = "1" ]; then
         record_pass "Result stored for ${worker}:${task_id}"
@@ -151,7 +171,7 @@ done
 
 echo "=== Stage 6: Verify Findings Accumulation ==="
 
-findings_len=$(mgr redis-cli -u redis://redis:6379 LLEN findings:all 2>/dev/null || echo "0")
+findings_len=$(mgr redis-cli -u redis://redis:6379 "${REDIS_AUTH_ARGS[@]}" LLEN findings:all 2>/dev/null || echo "0")
 
 if [ "$findings_len" -gt 0 ]; then
     record_pass "Findings accumulated (${findings_len} entries in findings:all)"
