@@ -20,6 +20,7 @@
 #   save          Save session to cold archive
 #   restore [id]  Restore session from archive (default: latest)
 #   sessions      List archived sessions
+#   analyze <prompt>  Multi-persona project analysis
 #   usage [type]  Show token usage report (requires Node.js on host)
 #   build         Build/rebuild Docker image
 #   config        Show resolved compose configuration
@@ -451,6 +452,18 @@ cmd_usage() {
     CLAUDE_CONFIG_DIR="$merged_dir" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
 }
 
+cmd_analyze() {
+    local prompt="${1:?Usage: claude-docker analyze <prompt> [timeout]}"
+    shift
+    local timeout="${1:-300}"
+    local cmd
+    cmd=$(get_compose_cmd)
+    echo -e "${BOLD}Multi-Persona Analysis${NC}"
+    echo -e "${DIM}Dispatching to Sentinel, Reviewer, and Profiler...${NC}"
+    echo ""
+    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && run_analysis \"$prompt\" $timeout'"
+}
+
 cmd_help() {
     local cmd
     cmd=$(get_compose_cmd)
@@ -486,6 +499,10 @@ ${BOLD}COLD MEMORY${NC}
   ${GREEN}save${NC}                  Save session to archive
   ${GREEN}restore${NC} [id|latest]   Restore session from archive
   ${GREEN}sessions${NC}              List archived sessions
+
+${BOLD}ANALYSIS${NC}
+  ${GREEN}analyze${NC} <prompt> [timeout]  Multi-persona project analysis (default: 300s)
+                              Dispatches to Sentinel, Reviewer, and Profiler
 
 ${BOLD}USAGE TRACKING${NC}
   ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
@@ -523,6 +540,7 @@ main() {
         save)      cmd_save "$@" ;;
         restore)   cmd_restore "$@" ;;
         sessions)  cmd_sessions "$@" ;;
+        analyze)   cmd_analyze "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
         config)    cmd_config "$@" ;;
