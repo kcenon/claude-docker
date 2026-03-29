@@ -86,289 +86,215 @@ CLAUDE_API_KEY_B=sk-ant-...
 ### 3. Build and run
 
 ```bash
-docker compose build
-docker compose up -d
+scripts/claude-docker build
+scripts/claude-docker up
 ```
 
-**Linux users** -- add the Linux override for UID/GID mapping:
+The CLI wrapper auto-detects your platform and applies the correct
+compose overrides (Linux UID/GID, worktree, orchestration, firewall).
+
+### 4. Authenticate and start
 
 ```bash
-export UID=$(id -u) GID=$(id -g)
-docker compose -f docker-compose.yml -f docker-compose.linux.yml up -d
-```
+# Authenticate all containers (opens OAuth in browser)
+scripts/claude-docker auth
 
-### 4. Install project dependencies
-
-```bash
-docker compose exec claude-a npm install
-docker compose exec claude-b npm install
-```
-
-### 5. Start Claude Code
-
-```bash
-docker compose exec claude-a claude
+# Start Claude Code
+scripts/claude-docker claude
 ```
 
 In a separate terminal:
 
 ```bash
-docker compose exec claude-b claude
+scripts/claude-docker claude claude-b
 ```
 
 ## Usage
 
-### Entering a Container
+The `scripts/claude-docker` CLI wrapper automatically detects your
+configuration (platform, tier, orchestration, firewall) and builds the
+correct `docker compose -f` chain. All subcommands below use this wrapper.
 
-Each container runs in the background (`sleep infinity`). Use `docker compose exec`
-to open an interactive session:
+### Quick Reference
 
 ```bash
-# Start an interactive shell
-docker compose exec claude-a bash
-
-# Start Claude Code directly
-docker compose exec claude-a claude
-
-# Start Claude Code with a specific prompt
-docker compose exec claude-a claude -p "explain the authentication module"
+scripts/claude-docker help       # Show all available commands
 ```
 
-### Working with Multiple Sessions
+| Category | Command | Description |
+|----------|---------|-------------|
+| **Lifecycle** | `up` | Start all containers |
+| | `down` | Stop all containers |
+| | `restart` | Restart all containers |
+| | `build` | Build/rebuild Docker image |
+| | `ps` | Show container status |
+| | `logs` | Follow container logs |
+| **Interactive** | `claude [service]` | Start Claude Code (default: primary service) |
+| | `auth [service]` | Authenticate via OAuth login |
+| | `exec <service>` | Open shell in a container |
+| **Orchestration** | `dispatch <worker> <prompt>` | Send task to worker |
+| | `status` | Show worker status |
+| | `findings [category]` | Show accumulated findings |
+| **Cold Memory** | `save` | Save session to archive |
+| | `restore [id\|latest]` | Restore session from archive |
+| | `sessions` | List archived sessions |
+| **Usage Tracking** | `usage [type] [flags]` | Token usage report |
+| **Advanced** | `config` | Show resolved compose configuration |
+| | `compose ...` | Pass raw args to docker compose |
 
-Open a separate terminal for each account:
+### Starting and Stopping
 
 ```bash
-# Terminal 1 -- Account A
-docker compose exec claude-a claude
+# Start all containers (detached)
+scripts/claude-docker up
 
-# Terminal 2 -- Account B
-docker compose exec claude-b claude
+# Stop all containers (state preserved on host via bind mounts)
+scripts/claude-docker down
+
+# Restart
+scripts/claude-docker restart
+
+# Check status
+scripts/claude-docker ps
+```
+
+### Running Claude Code
+
+```bash
+# Start Claude Code in the primary service (claude-a or manager)
+scripts/claude-docker claude
+
+# Start in a specific container
+scripts/claude-docker claude claude-b
+```
+
+Open separate terminals for simultaneous sessions:
+
+```bash
+# Terminal 1
+scripts/claude-docker claude claude-a
+
+# Terminal 2
+scripts/claude-docker claude claude-b
 ```
 
 Both sessions see the same project source at `/workspace` (Tier A) or
 their own worktree (Tier B). Each session has independent conversation
 history, settings, and credentials.
 
-### Checking Authentication Status
+### Authentication
+
+Authentication runs inside containers. Credentials are persisted in the
+bind-mounted state directory (`~/.claude-state/account-*/`).
 
 ```bash
-# Verify which account is active in each container
-docker compose exec claude-a claude auth status
-docker compose exec claude-b claude auth status
-```
+# Authenticate all containers at once
+scripts/claude-docker auth
 
-### Stopping and Restarting
+# Authenticate a specific container
+scripts/claude-docker auth claude-a
 
-```bash
-# Stop all containers (state is preserved on host)
-docker compose down
-
-# Restart after stop (credentials and history persist via bind mount)
-docker compose up -d
-
-# Restart a single container
-docker compose restart claude-a
-```
-
-### Rebuilding the Image
-
-When a new Claude Code version is released:
-
-```bash
-# Rebuild with latest Claude Code
-docker compose build --no-cache
-
-# Or pin a specific version
-docker compose build --build-arg CLAUDE_CODE_VERSION=1.2.3
-
-# Recreate containers with the new image
-docker compose up -d --force-recreate
+# Check authentication status
+scripts/claude-docker exec claude-a claude auth status
 ```
 
 ### Running Commands Inside Containers
 
 ```bash
+# Open a shell
+scripts/claude-docker exec claude-a
+
 # Run a one-off command
-docker compose exec claude-a git status
-
-# Check Node.js and Claude Code versions
-docker compose exec claude-a node --version
-docker compose exec claude-a claude --version
-
-# Install additional tools (temporary, lost on recreate)
-docker compose exec claude-a sudo apt-get update && sudo apt-get install -y <package>
+scripts/claude-docker exec claude-a git status
+scripts/claude-docker exec claude-a claude --version
 ```
 
 ### Viewing Logs
 
 ```bash
-# View container logs
-docker compose logs claude-a
-docker compose logs claude-b
+# Follow all container logs
+scripts/claude-docker logs
 
-# Follow logs in real time
-docker compose logs -f
+# Follow a specific container
+scripts/claude-docker logs claude-a
 
-# View last 50 lines
-docker compose logs --tail 50 claude-a
+# Last 50 lines
+scripts/claude-docker logs --tail 50 claude-a
 ```
 
-### Switching Between Accounts on the Same Terminal
-
-If you prefer using one terminal, detach and reattach:
+### Rebuilding the Image
 
 ```bash
-# Start Claude Code in account A
-docker compose exec claude-a claude
-# (use Claude Code, then exit with /exit or Ctrl+C)
+# Rebuild with latest Claude Code
+scripts/claude-docker build --no-cache
 
-# Switch to account B
-docker compose exec claude-b claude
+# Pin a specific version in .env:
+#   CLAUDE_CODE_VERSION=1.2.3
+scripts/claude-docker build
+
+# Recreate containers with the new image
+scripts/claude-docker up --force-recreate
 ```
 
 ### Using Git Inside Containers
 
-Tier A (shared source) -- both containers share `.git`:
+**Tier A** (shared source) -- both containers share `.git`:
 
 ```bash
 # Only run git commands from ONE container at a time to avoid lock contention
-docker compose exec claude-a git add -A && git commit -m "feat: add feature"
+scripts/claude-docker exec claude-a git add -A
+scripts/claude-docker exec claude-a git commit -m "feat: add feature"
 ```
 
-Tier B (worktrees) -- each container has its own branch:
+**Tier B** (worktrees) -- each container has its own branch:
 
 ```bash
 # Container A commits to branch-a
-docker compose exec claude-a git add -A && git commit -m "feat: add feature"
+scripts/claude-docker exec claude-a git commit -am "feat: add feature"
 
 # Container B commits to branch-b (no conflict)
-docker compose exec claude-b git add -A && git commit -m "fix: resolve bug"
+scripts/claude-docker exec claude-b git commit -am "fix: resolve bug"
 ```
 
-### Read-Only Mode (Code Review)
+### Orchestration (Multi-Agent)
 
-For review-only sessions where you want to prevent accidental writes:
-
-```bash
-# Override the project mount to read-only in your docker-compose.override.yml
-# or pass it inline:
-docker compose run --volume ${PROJECT_DIR}:/workspace:ro claude-a claude
-```
-
-Files in `/workspace` will be read-only. The container can still write to
-`/home/node/.claude` (settings/history) and `/workspace/node_modules` (named volume).
-
-### Cleanup
+When orchestration is enabled (Phase 5), the CLI detects it automatically:
 
 ```bash
-# Remove containers and named volumes (node_modules)
-docker compose down -v
+# Dispatch a task to a specific worker
+scripts/claude-docker dispatch worker-1 "analyze the authentication module"
 
-# Full cleanup (containers, volumes, worktrees, state)
-scripts/cleanup.sh ~/work/project
+# Dispatch with custom timeout (seconds)
+scripts/claude-docker dispatch worker-2 "run security audit" 600
 
-# Complete removal (everything install.sh created)
-scripts/remove.sh
-```
+# Check worker status
+scripts/claude-docker status
 
-## Configuration Tiers
-
-### Tier A -- Shared Source (default)
-
-Both containers mount the same project directory. Simplest setup, minimum
-storage. Best when one session writes and the other reads/reviews.
-
-```bash
-docker compose up -d
-```
-
-### Tier B -- Git Worktree
-
-Each container gets its own worktree for full concurrent editing safety.
-No `.git/index.lock` contention.
-
-```bash
-# Create worktrees
-scripts/setup-worktrees.sh ~/work/project
-
-# Add worktree paths to .env
-# PROJECT_DIR_A=~/work/project-a
-# PROJECT_DIR_B=~/work/project-b
-
-# Start with worktree override
-docker compose -f docker-compose.yml -f docker-compose.worktree.yml up -d
-```
-
-## Adding More Accounts
-
-```bash
-# 1. Create state directory
-mkdir -p ~/.claude-state/account-c
-
-# 2. Authenticate (Path A) -- start the container and run:
-#    scripts/claude-docker claude
-#    OAuth login will open in your browser.
-
-# 3. Copy a service block in docker-compose.yml:
-#    claude-b → claude-c (rename account-b → account-c, _B → _C)
-
-# 4. Start the new container
-docker compose up -d claude-c
-docker compose exec claude-c npm install
-```
-
-Each additional container needs ~4 GB RAM.
-
-## Compose Overrides
-
-Override files separate platform and feature concerns from the base compose:
-
-| File | Purpose | When to use |
-|------|---------|-------------|
-| `docker-compose.yml` | Base config (Tier A) | Always |
-| `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
-| `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
-| `docker-compose.firewall.yml` | Outbound network whitelist | Security hardening |
-| `docker-compose.orchestration.yml` | Manager-worker with Redis | Multi-agent orchestration |
-
-Combine with `-f`:
-
-```bash
-# Linux + Tier B + Firewall
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.worktree.yml \
-  -f docker-compose.firewall.yml \
-  up -d
+# View findings
+scripts/claude-docker findings
+scripts/claude-docker findings security
 ```
 
 ### Session Archive (Cold Memory)
 
-Save and restore analysis sessions across container restarts:
+Save and restore orchestration sessions across container restarts:
 
 ```bash
-# Inside manager container:
-source /scripts/manager-helpers.sh
-
-# Save current session to archive
-save_session
+# Save current session (context + findings + task results)
+scripts/claude-docker save
 
 # List all archived sessions
-list_sessions
+scripts/claude-docker sessions
 
-# Restore previous session's context and findings
-restore_session latest
-# or by specific ID:
-restore_session 20260328T143000Z_a1b2c3d4
+# Restore the latest session
+scripts/claude-docker restore
 
-# View detailed session info
-show_session 20260328T143000Z_a1b2c3d4
+# Restore a specific session by ID
+scripts/claude-docker restore 20260328T143000Z_a1b2c3d4
 ```
 
-Sessions persist in `~/.claude-state/analysis-archive/` on the host and survive
-`docker compose down -v`. Maximum 50 sessions are retained; oldest are pruned
+Sessions persist in `~/.claude-state/analysis-archive/` and survive
+`docker compose down -v`. Maximum 50 sessions retained; oldest pruned
 automatically.
 
 ### Token Usage Reports
@@ -398,6 +324,99 @@ scripts/claude-docker usage daily --breakdown
 The command automatically detects all account state directories under
 `~/.claude-state/` and combines their data into a unified report.
 Containers do not need to be running.
+
+### Advanced: Raw Compose Commands
+
+For operations not covered by subcommands, pass arguments directly:
+
+```bash
+# Show the resolved compose configuration
+scripts/claude-docker config
+
+# Pass raw docker compose arguments
+scripts/claude-docker compose exec claude-a npm install
+scripts/claude-docker compose run --rm claude-a npm test
+```
+
+### Cleanup and Removal
+
+```bash
+# Stop and remove containers + named volumes (node_modules)
+scripts/claude-docker down -v
+
+# Full cleanup (containers, volumes, worktrees, state)
+scripts/cleanup.sh ~/work/project
+
+# Complete removal (everything install.sh created)
+scripts/remove.sh
+```
+
+## Configuration Tiers
+
+### Tier A -- Shared Source (default)
+
+Both containers mount the same project directory. Simplest setup, minimum
+storage. Best when one session writes and the other reads/reviews.
+
+```bash
+scripts/claude-docker up
+```
+
+### Tier B -- Git Worktree
+
+Each container gets its own worktree for full concurrent editing safety.
+No `.git/index.lock` contention.
+
+```bash
+# Create worktrees (sets PROJECT_DIR_A/B in .env)
+scripts/setup-worktrees.sh ~/work/project
+
+# Start (CLI auto-detects worktree overlay from .env)
+scripts/claude-docker up
+```
+
+## Adding More Accounts
+
+```bash
+# 1. Create state directory
+mkdir -p ~/.claude-state/account-c
+
+# 2. Copy a service block in docker-compose.yml:
+#    claude-b → claude-c (rename account-b → account-c, _B → _C)
+
+# 3. Start and authenticate the new container
+scripts/claude-docker up
+scripts/claude-docker auth claude-c
+```
+
+Each additional container needs ~4 GB RAM.
+
+## Compose Overrides
+
+Override files separate platform and feature concerns from the base compose:
+
+| File | Purpose | When to use |
+|------|---------|-------------|
+| `docker-compose.yml` | Base config (Tier A) | Always |
+| `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
+| `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
+| `docker-compose.firewall.yml` | Outbound network whitelist | Security hardening |
+| `docker-compose.orchestration.yml` | Manager-worker with Redis | Multi-agent orchestration |
+
+Combine with `-f` (or let `scripts/claude-docker` detect them automatically):
+
+```bash
+# Manual: Linux + Tier B + Firewall
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.linux.yml \
+  -f docker-compose.worktree.yml \
+  -f docker-compose.firewall.yml \
+  up -d
+
+# Equivalent via CLI wrapper (auto-detects all overlays):
+scripts/claude-docker up
+```
 
 ## Troubleshooting
 
