@@ -405,7 +405,7 @@ cmd_usage() {
     echo ""
 
     # Run ccusage with combined CLAUDE_CONFIG_DIR
-    CLAUDE_CONFIG_DIR="$config_dir_path" npx ccusage@latest "$report_type" "${pass_args[@]}"
+    CLAUDE_CONFIG_DIR="$config_dir_path" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
 }
 
 cmd_help() {
