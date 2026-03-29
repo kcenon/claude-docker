@@ -12,3 +12,24 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+
+  # Orchestration services (only applied when firewall overlay is included)
+  manager:
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  worker-1:
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  worker-2:
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  worker-3:
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW

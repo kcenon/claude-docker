@@ -25,7 +25,7 @@ PLATFORM=""
 AUTH_PATH=""
 TIER=""
 ORCHESTRATION="no"
-FIREWALL="no"
+FIREWALL="yes"
 SOURCE_DIR=""
 CLAUDE_VERSION=""
 API_KEY_A=""
@@ -396,12 +396,12 @@ collect_configuration() {
         log_info "Orchestration: disabled (standard 2-container setup)"
     fi
 
-    # Firewall
-    if prompt_confirm "Enable outbound firewall (iptables whitelist)?"; then
-        FIREWALL="yes"
-        log_info "Firewall: enabled"
+    # Firewall (default: enabled for security)
+    if prompt_confirm "Disable outbound firewall? (default: enabled for security)" "n"; then
+        FIREWALL="no"
+        log_warn "Firewall: disabled (containers will have unrestricted egress)"
     else
-        log_info "Firewall: disabled"
+        log_info "Firewall: enabled (outbound traffic restricted to allowlisted hosts)"
     fi
 
     # Project directory
