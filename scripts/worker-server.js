@@ -10,6 +10,7 @@ const { createClient } = require('redis');                   // SRS-8.2.11
 const WORKER_PORT = parseInt(process.env.WORKER_PORT, 10) || 9000; // SRS-8.2.1
 const REDIS_URL   = process.env.REDIS_URL || 'redis://redis:6379';
 const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
+const WORKER_PERSONA = process.env.WORKER_PERSONA || '';      // SRS-8.7.1
 const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
 const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
 const REDIS_RETRY_DELAY_MS = 2000;
@@ -75,6 +76,13 @@ async function readPriorFindings() {                         // SRS-8.2.4
  */
 function buildEnrichedPrompt(context, priorFindings, taskPrompt) {
   const sections = [];
+
+  // [Role] section — injected from WORKER_PERSONA env var (SRS-8.7.1)
+  if (WORKER_PERSONA) {
+    sections.push('[Role]');
+    sections.push(WORKER_PERSONA);
+    sections.push('');
+  }
 
   // [Project Context] section
   const ctxEntries = Object.entries(context);
