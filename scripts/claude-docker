@@ -196,6 +196,12 @@ cmd_claude() {
     eval "$cmd exec $service claude"
 }
 
+# Resolve a compose service name to its running Docker container ID.
+get_container_id() {
+    local svc="$1"
+    eval "$(get_compose_cmd) ps -q $svc 2>/dev/null"
+}
+
 cmd_auth() {
     local service="${1:-}"
     local cmd
@@ -212,8 +218,10 @@ cmd_auth() {
 
         for svc in "${services[@]}"; do
             echo -e "\n${BOLD}=== Authenticating: $svc ===${NC}"
-            if eval "$cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$svc"; then
-                eval "$cmd exec $svc claude auth login" < /dev/tty || {
+            local cid
+            cid=$(get_container_id "$svc")
+            if [[ -n "$cid" ]]; then
+                docker exec -it "$cid" claude auth login || {
                     log_warn "$svc: auth failed or skipped"
                 }
             else
@@ -222,7 +230,14 @@ cmd_auth() {
         done
     else
         echo -e "${CYAN}Authenticating in ${BOLD}$service${NC}${CYAN}...${NC}"
-        eval "$cmd exec $service claude auth login"
+        local cid
+        cid=$(get_container_id "$service")
+        if [[ -n "$cid" ]]; then
+            docker exec -it "$cid" claude auth login
+        else
+            log_error "$service: container not running"
+            exit 1
+        fi
     fi
 }
 
