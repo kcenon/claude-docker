@@ -66,11 +66,15 @@ dispatch_task() {
         auth_header=(-H "Authorization: Bearer ${WORKER_AUTH_TOKEN}")
     fi
 
+    local prompt_hash
+    prompt_hash="$(printf '%s' "$prompt" | sha256sum 2>/dev/null | cut -c1-16 || echo 'n/a')"
+
     log_audit "task_dispatch" \
         "taskId=${task_id}" \
         "worker=${worker}" \
         "timeout=${timeout}" \
-        "promptLength=${#prompt}"
+        "promptLength=${#prompt}" \
+        "promptHash=${prompt_hash}"
 
     curl -s --max-time "$((timeout + 30))" \
         -X POST "http://${worker}:9000/task" \
