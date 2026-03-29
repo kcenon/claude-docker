@@ -180,6 +180,61 @@ else
     record_warn "No structured findings in findings:all (Claude may not have produced JSON output)"
 fi
 
+# ── Stage 7: Error path tests ──────────────────────────────────────────
+
+echo "=== Stage 7: Error Path Tests ==="
+
+# 7a. Oversized prompt rejected with HTTP 413
+oversized_prompt=$(python3 -c "print('x' * 200000)" 2>/dev/null || printf '%0.s.' $(seq 1 200000))
+AUTH_HEADER_ARGS=()
+if [ -n "$WORKER_AUTH_TOKEN" ]; then
+    AUTH_HEADER_ARGS=(-H "Authorization: Bearer ${WORKER_AUTH_TOKEN}")
+fi
+oversized_status=$(mgr curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 10 --max-time 30 \
+    -X POST "http://worker-1:9000/task" \
+    -H "Content-Type: application/json" \
+    "${AUTH_HEADER_ARGS[@]}" \
+    -d "{\"taskId\":\"test-oversized\",\"prompt\":\"${oversized_prompt}\",\"timeout\":10}" \
+    2>/dev/null || echo "000")
+
+if [ "$oversized_status" = "413" ]; then
+    record_pass "Oversized prompt rejected with HTTP 413"
+else
+    record_fail "Expected HTTP 413 for oversized prompt, got $oversized_status"
+fi
+
+# 7b. Missing auth token rejected with HTTP 401 (only if auth is configured)
+if [ -n "$WORKER_AUTH_TOKEN" ]; then
+    noauth_status=$(mgr curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 10 --max-time 30 \
+        -X POST "http://worker-1:9000/task" \
+        -H "Content-Type: application/json" \
+        -d '{"taskId":"test-noauth","prompt":"test","timeout":10}' \
+        2>/dev/null || echo "000")
+
+    if [ "$noauth_status" = "401" ]; then
+        record_pass "Unauthenticated request rejected with HTTP 401"
+    else
+        record_fail "Expected HTTP 401 for unauthenticated request, got $noauth_status"
+    fi
+fi
+
+# 7c. Invalid JSON body rejected with HTTP 400
+invalid_status=$(mgr curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 10 --max-time 30 \
+    -X POST "http://worker-1:9000/task" \
+    -H "Content-Type: application/json" \
+    "${AUTH_HEADER_ARGS[@]}" \
+    -d 'not-valid-json' \
+    2>/dev/null || echo "000")
+
+if [ "$invalid_status" = "400" ]; then
+    record_pass "Invalid JSON rejected with HTTP 400"
+else
+    record_fail "Expected HTTP 400 for invalid JSON, got $invalid_status"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────
 
 echo ""
