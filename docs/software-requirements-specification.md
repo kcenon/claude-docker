@@ -22,15 +22,15 @@ document.
 
 The system consists of: one Docker image, N containers, host-side state
 directories, and orchestration via Docker Compose. It supports Linux,
-macOS, and Windows (WSL2), two authentication paths (OAuth subscription
-and Console API key), and two source-sharing tiers (shared bind mount
-and git worktree).
+macOS, and Windows (WSL2), three authentication paths (host-side Keychain
+extraction on macOS, container-internal OAuth on Linux/WSL2, and Console
+API key), and two source-sharing tiers (shared bind mount and git worktree).
 
 ### 1.3 Definitions
 
 | Term | Definition |
 |------|-----------|
-| Path A | Container-internal OAuth authentication for subscription accounts (Pro/Max/Team) |
+| Path A | Subscription OAuth authentication (Pro/Max/Team): host-side Keychain extraction on macOS, container-internal OAuth on Linux/WSL2 |
 | Path B | `ANTHROPIC_API_KEY` environment variable for Console accounts |
 | Tier A | Both containers share a single bind-mounted project directory |
 | Tier B | Each container mounts a separate git worktree from the same repository |
@@ -233,6 +233,7 @@ SHALL be provided with placeholder values and no real credentials.
 | SRS-5.1.10 | Final image size SHALL be under 1 GB. |
 | SRS-5.1.11 | *(Phase 5)* Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. Not required until Phase 5 orchestration is implemented. |
 | SRS-5.1.12 | *(Phase 5)* Dockerfile SHALL install `redis` npm package (v4.6+) globally for worker-server.js. Not required until Phase 5 orchestration is implemented. |
+| SRS-5.1.13 | Dockerfile SHALL set `NODE_PATH=/usr/local/lib/node_modules` so that globally installed npm packages (e.g., `redis`) are resolvable by `require()` in scripts. |
 
 ### SRS-5.2 Container Orchestration (docker-compose.yml)
 
@@ -253,6 +254,22 @@ SHALL be provided with placeholder values and no real credentials.
 ### SRS-5.3 Authentication Subsystem
 
 **SRS-5.3.1 (Path A — Subscription OAuth)**:
+
+**SRS-5.3.1a (macOS — Host-side Keychain Extraction)**:
+Container-internal OAuth fails on macOS Docker (GitHub #34917). The primary
+macOS method is host-side Keychain extraction.
+1. User SHALL create state directories on the host (`~/.claude-state/account-X/`).
+2. Container SHALL bind-mount the state directory to `/home/node/.claude`.
+3. User SHALL run `scripts/claude-docker auth` on the host.
+4. `get_keychain_credentials()` SHALL extract OAuth tokens from the macOS Keychain
+   (service: `claude.ai`, account: `oauth_credentials`).
+5. `inject_credentials()` SHALL write `.credentials.json` into the bind-mounted
+   state directory with mode `0600`.
+6. Credentials SHALL persist across container restarts via the host bind mount.
+7. Token refresh SHALL occur automatically via `refreshToken` inside the container.
+8. On token expiry beyond refresh, user SHALL re-run `scripts/claude-docker auth`.
+
+**SRS-5.3.1b (Linux/WSL2 — Container-internal OAuth)**:
 1. User SHALL create state directories on the host (`~/.claude-state/account-X/`).
 2. Container SHALL bind-mount the state directory to `/home/node/.claude`.
 3. On first `claude` launch inside the container, Claude Code SHALL initiate OAuth flow.
@@ -474,6 +491,32 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.5.14 | SHALL | `save_session` SHALL NOT modify Redis state (read-only Redis operations during save) |
 | SRS-8.5.15 | SHALL | The archive directory SHALL persist across `docker compose down -v` because it is a host bind mount, not a Docker named volume |
 
+### 8.6 Orchestration UX (Phase 7)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.6.1 | SHALL | `personas.json` SHALL define worker personas with fields: `name` (string), `role` (string), `worker` (string, e.g., `worker-1`), `icon` (string, emoji), `system` (string, system prompt), `category` (string, e.g., `security`, `quality`, `performance`) |
+| SRS-8.6.2 | SHALL | `WORKER_PERSONA` environment variable SHALL be injected into each worker's prompt context by `buildEnrichedPrompt()` during dispatch. The persona system prompt SHALL be prepended to the user-provided prompt. |
+| SRS-8.6.3 | SHALL | `run_analysis()` SHALL dispatch tasks to all workers in parallel with persona wrapping. Each worker receives its persona's system prompt concatenated with the user prompt and accumulated shared context. |
+| SRS-8.6.4 | SHALL | `scripts/claude-docker analyze "<prompt>"` CLI subcommand SHALL invoke `run_analysis` inside the manager container, print a categorized summary grouped by persona category, and save the session to cold storage. |
+| SRS-8.6.5 | SHOULD | Manager `CLAUDE.md` SHALL define trigger keywords (`analyze`, `audit`, `review`, `inspect`, `scan`, `security check`, `code quality`, `performance review`, `production readiness`, `health check`) that auto-invoke `run_analysis` when detected in user input. |
+
+### 8.7 Usage Tracking (Phase 7)
+
+| Spec | Priority | Requirement |
+|------|----------|-------------|
+| SRS-8.7.1 | SHALL | `scripts/claude-docker usage` subcommand SHALL aggregate token usage data from all container state directories and the host Claude config directory |
+| SRS-8.7.2 | SHALL | Usage aggregation SHALL use `ccusage` tool with symlink merge to unify per-account usage data into a single report |
+| SRS-8.7.3 | SHOULD | Usage report SHALL include per-account breakdown and total across all accounts (container + host) |
+
+### 8.8 Known Issues and Errata
+
+| ID | Description | Affected Spec | Fix |
+|----|-------------|---------------|-----|
+| ERRATA-1 | `xxd` is not available in `node:20-slim`; scripts using `xxd` for hex encoding SHALL use `od` instead (`od -An -tx1`) | SRS-8.3 | Replace `xxd` calls with `od -An -tx1` in manager-helpers.sh |
+| ERRATA-2 | `NODE_PATH=/usr/local/lib/node_modules` is required for globally installed npm packages to be resolvable by `require()` in worker-server.js | SRS-5.1.12 | Added SRS-5.1.13 |
+| ERRATA-3 | `((counter++))` returns exit code 1 when counter is 0 under `set -e`, causing script termination | SRS-8.3.5 | Use `counter=$((counter + 1))` instead of `((counter++))` in shell scripts |
+
 ---
 
 ## 9. Constraints and Assumptions
@@ -502,10 +545,10 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 
 | SRS Section | Specs | PRD FR | PRD Goal | Phase |
 |-------------|-------|--------|----------|-------|
-| 5.1 Image Build | SRS-5.1.1–10 | FR-1–5 | G1, G5 | 1 |
+| 5.1 Image Build | SRS-5.1.1–10, 5.1.13 | FR-1–5 | G1, G5 | 1 |
 | 5.1 Image Build (Phase 5 additions) | SRS-5.1.11–12 | — | G9 | 5 |
 | 5.2 Container Orchestration | SRS-5.2.1–11 | FR-6, FR-9, FR-10, FR-12 | G2, G3, G5 | 2, 3 |
-| 5.3 Authentication | SRS-5.3.1–3 | FR-7, FR-8 | G2, G7 | 2 |
+| 5.3 Authentication | SRS-5.3.1a–b, 5.3.2–3 | FR-7, FR-8 | G2, G7 | 2 |
 | 5.4 Source Sharing | SRS-5.4.1–3 | FR-10–13 | G3, G4 | 3 |
 | 5.5 Scaling | SRS-5.5 | — | G8 | 2, 3 |
 | 6.1 Linux Adaptation | SRS-6.1.1–5 | — | G6 | 2 |
@@ -514,6 +557,8 @@ Each SRS functional section traces back to PRD Goals and Functional Requirements
 | 7.3 Security | SRS-7.3 | FR-14 | G5 | 4 |
 | 8.1–8.4 Orchestration | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | FR-18–24 | G9, G10 | 5 |
 | 8.5 Cold Memory | SRS-8.5.1–15 | FR-25–29 | G10 | 6 |
+| 8.6 Orchestration UX | SRS-8.6.1–5 | FR-30–32 | G9 | 7 |
+| 8.7 Usage Tracking | SRS-8.7.1–3 | FR-33 | — | 7 |
 
 ### 10.2 Downstream Verification (PRD FR → SRS → Test)
 
@@ -528,7 +573,7 @@ a test procedure.
 | FR-4 (WORKDIR not /) | SRS-5.1.6 | `docker inspect` image; verify `WorkingDir` is not `/` |
 | FR-5 (.dockerignore) | SRS-5.1.9 | Build image; verify `.git` and `node_modules` not in image layers |
 | FR-6 (separate CLAUDE_CONFIG_DIR) | SRS-5.2.5, 5.2.7 | Create distinct files in each state dir on host; verify visibility in respective containers only |
-| FR-7 (Path A OAuth) | SRS-5.3.1 | Start container; run `claude auth login` inside container; complete OAuth in host browser; verify `claude auth status` succeeds inside container |
+| FR-7 (Path A OAuth) | SRS-5.3.1a–b | macOS: run `scripts/claude-docker auth`; verify `.credentials.json` created in state dir; verify `claude auth status` succeeds inside container. Linux/WSL2: run `claude auth login` inside container; complete OAuth in host browser; verify `claude auth status` succeeds inside container. |
 | FR-8 (Path B API key) | SRS-5.3.2 | Set `CLAUDE_API_KEY_A` in `.env`; start container; verify `claude auth status` shows API key auth |
 | FR-9 (.env.example) | SRS-4.5 | Verify `.env.example` exists with placeholder values; verify `.env` in `.gitignore` |
 | FR-10 (Tier A bind mount) | SRS-5.4.1 | Create test file on host in `PROJECT_DIR`; verify visible in both containers at `/workspace/` |
@@ -555,3 +600,8 @@ a test procedure.
 | FR-27 (session listing) | SRS-8.5.5 | Save 3 sessions; call `list_sessions`; verify all 3 appear with correct counts |
 | FR-28 (session pruning) | SRS-8.5.8 | Save 52 sessions; verify only 50 remain in index and on disk |
 | FR-29 (backward compat) | SRS-8.5.10 | Start orchestration without archive mount; verify all existing functions work |
+| FR-30 (worker personas) | SRS-8.6.1–2 | Verify `personas.json` is valid JSON with required fields; verify `WORKER_PERSONA` present in worker prompt context |
+| FR-31 (CLI analyze) | SRS-8.6.3–4 | Run `scripts/claude-docker analyze "test prompt"`; verify 3 workers dispatched; verify categorized summary output |
+| FR-32 (manager auto-orchestration) | SRS-8.6.5 | Send "analyze this project" to manager; verify `run_analysis` invoked automatically |
+| FR-33 (usage tracking) | SRS-8.7.1–3 | Run `scripts/claude-docker usage`; verify output includes per-account and total token data |
+| — (NODE_PATH) | SRS-5.1.13 | `docker compose exec worker-1 node -e "console.log(require.resolve('redis'))"` succeeds |
