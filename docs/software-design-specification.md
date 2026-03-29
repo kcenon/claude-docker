@@ -307,22 +307,24 @@ Manager-worker pattern with Redis shared context. Opt-in via `-f docker-compose.
 
 ```yaml
 # docker-compose.orchestration.yml
-# Phase 5: Manager-Worker orchestration with Redis shared context
+# Phase 5+: Manager-Worker orchestration with Redis shared context
 # Usage: docker compose -f docker-compose.yml -f docker-compose.orchestration.yml up -d
-# SRS-8.1.1~9
+# SRS-8.1.1~11
 
 services:
   redis:
     image: redis:7-alpine                                       # SRS-8.1.2
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice"]
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice", "--requirepass", "${REDIS_PASSWORD}"]  # SRS-8.1.10
     volumes:
       - redis-data:/data                                        # SRS-8.1.3
+    networks:
+      - orchestration-internal                                  # SRS-8.1.11
     deploy:
       resources:
         limits:
           memory: 256M
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]  # SRS-8.1.10
       interval: 10s
       timeout: 3s
       retries: 3
@@ -340,11 +342,15 @@ services:
       - ${HOME}/.claude-state/account-manager:/home/node/.claude # SRS-8.1.8
       - node_modules_manager:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.1.11
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_MANAGER:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.1.7, SRS-8.1.10
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.2.17
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}                      # SRS-8.1.10
       - ROLE=manager
       - WORKER_COUNT=${WORKER_COUNT:-3}
     deploy:
@@ -366,13 +372,15 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro                            # Workers read-only
       - ${HOME}/.claude-state/account-w1:/home/node/.claude     # SRS-8.1.8
-      - node_modules_w1:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.1.11
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_1:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.1.7, SRS-8.1.10
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.2.17
       - WORKER_NAME=worker-1                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -395,13 +403,15 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w2:/home/node/.claude
-      - node_modules_w2:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.1.11
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_2:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.1.7, SRS-8.1.10
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.2.17
       - WORKER_NAME=worker-2                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -424,13 +434,15 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace:ro
       - ${HOME}/.claude-state/account-w3:/home/node/.claude
-      - node_modules_w3:/workspace/node_modules
       - ./scripts:/scripts:ro                                   # SRS-8.1.5
+    networks:
+      - orchestration-internal                                  # SRS-8.1.11
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_3:-}
-      - REDIS_URL=redis://redis:6379                            # SRS-8.1.7
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379       # SRS-8.1.7, SRS-8.1.10
+      - WORKER_AUTH_TOKEN=${WORKER_AUTH_TOKEN:-}                 # SRS-8.2.17
       - WORKER_NAME=worker-3                                    # SRS-8.1.7
       - WORKER_PORT=9000                                        # SRS-8.1.7
       - ROLE=worker
@@ -443,6 +455,11 @@ services:
           cpus: "1"
           memory: 2G
     command: ["node", "/scripts/worker-server.js"]
+
+networks:
+  orchestration-internal:
+    driver: bridge
+    internal: true                                               # SRS-8.1.11
 
 volumes:
   redis-data:
@@ -458,7 +475,9 @@ volumes:
 - **Relative paths**: `./scripts` is relative to the compose file location; `docker compose` must be run from the project root directory where `docker-compose.orchestration.yml` resides
 - Redis healthcheck ensures workers don't start before Redis is ready
 - Each worker has its own account state and node_modules volume
-- No port exposure to host — all communication via internal bridge network
+- No port exposure to host — all communication via `orchestration-internal` bridge network (SRS-8.1.11)
+- `orchestration-internal` has `internal: true` — containers on this network cannot initiate outbound connections, isolating Redis and worker-to-worker traffic from external networks
+- `WORKER_AUTH_TOKEN` and `REDIS_PASSWORD` are auto-generated by `install.sh` using `openssl rand -hex 32` and written to `.env`; the manager passes `WORKER_AUTH_TOKEN` in an `Authorization: Bearer` header on every `POST /task` request (SRS-8.2.17)
 - Each worker service includes a `WORKER_PERSONA` env var containing the full persona system prompt (Sentinel for worker-1, Reviewer for worker-2, Profiler for worker-3). This is read by `worker-server.js` and prepended as a `[Role]` section in `buildEnrichedPrompt()`
 
 ---
@@ -1638,7 +1657,7 @@ Bind mount not working
 Host                                    Docker
 ─────                                   ──────
 1. mkdir -p ~/.claude-state/account-{manager,w1,w2,w3}
-2. Configure .env:
+2. Configure .env (install.sh generates WORKER_AUTH_TOKEN and REDIS_PASSWORD automatically):
    Path A (OAuth): Set PROJECT_DIR and WORKER_COUNT=3 only (no API keys)
    Path B (API key): Add CLAUDE_API_KEY_MANAGER, CLAUDE_API_KEY_1~3 to .env
 3.                                      docker compose -f docker-compose.yml \
@@ -1707,8 +1726,8 @@ Host                                    Docker (manager)             Docker (wor
 | SRS-7.3 (Security/Firewall) | 3.4 Firewall Override | `docker-compose.firewall.yml` |
 | SRS-4.4 (Volume Matrix) | 3.1~3.3 all compose files | `docker-compose*.yml` |
 | SRS-4.5 (.env Format) | 4.1 .env.example | `.env.example` |
-| SRS-8.1.1~9 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
-| SRS-8.2.1~11 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
+| SRS-8.1.1~11 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
+| SRS-8.2.1~18 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
 | SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
 | SRS-8.4.1~5 (Orchestration Tests) | 5.5 Test Script | `scripts/test-orchestration.sh` |
 | SRS-8.5.1~15 (Cold Memory) | 5.6 Cold Memory Layer | `scripts/manager-helpers.sh` (additions), `docker-compose.orchestration.yml` (mount) |
@@ -1729,8 +1748,8 @@ Host                                    Docker (manager)             Docker (wor
 | `scripts/setup-worktrees.sh` | 3 | SRS-5.4.2 |
 | `scripts/test-concurrent-git.sh` | 3 | SRS-5.4.2 (verification) |
 | `scripts/cleanup.sh` | 4 | SRS-5.5 (FR-17) |
-| `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~9 |
-| `scripts/worker-server.js` | 5 | SRS-8.2.1~11 |
+| `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~11 |
+| `scripts/worker-server.js` | 5 | SRS-8.2.1~18 |
 | `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
 | `scripts/init-firewall.sh` | 4 | SRS-7.3 |
 | `scripts/personas.json` | 7 | Worker persona definitions (Sentinel, Reviewer, Profiler) |
