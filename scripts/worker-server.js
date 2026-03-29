@@ -432,7 +432,9 @@ async function handleHealth(req, res) {
         used: usedMatch ? usedMatch[1] : 'unknown',
         max: maxMatch ? maxMatch[1] : 'unknown',
       };
-    } catch { /* non-critical */ }
+    } catch (err) {
+      console.warn(`[health] Could not fetch Redis memory info: ${err.message}`);
+    }
   }
 
   res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
