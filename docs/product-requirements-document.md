@@ -22,7 +22,7 @@ instances; scaling to more requires only a compose edit and additional RAM
 
 The solution supports Linux, macOS, and Windows (WSL2) with two
 configuration tiers — shared source (simplest) and git worktree (safest).
-Two authentication paths are provided: host-first OAuth for subscription
+Two authentication paths are provided: container-internal OAuth for subscription
 accounts and API key for Console accounts. Implementation spans 6 phases
 over an estimated 10-17 days.
 
@@ -64,7 +64,7 @@ stays under 100 MB.
 | G4 | Concurrent access stability | Tier B eliminates lock contention |
 | G5 | Simple and reproducible setup | `docker compose up` on all 3 platforms |
 | G6 | Cross-platform support | Linux, macOS, Windows (WSL2) |
-| G7 | Support subscription accounts | Host-first OAuth for Pro/Max/Team |
+| G7 | Support subscription accounts | Container-internal OAuth for Pro/Max/Team |
 | G8 | Scalable to N instances | Compose pattern extends to 3+ accounts |
 | G9 | Manager-worker orchestration | 1 manager dispatches tasks to N workers via HTTP; results aggregated via Redis |
 | G10 | Shared context accumulation | Worker N reads structured findings from workers 1..N-1 before processing |
@@ -165,7 +165,7 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | ID | Priority | Requirement |
 |----|----------|-------------|
 | FR-6 | P0 | Each container mounts a separate `CLAUDE_CONFIG_DIR` from host `~/.claude-state/account-{a,b}/` |
-| FR-7 | P0 | Auth Path A: host-first OAuth for subscription accounts — `claude auth login` on host, bind mount credentials |
+| FR-7 | P0 | Auth Path A: container-internal OAuth for subscription accounts — user authenticates inside container on first launch; credentials stored in bind-mounted state directory |
 | FR-8 | P0 | Auth Path B: `ANTHROPIC_API_KEY` env var for Console accounts |
 | FR-9 | P0 | `.env.example` with `PROJECT_DIR` (and API key vars for Path B users) |
 
@@ -219,7 +219,7 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | **Resources** | Host RAM: 12 GB (Linux), 16 GB (macOS/Windows). 4 GB heap per container. 4+ CPU cores. 2 GB free disk. | [architecture.md](architecture.md) |
 | **Security** | API keys via `.env` only. No Docker socket mounting. State dirs mode 0700. Optional firewall whitelist. | [claude-code-container.md](reference/claude-code-container.md) |
 | **Portability** | Identical `docker-compose.yml` on all platforms; only `.env` values and Linux `user:` field differ. | [cross-platform.md](cross-platform.md) |
-| **Reliability** | Two primary auth paths: host-first OAuth (subscriptions) and API key (Console). Both are production-grade with documented recovery procedures. | [claude-code-container.md](reference/claude-code-container.md) |
+| **Reliability** | Two primary auth paths: container-internal OAuth (subscriptions) and API key (Console). Both are production-grade with documented recovery procedures. | [claude-code-container.md](reference/claude-code-container.md) |
 
 ---
 
@@ -252,7 +252,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|------|-----------|--------|------------|
 | R1 | Concurrent file corruption (Tier A) | High (if both write) | High | Use Tier B (worktrees) |
-| R2 | OAuth token expiry beyond refresh | Low | Medium | Host-first auth; re-run `claude auth login` on host to recover |
+| R2 | OAuth token expiry beyond refresh | Low | Medium | Container-internal auth; re-run `claude auth login` inside container to recover |
 | R3 | macOS bind mount slowness | Certain | Low-Medium | Named volumes for `node_modules`; document OrbStack |
 | R4 | Windows NTFS path performance | High (if misconfigured) | High | Document WSL2 fs requirement prominently |
 | R5 | UID/GID mismatch on Linux | Medium | Medium | `user:` field + `HOME=/home/node` in compose |
@@ -310,7 +310,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 | SC-1 | Storage efficiency | Each additional instance adds <= 70 MB disk overhead |
 | SC-2 | Startup time | All containers reach Claude Code prompt within 30s of `docker compose up` |
 | SC-3 | Account isolation | Each container's history, credentials, and settings are fully independent |
-| SC-4 | Subscription auth | Host-first OAuth tokens persist across container restarts via bind mount |
+| SC-4 | Subscription auth | Container-internal OAuth tokens persist across container restarts via bind mount |
 | SC-5 | Concurrent safety (Tier B) | Two containers commit to different branches without errors |
 | SC-6 | Cross-platform parity | Same compose file works on Linux, macOS, and Windows (WSL2) |
 | SC-7 | Reproducibility | New user goes from zero to two running containers in < 15 min (Linux) / < 30 min (macOS, Windows) |
@@ -328,7 +328,7 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 1. **Pre-built image**: Should we publish to Docker Hub / GHCR, or require local builds only? Trade-off: convenience vs version pinning and license compliance.
 2. **Default tier**: Should Tier B (worktree) be the default compose config? Tier A is simpler for first-run; Tier B is safer for real use.
 3. **Upgrade path**: Rebuild image on new Claude Code release, or support in-place `npm update -g` inside running containers?
-4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate on the host?
+4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate inside the container?
 5. **Firewall default**: Should Phase 4 firewall be opt-in or opt-out?
 6. **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)?
 

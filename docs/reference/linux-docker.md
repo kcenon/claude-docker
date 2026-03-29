@@ -167,8 +167,9 @@ Structure:
 
 **For Console accounts**: Use `ANTHROPIC_API_KEY` environment variable
 (Path B) to avoid credential file management entirely.
-**For subscription accounts**: Use host-first OAuth (Path A) and bind mount
-the state directory. See [architecture.md](../architecture.md#authentication-strategy).
+**For subscription accounts**: Authenticate inside the container via OAuth
+(Path A); credentials stored in bind-mounted state directory.
+See [architecture.md](../architecture.md#authentication-strategy).
 
 ## cgroups v2 Resource Limits
 

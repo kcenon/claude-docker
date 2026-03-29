@@ -112,14 +112,15 @@ The `CLAUDE_CONFIG_DIR` environment variable overrides the default
 
 | | Subscription (Pro/Max/Team) | Console API Key |
 |---|---|---|
-| Method | Host-first OAuth → bind mount credentials | `ANTHROPIC_API_KEY` env var |
-| Browser | Once per account, on host only | Never |
+| Method | Container-internal OAuth → credentials in bind-mounted state dir | `ANTHROPIC_API_KEY` env var |
+| Browser | Once per account, opened from container via forwarded URL | Never |
 | Container config | Mount `~/.claude-state/account-X` | Set env var in `.env` |
 
-**Subscription accounts**: Authenticate on the host with
-`CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login`,
-then bind-mount that directory into the container. The container
-inherits the authenticated state without needing a browser.
+**Subscription accounts**: Bind-mount the state directory into the
+container, then authenticate inside the container with
+`claude auth login`. The container forwards the OAuth URL to the
+host browser; credentials are written to the bind-mounted state
+directory and persist across container restarts.
 
 **Console API keys**: Set `ANTHROPIC_API_KEY` in `.env`. Takes
 precedence over any OAuth credentials in the mounted state directory.
@@ -156,19 +157,24 @@ Credential file structure after successful OAuth:
 - Refresh works silently as long as the container has network access to `api.anthropic.com`
 - Full re-authentication is needed only on password change or account revocation
 
-**Why host-first OAuth avoids known issues**:
+**Why container-internal OAuth with bind mount is correct**:
 
-| Issue | In-container OAuth | Host-first + bind mount |
-|-------|-------------------|------------------------|
-| #34917 — Headless redirect fails | **Affected** — no browser | **Avoided** — browser on host |
-| #22066 / #1736 — Token lost on restart | **Affected** — credential written inside container | **Mitigated** — host file is source of truth |
+On macOS, host-side `claude auth login` stores tokens in the macOS
+Keychain — which cannot be shared with a container. Running OAuth
+inside the container instead writes `.credentials.json` to the
+bind-mounted state directory, making tokens portable and persistent.
+
+| Issue | Container OAuth (no bind mount) | Container OAuth + bind mount |
+|-------|-------------------------------|------------------------------|
+| #34917 — Headless redirect fails | **Not affected** — container forwards OAuth URL to host browser | **Not affected** — same mechanism |
+| #22066 / #1736 — Token lost on restart | **Affected** — credential written inside ephemeral layer | **Mitigated** — credential file lives on host via bind mount |
 
 **Recovery when tokens expire beyond refresh**:
 
 ```bash
-# On the host (not inside the container)
-CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login
-# Container picks up the updated .credentials.json on next Claude Code startup
+# Inside the container
+claude auth login
+# Credentials are written to the bind-mounted state directory automatically
 ```
 
 If Claude Code is already running in the container, restart it to reload
@@ -180,18 +186,18 @@ the credential file (`docker compose restart claude-a`).
 
 - "Redirect URI not supported by client" error
 - Browser-based flow incompatible with headless Docker
-- **Fix**: Use host-first OAuth (authenticate on host, mount credentials)
+- **Fix**: Container OAuth works because the container forwards the OAuth URL to the host browser
 
 ### OAuth Not Persisting (GitHub #22066, #1736)
 
 - OAuth succeeds on first run but credentials vanish on container restart
 - **Root cause**: Credential file not loaded on subsequent starts
-- **Fix**: Use bind mount from host (host file persists independently of container lifecycle)
+- **Fix**: Container-internal auth writes to bind-mounted state dir, persisting across restarts
 
 ### Console Login Fails in DevContainers (GitHub #14528)
 
 - Anthropic Console auth broken in VS Code DevContainers
-- **Fix**: Use API key or host-first Claude.ai OAuth
+- **Fix**: Use API key or container-internal Claude.ai OAuth with bind mount
 
 ### Installation Hangs at Root (/)
 

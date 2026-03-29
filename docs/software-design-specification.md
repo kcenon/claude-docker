@@ -1481,22 +1481,16 @@ fields silently (SRS-8.5.7).
 ```
 Host                                    Docker
 ─────                                   ──────
-1. npm install -g @anthropic-ai/claude-code
-2. mkdir -p ~/.claude-state/account-{a,b}
-3. CLAUDE_CONFIG_DIR=~/.claude-state/account-a \
-     claude auth login
-   └─ Browser opens → OAuth → .credentials.json created
-4. CLAUDE_CONFIG_DIR=~/.claude-state/account-b \
-     claude auth login
-   └─ Browser opens → OAuth → .credentials.json created
-5. cp .env.example .env
+1. mkdir -p ~/.claude-state/account-{a,b}
+2. cp .env.example .env
    └─ Set PROJECT_DIR only (no API keys)
-6.                                      docker compose build
-7.                                      docker compose up -d
-8.                                      docker compose exec claude-a npm install
-9.                                      docker compose exec claude-b npm install
-10.                                     docker compose exec claude-a claude
-    └─ Claude Code starts with account-a credentials ✓
+3.                                      docker compose build
+4.                                      docker compose up -d
+5.                                      docker compose exec claude-a npm install
+6.                                      docker compose exec claude-b npm install
+7.                                      docker compose exec claude-a claude
+   └─ Claude Code initiates OAuth → browser opens
+   └─ .credentials.json created in bind-mounted state dir ✓
 ```
 
 ### 6.2 First Run — Path B (Console API Key)
@@ -1519,7 +1513,7 @@ Host                                    Docker
 
 ```
 1. Create state dir:    mkdir -p ~/.claude-state/account-c
-2. Auth (Path A):       CLAUDE_CONFIG_DIR=~/.claude-state/account-c claude auth login
+2. Auth (Path A):       docker compose exec claude-c claude auth login
    Auth (Path B):       Add CLAUDE_API_KEY_C=sk-ant-... to .env
 3. Add to compose:      Copy claude-b service block → rename to claude-c
                         Update account-b → account-c, _B → _C, node_modules_b → _c
@@ -1533,10 +1527,10 @@ Host                                    Docker
 ```
 Symptom: Claude Code shows "Authentication expired" inside container
 
-1. On HOST (not container):
-   CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login
+1. Inside the container (not on host):
+   docker compose exec claude-a claude auth login
 
-2. Restart container to reload credentials:
+2. Or restart container (token auto-refresh may resolve):
    docker compose restart claude-a
 
 3. Verify:
@@ -1556,9 +1550,9 @@ Container won't start
 
 Claude Code won't authenticate
 ├── Path A (OAuth)
-│   ├── "No credentials" → Re-run claude auth login on HOST
-│   ├── "Token expired" → Re-run claude auth login on HOST; restart container
-│   └── "Redirect URI error" → You're running auth INSIDE container; do it on HOST
+│   ├── "No credentials" → Re-run claude auth login INSIDE the container
+│   ├── "Token expired" → Re-run claude auth login INSIDE the container; restart container
+│   └── "Redirect URI error" → Ensure container can reach OAuth callback URL
 └── Path B (API key)
     ├── "Invalid API key" → Check .env; ensure no quotes around key value
     └── "API key not found" → Check variable name matches compose: CLAUDE_API_KEY_A
@@ -1577,20 +1571,19 @@ Bind mount not working
 Host                                    Docker
 ─────                                   ──────
 1. mkdir -p ~/.claude-state/account-{manager,w1,w2,w3}
-2. Authenticate each account:
-   Path A (OAuth):
-     CLAUDE_CONFIG_DIR=~/.claude-state/account-manager claude auth login
-     CLAUDE_CONFIG_DIR=~/.claude-state/account-w1 claude auth login
-     CLAUDE_CONFIG_DIR=~/.claude-state/account-w2 claude auth login
-     CLAUDE_CONFIG_DIR=~/.claude-state/account-w3 claude auth login
-   Path B (API key):
-     Add CLAUDE_API_KEY_MANAGER, CLAUDE_API_KEY_1~3 to .env
-3. Configure .env with orchestration variables:
-     WORKER_COUNT=3
-4.                                      docker compose -f docker-compose.yml \
+2. Configure .env:
+   Path A (OAuth): Set PROJECT_DIR and WORKER_COUNT=3 only (no API keys)
+   Path B (API key): Add CLAUDE_API_KEY_MANAGER, CLAUDE_API_KEY_1~3 to .env
+3.                                      docker compose -f docker-compose.yml \
                                           -f docker-compose.orchestration.yml build
-5.                                      docker compose -f docker-compose.yml \
+4.                                      docker compose -f docker-compose.yml \
                                           -f docker-compose.orchestration.yml up -d
+5. Authenticate each account inside containers (Path A only):
+                                        docker compose exec manager claude auth login
+                                        docker compose exec worker-1 claude auth login
+                                        docker compose exec worker-2 claude auth login
+                                        docker compose exec worker-3 claude auth login
+   └─ Each initiates OAuth → browser opens → credentials saved to bind-mounted state dir
 6.                                      docker compose -f docker-compose.yml \
                                           -f docker-compose.orchestration.yml \
                                           exec manager bash
@@ -1649,4 +1642,8 @@ Host                                    Docker
 | `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~9 |
 | `scripts/worker-server.js` | 5 | SRS-8.2.1~11 |
 | `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
+| `scripts/init-firewall.sh` | 4 | SRS-7.3 |
+| `scripts/claude-docker` | — | Utility: CLI wrapper |
+| `scripts/install.sh` | — | Utility: project installer |
+| `scripts/remove.sh` | — | Utility: project uninstaller |
 | `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |
