@@ -30,7 +30,7 @@ and git worktree).
 
 | Term | Definition |
 |------|-----------|
-| Path A | Host-first OAuth authentication for subscription accounts (Pro/Max/Team) |
+| Path A | Container-internal OAuth authentication for subscription accounts (Pro/Max/Team) |
 | Path B | `ANTHROPIC_API_KEY` environment variable for Console accounts |
 | Tier A | Both containers share a single bind-mounted project directory |
 | Tier B | Each container mounts a separate git worktree from the same repository |
@@ -75,7 +75,7 @@ The system exposes no GUI. All interaction is through:
 |-----------|------|---------|
 | Container shell | `docker compose exec claude-a bash` | Enter container interactively |
 | Claude Code REPL | `claude` (inside container) | AI-assisted coding |
-| Host auth CLI | `claude auth login` (on host) | Path A: OAuth login |
+| Container auth | `claude auth login` (inside container) | Path A: OAuth login |
 | Orchestration | `docker compose up/down/restart` | Lifecycle management |
 
 ### 3.2 Software Interfaces
@@ -135,7 +135,7 @@ Variables marked **`.env`** are set in the `.env` file.
 
 **File**: `$CLAUDE_CONFIG_DIR/.credentials.json`
 **Permissions**: `0600` (owner read/write only)
-**Created by**: `claude auth login` on host (Path A)
+**Created by**: `claude auth login` inside container (Path A)
 
 ```json
 {
@@ -150,8 +150,8 @@ Variables marked **`.env`** are set in the `.env` file.
 
 **Lifecycle**: `accessToken` expires at `expiresAt`. Claude Code uses
 `refreshToken` to silently obtain a new `accessToken` if the container
-has network access to `api.anthropic.com`. Full re-auth on host is
-needed only upon password change or account revocation.
+has network access to `api.anthropic.com`. Full re-auth inside the
+container is needed only upon password change or account revocation.
 
 ### 4.3 State Directory Layout
 
@@ -253,14 +253,14 @@ SHALL be provided with placeholder values and no real credentials.
 ### SRS-5.3 Authentication Subsystem
 
 **SRS-5.3.1 (Path A — Subscription OAuth)**:
-1. User SHALL install Claude Code on the host.
-2. User SHALL run `CLAUDE_CONFIG_DIR=~/.claude-state/account-X claude auth login` for each account.
-3. Browser SHALL open on the host for OAuth completion.
-4. `.credentials.json` SHALL be created in the specified state directory.
-5. User SHALL verify with `claude auth status`.
-6. Container SHALL inherit credentials via bind mount — no in-container auth needed.
+1. User SHALL create state directories on the host (`~/.claude-state/account-X/`).
+2. Container SHALL bind-mount the state directory to `/home/node/.claude`.
+3. On first `claude` launch inside the container, Claude Code SHALL initiate OAuth flow.
+4. Browser SHALL open on the host for OAuth completion (container forwards the URL).
+5. `.credentials.json` SHALL be created in the bind-mounted state directory.
+6. Credentials SHALL persist across container restarts via the host bind mount.
 7. Token refresh SHALL occur automatically via `refreshToken`.
-8. On token expiry beyond refresh, user SHALL re-run `claude auth login` on host.
+8. On token expiry beyond refresh, user SHALL re-run `claude auth login` inside the container.
 
 **SRS-5.3.2 (Path B — Console API Key)**:
 1. User SHALL obtain API keys from `console.anthropic.com`.
@@ -389,7 +389,7 @@ is identical; only `.env` values and optional compose overrides differ.
 | Container restart | OAuth credentials persist via host bind mount. No re-auth needed. |
 | Host reboot | Same as container restart. State directories survive on host filesystem. |
 | Token expiry (within refresh window) | Claude Code auto-refreshes silently. No user action needed. |
-| Token expiry (beyond refresh) | Claude Code prompts error. User re-runs `claude auth login` on host. |
+| Token expiry (beyond refresh) | Claude Code prompts error. User re-runs `claude auth login` inside the container. |
 | API key rotation (Path B) | User updates `.env`, runs `docker compose restart`. |
 | Network loss | Claude Code shows connection error. Resumes on reconnect. |
 
@@ -528,7 +528,7 @@ a test procedure.
 | FR-4 (WORKDIR not /) | SRS-5.1.6 | `docker inspect` image; verify `WorkingDir` is not `/` |
 | FR-5 (.dockerignore) | SRS-5.1.9 | Build image; verify `.git` and `node_modules` not in image layers |
 | FR-6 (separate CLAUDE_CONFIG_DIR) | SRS-5.2.5, 5.2.7 | Create distinct files in each state dir on host; verify visibility in respective containers only |
-| FR-7 (Path A OAuth) | SRS-5.3.1 | Run `claude auth login` on host with `CLAUDE_CONFIG_DIR`; start container; verify `claude auth status` succeeds inside container |
+| FR-7 (Path A OAuth) | SRS-5.3.1 | Start container; run `claude auth login` inside container; complete OAuth in host browser; verify `claude auth status` succeeds inside container |
 | FR-8 (Path B API key) | SRS-5.3.2 | Set `CLAUDE_API_KEY_A` in `.env`; start container; verify `claude auth status` shows API key auth |
 | FR-9 (.env.example) | SRS-4.5 | Verify `.env.example` exists with placeholder values; verify `.env` in `.gitignore` |
 | FR-10 (Tier A bind mount) | SRS-5.4.1 | Create test file on host in `PROJECT_DIR`; verify visible in both containers at `/workspace/` |

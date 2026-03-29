@@ -11,13 +11,13 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - **Multi-account isolation** -- Each container has its own credentials, settings, and history
 - **Shared source code** -- Bind mount (Tier A) or git worktree (Tier B) for concurrent editing
 - **Cross-platform** -- Linux, macOS, Windows (WSL2)
-- **Subscription + API key** -- Host-first OAuth for Pro/Max/Team, or `ANTHROPIC_API_KEY` for Console
+- **Subscription + API key** -- OAuth for Pro/Max/Team (via container), or `ANTHROPIC_API_KEY` for Console
 - **Scalable to N instances** -- Add accounts by copying a compose service block
 
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) 24.0+ (Linux) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS / Windows)
-- [Node.js](https://nodejs.org/) 20+ (for host-side authentication only)
+- [Node.js](https://nodejs.org/) 20+ (optional -- only needed if running Claude Code on host)
 - Git
 
 **Platform-specific:**
@@ -64,15 +64,14 @@ Choose your authentication path:
 **Path A -- Subscription accounts (Pro / Max / Team):**
 
 ```bash
-# Install Claude Code on the host
-npm install -g @anthropic-ai/claude-code
-
 # Create state directories
 mkdir -p ~/.claude-state/account-a ~/.claude-state/account-b
 
-# Authenticate each account (browser opens)
-CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login
-CLAUDE_CONFIG_DIR=~/.claude-state/account-b claude auth login
+# Authentication happens inside containers on first launch.
+# After starting containers (step 3-4), run:
+#   scripts/claude-docker claude
+# Claude Code will prompt for OAuth login in your browser.
+# Credentials persist in the bind-mounted state directory.
 ```
 
 **Path B -- Console API keys:**
@@ -307,8 +306,9 @@ docker compose -f docker-compose.yml -f docker-compose.worktree.yml up -d
 # 1. Create state directory
 mkdir -p ~/.claude-state/account-c
 
-# 2. Authenticate (Path A)
-CLAUDE_CONFIG_DIR=~/.claude-state/account-c claude auth login
+# 2. Authenticate (Path A) -- start the container and run:
+#    scripts/claude-docker claude
+#    OAuth login will open in your browser.
 
 # 3. Copy a service block in docker-compose.yml:
 #    claude-b → claude-c (rename account-b → account-c, _B → _C)

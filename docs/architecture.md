@@ -97,8 +97,8 @@ To add a third instance, add a new service to `docker-compose.yml`:
 ```
 
 And add `node_modules_c:` to the `volumes:` section. For subscription
-accounts (Path A), authenticate on the host first:
-`CLAUDE_CONFIG_DIR=~/.claude-state/account-c claude auth login`
+accounts (Path A), authenticate inside the container on first launch:
+`docker compose exec claude-c claude auth login`
 
 > The default templates ship with 2 instances. Adding more is a manual
 > compose edit — there is no dynamic scaling mechanism.
@@ -245,26 +245,27 @@ Manager <──JSON resp── Worker-N
 Two authentication paths, each primary for its account type.
 Choose based on what kind of Anthropic account you have.
 
-### Path A: Subscription Accounts (Pro / Max / Team) — Host-First OAuth
+### Path A: Subscription Accounts (Pro / Max / Team) — Container-Internal OAuth
 
-Subscription accounts use OAuth. Since OAuth requires a browser, **authenticate
-on the host first**, then mount the credentials into the container.
+Subscription accounts use OAuth. Since the container runs headless, **authenticate
+inside the container on first launch**, then credentials persist in the bind-mounted
+state directory.
 
 ```bash
-# 1. Install Claude Code on the host (if not already)
-npm install -g @anthropic-ai/claude-code
+# 1. Start the containers
+docker compose up -d
 
-# 2. Authenticate each account on the host
-CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth login   # → browser opens
-CLAUDE_CONFIG_DIR=~/.claude-state/account-b claude auth login   # → browser opens
+# 2. Authenticate each account inside its container
+docker compose exec claude-a claude auth login   # → prints URL to visit
+docker compose exec claude-b claude auth login   # → prints URL to visit
 
 # 3. Verify
-CLAUDE_CONFIG_DIR=~/.claude-state/account-a claude auth status
-CLAUDE_CONFIG_DIR=~/.claude-state/account-b claude auth status
+docker compose exec claude-a claude auth status
+docker compose exec claude-b claude auth status
 ```
 
 Each state directory now contains `.credentials.json` with OAuth tokens.
-The containers bind-mount these directories, inheriting the authenticated state.
+The bind-mounted state directories persist credentials across container restarts.
 
 ```bash
 # .env (never committed)
@@ -274,12 +275,12 @@ PROJECT_DIR=/path/to/your/project
 > **Token refresh**: Claude Code automatically refreshes tokens using the
 > `refreshToken` in `.credentials.json`. If a token expires beyond refresh
 > (e.g., password change, account revocation), re-run `claude auth login`
-> on the host with the corresponding `CLAUDE_CONFIG_DIR`.
+> inside the corresponding container.
 
-> **Why host-first**: Running OAuth inside a headless container fails
-> (GitHub #34917). Authenticating on the host, where a browser is available,
-> avoids this entirely. The bind mount makes the host's credential the
-> single source of truth, also mitigating persistence issues (#22066, #1736).
+> **Why container-internal**: On macOS, host auth stores tokens in Keychain
+> which cannot be bind-mounted. Container-internal auth stores
+> `.credentials.json` in the bind-mounted state directory, persisting
+> across restarts on all platforms.
 > See [reference/claude-code-container.md](reference/claude-code-container.md#oauth-token-persistence) for details.
 
 ### Path B: Console API Keys — Environment Variable
@@ -302,8 +303,8 @@ it takes precedence over OAuth credentials in the mounted state directory.
 | | Path A: Subscription | Path B: API Key |
 |---|---|---|
 | Account type | Pro, Max, Team | Console (usage-based) |
-| Auth method | OAuth (host-first) | Environment variable |
-| Browser needed | Once per account, on host | Never |
+| Auth method | OAuth (container-internal) | Environment variable |
+| Browser needed | Once per account, on any device | Never |
 | Token management | Auto-refresh; re-auth on revocation | Manual key rotation |
 | Container restart | Credentials persist via bind mount | Always available via `.env` |
 | Billing | Included in subscription | Separate usage-based |
