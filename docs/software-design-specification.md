@@ -1728,9 +1728,15 @@ Host                                    Docker (manager)             Docker (wor
 | SRS-4.5 (.env Format) | 4.1 .env.example | `.env.example` |
 | SRS-8.1.1~11 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
 | SRS-8.2.1~18 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
-| SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
+| SRS-8.3.1~7 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
 | SRS-8.4.1~5 (Orchestration Tests) | 5.5 Test Script | `scripts/test-orchestration.sh` |
 | SRS-8.5.1~15 (Cold Memory) | 5.6 Cold Memory Layer | `scripts/manager-helpers.sh` (additions), `docker-compose.orchestration.yml` (mount) |
+| SRS-8.1.10 (Redis password auth) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` (`--requirepass`, `REDIS_PASSWORD`); `scripts/install.sh` (auto-generate secret) |
+| SRS-8.1.11 (internal network) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` (`orchestration-internal: internal: true`) |
+| SRS-8.2.17 (Bearer token — worker) | 5.3 Worker Server | `scripts/worker-server.js` (auth middleware, `crypto.timingSafeEqual`) |
+| SRS-8.2.18 (Bearer token — startup warn) | 5.3 Worker Server | `scripts/worker-server.js` (startup warning when `WORKER_AUTH_TOKEN` unset) |
+| SRS-8.3.5 (shell arithmetic normative) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` (`counter=$((counter + 1))` pattern) |
+| SRS-5.1.13 (NODE_PATH) | 2. Dockerfile Design | `Dockerfile` (`ENV NODE_PATH=/usr/local/lib/node_modules`) |
 
 ### Deliverable File Inventory
 
@@ -1750,11 +1756,11 @@ Host                                    Docker (manager)             Docker (wor
 | `scripts/cleanup.sh` | 4 | SRS-5.5 (FR-17) |
 | `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~11 |
 | `scripts/worker-server.js` | 5 | SRS-8.2.1~18 |
-| `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
+| `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~7 |
 | `scripts/init-firewall.sh` | 4 | SRS-7.3 |
 | `scripts/personas.json` | 7 | Worker persona definitions (Sentinel, Reviewer, Profiler) |
 | `CLAUDE.md` | 7 | Manager auto-orchestration instructions |
 | `scripts/claude-docker` | — | Utility: CLI wrapper (Keychain auth, usage tracking via ccusage, analyze command) |
-| `scripts/install.sh` | — | Utility: project installer |
+| `scripts/install.sh` | — (updated Phase 6) | Utility: project installer; auto-generates `WORKER_AUTH_TOKEN` and `REDIS_PASSWORD` secrets |
 | `scripts/remove.sh` | — | Utility: project uninstaller |
 | `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |
