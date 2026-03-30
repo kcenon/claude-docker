@@ -1,5 +1,13 @@
 # Cross-Platform Analysis
 
+**Status**: Active | **Version**: 1.1.0 | **Date**: 2026-03-30
+
+**References**: [architecture.md](architecture.md), [SRS §6](software-requirements-specification.md)
+
+**Audience**: Developers setting up or troubleshooting claude-docker on Linux, macOS, or Windows (WSL2).
+
+---
+
 Can the dual Claude Code container architecture work identically
 on Linux, Windows, and macOS? Short answer: **yes, with platform-specific
 adjustments.** This document maps what changes per platform and what stays the same.
@@ -423,3 +431,12 @@ Before deploying on any platform:
 - [SELinux and Docker](https://docs.docker.com/engine/storage/bind-mounts/#configure-the-selinux-label) — :z/:Z flags
 - [OverlayFS Storage Driver](https://docs.docker.com/engine/storage/drivers/overlayfs-driver/) — Cross-platform layer sharing
 - Platform-specific references: see [linux-docker.md](reference/linux-docker.md) and [windows-docker.md](reference/windows-docker.md)
+
+---
+
+## Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1.0 | 2026-03-30 | Added metadata header; added SSOT designation for Platform Comparison Matrix; added VirtioFS I/O Contention Mitigation section and Dynamic Worker Scaling table |
+| 1.0.0 | 2026-03-27 | Initial document |

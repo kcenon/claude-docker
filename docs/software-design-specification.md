@@ -1764,3 +1764,12 @@ Host                                    Docker (manager)             Docker (wor
 | `scripts/install.sh` | — (updated Phase 6) | Utility: project installer; auto-generates `WORKER_AUTH_TOKEN` and `REDIS_PASSWORD` secrets |
 | `scripts/remove.sh` | — | Utility: project uninstaller |
 | `scripts/test-orchestration.sh` | 5 | SRS-8.4.1~5 |
+
+---
+
+## 8. Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1.0 | 2026-03-30 | Phase 6 traceability: added SDS §7 rows for SRS-8.1.10–11, SRS-8.2.17–18, SRS-8.3.5, SRS-5.1.13; annotated install.sh as Phase 6 updated; §3.6 orchestration design updated with internal network, Redis auth, and Bearer token patterns; §7 traceability corrected SRS-8.3.1~5 to SRS-8.3.1~7 |
+| 1.0.0 | 2026-03-27 | Initial document covering Phases 1–5 |

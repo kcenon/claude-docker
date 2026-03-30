@@ -531,3 +531,13 @@ Supported report types: `daily`, `monthly`, `session`, `blocks`, `statusline`.
 - [VirtioFS on Docker Desktop](https://www.docker.com/blog/speed-boost-achievement-unlocked-on-docker-desktop-4-6-for-mac/) — macOS file sharing performance
 - [threat-model.md](threat-model.md) — STRIDE threat analysis for this system
 - [key-rotation.md](key-rotation.md) — Secret rotation procedures
+- [software-verification-plan.md](software-verification-plan.md) — Verification procedures for all SRS requirements
+
+---
+
+## Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1.0 | 2026-03-30 | Phase 6 additions: orchestration network diagram updated to `orchestration-internal (internal: true)`; Key Design Decisions updated with Bearer auth, Redis password auth, and internal network isolation; Resource Requirements designated as SSOT; threat-model.md and key-rotation.md cross-references added |
+| 1.0.0 | 2026-03-27 | Initial document |

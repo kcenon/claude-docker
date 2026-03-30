@@ -285,3 +285,11 @@ network infrastructure outside the Docker host.
 - PR #101 — Retry logic, circuit breaker, input validation on worker API
 - PR #102 — Startup warnings for missing secrets, dynamic scaling
 - [Microsoft STRIDE Threat Modeling](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats)
+
+---
+
+## Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | 2026-03-30 | Initial document: 10 STRIDE threats (T-01–T-10), control summary table with PR #97–#102 cross-references |
