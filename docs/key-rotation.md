@@ -56,11 +56,9 @@ possible.
 Open `.env` and replace the old values:
 
 ```bash
-# Replace WORKER_AUTH_TOKEN
-sed -i '' "s/^WORKER_AUTH_TOKEN=.*/WORKER_AUTH_TOKEN=${NEW_WORKER_AUTH_TOKEN}/" .env
-
-# Replace REDIS_PASSWORD
-sed -i '' "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=${NEW_REDIS_PASSWORD}/" .env
+# Cross-platform (macOS + Linux)
+perl -i -pe "s/^WORKER_AUTH_TOKEN=.*/WORKER_AUTH_TOKEN=${NEW_WORKER_AUTH_TOKEN}/" .env
+perl -i -pe "s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=${NEW_REDIS_PASSWORD}/" .env
 ```
 
 Verify the update (values should not be empty):

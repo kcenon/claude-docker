@@ -252,7 +252,7 @@ network infrastructure outside the Docker host.
 | Structured audit log (no secret fields) | T-08 | `logEvent()` in `worker-server.js` | #99 |
 | `.env` in `.gitignore` + placeholder `.env.example` | T-04 | `.gitignore`, `.env.example` | #99 |
 | Outbound firewall enabled by default | T-09 (depth) | `docker-compose.firewall.yml`, `scripts/install.sh` | #100 |
-| Cold storage archive size limit (50 sessions) | T-03 (surface area) | `scripts/manager-helpers.sh` | #100 |
+| Cold storage archive size limit (500 MB default, `MAX_ARCHIVE_SIZE_MB`) | T-03 (surface area) | `scripts/manager-helpers.sh` | #100 |
 | Input validation on `POST /task` body | T-07 | `scripts/worker-server.js` | #101 |
 | Circuit breaker on Redis connection | T-07 | `scripts/worker-server.js` | #101 |
 | Workers mount source `:ro` | T-05 | `docker-compose.orchestration.yml` | #97 |
