@@ -215,6 +215,8 @@ Claude Code settings, containers automatically inherit your host configuration:
 | Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` | Read-only |
 | Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` | Read-only |
 | Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` | Read-only |
+| Statusline scripts | `~/.claude/scripts/` | `/home/node/.claude/scripts/` | Read-only |
+| Statusline layout | `~/.claude/ccstatusline/` | `/home/node/.claude/ccstatusline/` | Read-only |
 
 These are mounted read-only -- containers cannot modify the host's configuration.
 Account-specific state (credentials, memory, sessions) remains per-container.

@@ -27,8 +27,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code globally
+# Install Claude Code and statusline tools globally
 RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
+       ccstatusline claude-limitline \
     && npm cache clean --force
 
 # Memory heap limit
