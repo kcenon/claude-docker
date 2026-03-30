@@ -353,23 +353,14 @@ a single channel, creating I/O contention.
 - `run_analysis` wall time 2-3x slower on macOS vs. Linux
 - High `com.apple.virtio-fs` CPU usage during parallel analysis
 
-### Mitigation: `:cached` Volume Flag
+### Note on `:cached` Volume Flag
 
-Add the `:cached` consistency flag to workspace bind mounts. This allows
-the container to serve reads from its own cache without round-tripping
-to the host for every operation:
+The `:cached` consistency flag was meaningful with the legacy osxfs
+file-sharing backend. On Docker Desktop 4.x+ with VirtioFS (the default
+since 2022), `:cached` is silently ignored and has no effect on
+performance. Do not add it expecting a speedup.
 
-```yaml
-# docker-compose.orchestration.yml (macOS optimization)
-volumes:
-  - ${PROJECT_DIR}:/workspace:ro,cached    # Cached reads reduce VirtioFS contention
-```
-
-The `:cached` flag relaxes consistency guarantees: the container may see
-slightly stale data. Since workers mount `/workspace:ro` (read-only) and
-the source code does not change during analysis, this is safe.
-
-### Alternative: OrbStack
+### Mitigation: OrbStack
 
 [OrbStack](https://orbstack.dev/) provides a drop-in replacement for
 Docker Desktop on macOS with up to 4x faster filesystem performance

@@ -156,13 +156,13 @@ build_merged_config_dir() {
 
 # --- Subcommands --------------------------------------------------------------
 
-# Resolve WORKER_COUNT from env or .env file
+# Resolve WORKER_COUNT: env var takes precedence over .env file
 resolve_worker_count() {
-    local wc="${WORKER_COUNT:-}"
-    if [[ -z "$wc" ]] && [[ -f "${PROJECT_ROOT}/.env" ]]; then
-        wc=$(grep -E '^WORKER_COUNT=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+    local worker_count="${WORKER_COUNT:-}"
+    if [[ -z "$worker_count" ]] && [[ -f "${PROJECT_ROOT}/.env" ]]; then
+        worker_count=$(grep -E '^WORKER_COUNT=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
     fi
-    echo "${wc:-3}"
+    echo "${worker_count:-3}"  # final default
 }
 
 cmd_up() {
