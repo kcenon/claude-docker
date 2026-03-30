@@ -341,14 +341,15 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 
 | Instances | Docker RAM | Host RAM (Linux / macOS / Windows) |
 |:---------:|:----------:|:----------------------------------:|
-| 2 | 4 GB | 8 / 8 / 8 GB |
-| 3 | 6 GB | 10 / 10 / 10 GB |
-| 4 | 8 GB | 12 / 12 / 12 GB |
+| 2 | 8 GB | 12 / 12 / 12 GB |
+| 3 | 12 GB | 16 / 16 / 16 GB |
+| 4 | 16 GB | 20 / 20 / 20 GB |
 
 ## Project Structure
 
 ```
 claude-docker/
++-- .dockerignore                      Docker build context exclusions
 +-- Dockerfile                         Base image
 +-- docker-compose.yml                 Base config (Tier A)
 +-- docker-compose.linux.yml           Linux override
