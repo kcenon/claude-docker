@@ -256,7 +256,8 @@ async function handleDelegate({ account, prompt, model }) {
 }
 
 async function handleAnalyze({ prompt, timeout }) {
-  const t = timeout || 300;
+  const t = parseInt(timeout, 10) || 300;
+  if (t < 1 || t > 3600) throw new Error('timeout must be 1-3600');
   // Escape single quotes in prompt for safe shell embedding
   const safePrompt = prompt.replace(/'/g, "'\\''");
   const script = `source /scripts/manager-helpers.sh && run_analysis '${safePrompt}' '${t}'`;
@@ -265,7 +266,8 @@ async function handleAnalyze({ prompt, timeout }) {
 }
 
 async function handleDispatch({ worker, prompt, timeout }) {
-  const t = timeout || 300;
+  const t = parseInt(timeout, 10) || 300;
+  if (t < 1 || t > 3600) throw new Error('timeout must be 1-3600');
   const safeWorker = worker.replace(/'/g, "'\\''");
   const safePrompt = prompt.replace(/'/g, "'\\''");
   const script = `source /scripts/manager-helpers.sh && dispatch_task '${safeWorker}' '${safePrompt}' '${t}'`;
@@ -306,7 +308,7 @@ async function handleAccounts() {
   for (const { env, name, service } of apiKeyAccounts) {
     if (envVars[env]) {
       const running = runningContainers.includes(service);
-      accounts.push({ name, type: 'api-key', status: running ? 'running' : 'stopped' });
+      accounts.push({ name, type: 'configured', status: running ? 'running' : 'stopped' });
     }
   }
 
@@ -341,7 +343,11 @@ async function handleFindings({ category, sessionId } = {}) {
   if (sessionId) {
     try {
       const sessionDir = join(ARCHIVE_DIR, 'sessions', sessionId);
-      const content = await readFile(join(sessionDir, 'findings.json'), 'utf8');
+      const resolved = resolve(sessionDir);
+      if (!resolved.startsWith(resolve(ARCHIVE_DIR))) {
+        throw new Error('Invalid session ID');
+      }
+      const content = await readFile(join(resolved, 'findings.json'), 'utf8');
       const findings = JSON.parse(content);
       if (category) {
         const filtered = findings.filter((f) => f.category === category);
@@ -385,13 +391,22 @@ async function handleStatus({ worker } = {}) {
     const statuses = [];
 
     for (const w of workers) {
-      const state = await redis.get(`worker:${w}:status`);
-      const lastTask = await redis.get(`worker:${w}:last_task`);
-      statuses.push({
-        name: w,
-        state: state || 'offline',
-        lastTask: lastTask || undefined,
-      });
+      const raw = await redis.get(`worker:${w}:status`);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          statuses.push({
+            name: w,
+            state: parsed.state || 'unknown',
+            lastTask: parsed.lastTask || undefined,
+            timestamp: parsed.timestamp || undefined,
+          });
+        } catch {
+          statuses.push({ name: w, state: raw });
+        }
+      } else {
+        statuses.push({ name: w, state: 'offline' });
+      }
     }
 
     return JSON.stringify(statuses, null, 2);
