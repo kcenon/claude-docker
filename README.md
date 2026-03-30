@@ -342,6 +342,48 @@ When using `scripts/claude-docker claude` to enter the manager, the manager
 Claude Code reads `CLAUDE.md` and can automatically orchestrate analysis
 when you ask it to analyze, audit, or review code.
 
+### MCP Bridge (Native Tool Integration)
+
+Access all orchestration features directly from a Claude Code session
+without switching terminals. The MCP bridge exposes 8 tools via the
+Model Context Protocol.
+
+**Setup:**
+
+```bash
+# 1. Enable Redis host access
+echo "MCP_BRIDGE=yes" >> .env
+
+# 2. Install Node.js dependencies
+npm install
+
+# 3. Restart containers
+scripts/claude-docker up
+```
+
+Start Claude Code from the project directory -- the `.mcp.json` config
+is auto-discovered.
+
+**Available tools:**
+
+| Tool | Description |
+|------|-------------|
+| `delegate` | Run a prompt on a specified account (supports model selection) |
+| `analyze` | Multi-persona parallel analysis (security, quality, performance) |
+| `dispatch` | Send a task to a specific worker |
+| `accounts` | List configured accounts and routing status |
+| `findings` | Query analysis findings (live or archived) |
+| `sessions` | List archived analysis sessions |
+| `status` | Show worker health and activity |
+| `budget` | Token usage information |
+
+API key accounts route via the Anthropic SDK (fast, supports model
+selection). OAuth accounts route via `docker exec`. API key accounts
+fall back to `docker exec` automatically if the SDK call fails.
+
+For detailed tool schemas, input/output examples, and troubleshooting,
+see [MCP Bridge Reference](docs/mcp-bridge.md).
+
 ### Session Archive (Cold Memory)
 
 Save and restore orchestration sessions across container restarts:
@@ -469,6 +511,7 @@ Override files separate platform and feature concerns from the base compose:
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
 | `docker-compose.firewall.yml` | Outbound network whitelist | Security hardening |
 | `docker-compose.orchestration.yml` | Manager-worker with Redis | Multi-agent orchestration |
+| `docker-compose.mcp.yml` | Redis host port for MCP bridge | `MCP_BRIDGE=yes` in `.env` |
 
 Combine with `-f` (or let `scripts/claude-docker` detect them automatically):
 
@@ -541,6 +584,9 @@ claude-docker/
 +-- docker-compose.worktree.yml        Tier B override
 +-- docker-compose.firewall.yml        Firewall override
 +-- docker-compose.orchestration.yml  Manager-worker orchestration
++-- docker-compose.mcp.yml            MCP bridge Redis overlay
++-- .mcp.json                          MCP server auto-discovery
++-- package.json                       MCP bridge dependencies
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
@@ -554,6 +600,7 @@ claude-docker/
 |   +-- personas.json                 Worker persona definitions
 |   +-- cleanup.sh                    Full cleanup
 |   +-- install.sh                    Interactive setup script
+|   +-- mcp-bridge-server.js           MCP bridge server (stdio)
 |   +-- claude-docker                  Unified CLI wrapper
 |   +-- remove.sh                     Complete removal script
 +-- docs/
@@ -564,6 +611,7 @@ claude-docker/
     +-- cross-platform.md
     +-- threat-model.md                STRIDE threat analysis
     +-- key-rotation.md                Secret rotation procedures
+    +-- mcp-bridge.md                  MCP bridge architecture and tool reference
     +-- software-verification-plan.md  Verification procedures (SVP)
     +-- reference/                     Platform-specific references
 ```
@@ -579,6 +627,7 @@ claude-docker/
 | [Cross-Platform](docs/cross-platform.md) | Linux / macOS / Windows comparison and templates |
 | [Threat Model](docs/threat-model.md) | STRIDE threat analysis, controls, residual risks |
 | [Key Rotation](docs/key-rotation.md) | Procedures for rotating secrets and OAuth tokens |
+| [MCP Bridge](docs/mcp-bridge.md) | Architecture, 8-tool reference, smart routing, troubleshooting |
 | [SVP](docs/software-verification-plan.md) | Verification procedures for all SRS requirements |
 
 ## License

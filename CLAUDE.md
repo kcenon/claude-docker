@@ -68,3 +68,31 @@ source /scripts/manager-helpers.sh
 list_sessions
 restore_session latest
 ```
+
+## MCP Bridge Tools
+
+When running as a **host-side Claude Code session** (not inside a container),
+the MCP bridge provides the same orchestration capabilities as native tools.
+Use these tools instead of shell commands when available:
+
+| Instead of | Use MCP tool |
+|------------|-------------|
+| `scripts/claude-docker dispatch worker-1 "prompt"` | `dispatch(worker: "worker-1", prompt: "...")` |
+| `scripts/claude-docker analyze "prompt"` | `analyze(prompt: "...")` |
+| `scripts/claude-docker findings security` | `findings(category: "security")` |
+| `scripts/claude-docker status` | `status()` |
+| `scripts/claude-docker sessions` | `sessions()` |
+
+### When to Use `delegate`
+
+Use `delegate` to run a prompt on a different account:
+
+- **Cross-account review**: "Get account B's perspective on this code"
+- **Model comparison**: Specify a different model via the `model` parameter
+- **Workload distribution**: Offload expensive analysis to a dedicated account
+
+### When to Use `analyze` vs `dispatch`
+
+- **`analyze`**: Full three-persona parallel analysis. Use for broad reviews.
+- **`dispatch`**: Single-worker targeted task. Use when you know which persona
+  is needed (e.g., security-only check goes to `worker-1`).
