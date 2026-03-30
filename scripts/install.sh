@@ -107,6 +107,35 @@ check_command() {
     command -v "$1" &>/dev/null
 }
 
+# Measure filesystem I/O latency with a single write+read+delete cycle.
+# Returns latency in milliseconds.
+measure_io_latency() {
+    local dir="$1"
+    local tmp_file="${dir}/.io_benchmark_$$"
+
+    if date +%s%N 2>/dev/null | grep -qE '^[0-9]{10,}$'; then
+        # Linux: nanosecond precision
+        local start_ns end_ns
+        start_ns=$(date +%s%N)
+        printf '%0.s0' {1..4096} > "$tmp_file" 2>/dev/null
+        sync 2>/dev/null || true
+        cat "$tmp_file" > /dev/null 2>&1
+        rm -f "$tmp_file"
+        end_ns=$(date +%s%N)
+        echo $(( (end_ns - start_ns) / 1000000 ))
+    else
+        # macOS: use perl for sub-second timing
+        perl -MTime::HiRes=time -e '
+            my $f = "'"$tmp_file"'";
+            my $s = time();
+            open(my $fh, ">", $f) and print $fh "0"x4096 and close($fh);
+            open($fh, "<", $f) and my @d = <$fh> and close($fh);
+            unlink $f;
+            printf "%d\n", (time() - $s) * 1000;
+        ' 2>/dev/null || echo "0"
+    fi
+}
+
 # --- Platform Detection -------------------------------------------------------
 
 detect_platform() {
@@ -420,6 +449,16 @@ collect_configuration() {
         exit 1
     fi
 
+    # I/O latency benchmark
+    local io_latency_ms
+    io_latency_ms=$(measure_io_latency "$SOURCE_DIR")
+    if (( io_latency_ms > 50 )); then
+        log_warn "Slow I/O detected (${io_latency_ms}ms). NTFS mounts can be up to 27x slower than native."
+        log_warn "Consider using WSL2 ext4 filesystem or a local SSD."
+    else
+        log_success "I/O latency: ${io_latency_ms}ms (OK)"
+    fi
+
     log_info "Project directory: $SOURCE_DIR"
 
     # Claude Code version
@@ -689,8 +728,23 @@ start_containers() {
         GID=$(id -g)
     fi
 
-    log_info "Compose command: $compose_cmd up -d"
-    eval "$compose_cmd up -d" 2>&1
+    # Select worker profile based on WORKER_COUNT
+    local profile_flags=""
+    if [[ "$ORCHESTRATION" == "yes" ]]; then
+        if (( WORKER_COUNT >= 2 )); then
+            profile_flags="--profile full"
+        fi
+        log_info "Worker count: $WORKER_COUNT"
+    fi
+
+    log_info "Compose command: $compose_cmd $profile_flags up -d"
+    eval "$compose_cmd $profile_flags up -d" 2>&1
+
+    # WORKER_COUNT=2: stop worker-3 after start
+    if [[ "$ORCHESTRATION" == "yes" && "$WORKER_COUNT" == "2" ]]; then
+        log_info "Stopping worker-3 (WORKER_COUNT=2 mode)"
+        eval "$compose_cmd stop worker-3" 2>/dev/null || true
+    fi
 
     log_success "Containers started"
 }

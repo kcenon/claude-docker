@@ -41,6 +41,13 @@ function logEvent(event, fields = {}) {
   console.log(JSON.stringify(entry));
 }
 
+// --- Startup timing ---------------------------------------------------------
+const PROCESS_START_HR = process.hrtime.bigint();              // nanosecond precision
+
+function hrtimeMs(startHr) {
+  return Number(process.hrtime.bigint() - startHr) / 1e6;
+}
+
 // --- State ------------------------------------------------------------------
 let redis = null;
 let currentTaskId = null;
@@ -530,10 +537,19 @@ async function main() {
       console.warn('[worker] WARNING: WORKER_AUTH_TOKEN not set — task endpoint is unauthenticated');
     }
 
+    const redisStartHr = process.hrtime.bigint();
     redis = await connectRedis();                            // SRS-8.2.15
+    const redisConnectedHr = process.hrtime.bigint();
     startHeartbeat();                                        // SRS-8.2.8, SRS-8.2.9
 
     server.listen(WORKER_PORT, () => {
+      const httpReadyHr = process.hrtime.bigint();
+      logEvent('worker_startup', {
+        processStartToHttpReadyMs: Math.round(hrtimeMs(PROCESS_START_HR)),
+        processStartToRedisMs: Math.round(Number(redisConnectedHr - PROCESS_START_HR) / 1e6),
+        redisConnectMs: Math.round(Number(redisConnectedHr - redisStartHr) / 1e6),
+        httpReadyToRedisMs: Math.round(Number(httpReadyHr - redisConnectedHr) / 1e6),
+      });
       console.log(`[worker] ${WORKER_NAME} listening on :${WORKER_PORT}`);
     });
   } catch (err) {

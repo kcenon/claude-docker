@@ -156,12 +156,44 @@ build_merged_config_dir() {
 
 # --- Subcommands --------------------------------------------------------------
 
+# Resolve WORKER_COUNT: env var takes precedence over .env file
+resolve_worker_count() {
+    local worker_count="${WORKER_COUNT:-}"
+    if [[ -z "$worker_count" ]] && [[ -f "${PROJECT_ROOT}/.env" ]]; then
+        worker_count=$(grep -E '^WORKER_COUNT=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+    fi
+    echo "${worker_count:-3}"  # final default
+}
+
 cmd_up() {
     local cmd
     cmd=$(get_compose_cmd)
+    local profile_flags=""
+
+    # Add --profile full for WORKER_COUNT >= 2 in orchestration mode
+    if [[ "$cmd" == *"orchestration"* ]]; then
+        local wc
+        wc=$(resolve_worker_count)
+        if (( wc >= 2 )); then
+            profile_flags="--profile full"
+        fi
+        log_info "Worker count: $wc"
+    fi
+
     echo -e "${CYAN}Starting containers...${NC}"
-    echo -e "${DIM}  $cmd up -d${NC}"
-    eval "$cmd up -d" "$@"
+    echo -e "${DIM}  $cmd $profile_flags up -d${NC}"
+    eval "$cmd $profile_flags up -d" "$@"
+
+    # WORKER_COUNT=2: stop worker-3 after start (profile includes both worker-2 and worker-3)
+    if [[ "$cmd" == *"orchestration"* ]]; then
+        local wc
+        wc=$(resolve_worker_count)
+        if [[ "$wc" == "2" ]]; then
+            log_info "Stopping worker-3 (WORKER_COUNT=2 mode)"
+            eval "$cmd stop worker-3" 2>/dev/null || true
+        fi
+    fi
+
     echo -e "${GREEN}Containers started.${NC}"
     echo ""
     eval "$cmd ps"

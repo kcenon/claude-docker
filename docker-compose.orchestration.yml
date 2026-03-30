@@ -94,6 +94,7 @@ services:
 
   worker-2:
     image: claude-code-base:latest
+    profiles: ["full"]                                          # SRS-9.2.1: only with --profile full
     depends_on:
       redis:
         condition: service_healthy
@@ -128,6 +129,7 @@ services:
 
   worker-3:
     image: claude-code-base:latest
+    profiles: ["full"]                                          # SRS-9.2.1: only with --profile full
     depends_on:
       redis:
         condition: service_healthy
