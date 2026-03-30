@@ -562,6 +562,8 @@ claude-docker/
     +-- software-design-specification.md
     +-- architecture.md
     +-- cross-platform.md
+    +-- threat-model.md                STRIDE threat analysis
+    +-- key-rotation.md                Secret rotation procedures
     +-- reference/                     Platform-specific references
 ```
 
@@ -574,6 +576,8 @@ claude-docker/
 | [SDS](docs/software-design-specification.md) | Dockerfile, compose files, scripts, operational flows |
 | [Architecture](docs/architecture.md) | Design overview, tiers, scaling, auth strategy |
 | [Cross-Platform](docs/cross-platform.md) | Linux / macOS / Windows comparison and templates |
+| [Threat Model](docs/threat-model.md) | STRIDE threat analysis, controls, residual risks |
+| [Key Rotation](docs/key-rotation.md) | Procedures for rotating secrets and OAuth tokens |
 
 ## License
 
