@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "claude-docker": {
+      "command": "node",
+      "args": ["scripts/mcp-bridge-server.js"],
+      "env": {
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "6379",
+        "REDIS_PASSWORD": "${REDIS_PASSWORD}",
+        "ARCHIVE_DIR": "${HOME}/.claude-state/analysis-archive",
+        "DOCKER_COMPOSE_DIR": "${PWD}",
+        "CLAUDE_API_KEY_MANAGER": "${CLAUDE_API_KEY_MANAGER}",
+        "CLAUDE_API_KEY_A": "${CLAUDE_API_KEY_A}",
+        "CLAUDE_API_KEY_B": "${CLAUDE_API_KEY_B}",
+        "CLAUDE_API_KEY_1": "${CLAUDE_API_KEY_1}",
+        "CLAUDE_API_KEY_2": "${CLAUDE_API_KEY_2}",
+        "CLAUDE_API_KEY_3": "${CLAUDE_API_KEY_3}"
+      }
+    }
+  }
+}
