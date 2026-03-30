@@ -6,6 +6,8 @@ adjustments.** This document maps what changes per platform and what stays the s
 
 ## Platform Comparison Matrix
 
+> **SSOT**: This section is the Single Source of Truth (SSOT) for platform-specific filesystem performance ratios (bind mount speed comparisons). Other documents (SRS §7.1) reference this section rather than duplicating these figures.
+
 | Factor | Linux | macOS | Windows (WSL2) |
 |--------|-------|-------|----------------|
 | Docker engine | Native (no VM) | Apple Virtualization VM | WSL2 Linux VM |

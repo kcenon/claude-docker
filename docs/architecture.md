@@ -378,6 +378,8 @@ For secret rotation procedures see [docs/key-rotation.md](key-rotation.md).
 
 ## Resource Requirements
 
+> **SSOT**: This section is the Single Source of Truth (SSOT) for resource requirements and scaling tables. Other documents (SRS §7.2, PRD) reference this section rather than duplicating these figures.
+
 | Resource | Per Container | Total (2 containers) |
 |----------|--------------|---------------------|
 | RAM | 4 GB (NODE_OPTIONS heap) | 8 GB |

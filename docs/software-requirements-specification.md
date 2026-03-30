@@ -234,7 +234,7 @@ SHALL be provided with placeholder values and no real credentials.
 | SRS-5.1.8 | Package manager caches SHALL be cleaned: `apt-get` lists and `npm cache`. |
 | SRS-5.1.9 | A `.dockerignore` SHALL exclude: `.git`, `node_modules`, `dist`, `build`, `.env`, `.claude/`. |
 | SRS-5.1.10 | Final image size SHALL be under 1 GB. |
-| SRS-5.1.11 | *(Phase 5)* Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. Not required until Phase 5 orchestration is implemented. |
+| SRS-5.1.11 | *(Phase 5)* Dockerfile SHALL install `redis-tools` package via apt-get for `redis-cli` availability. Not required until Phase 5 orchestration is implemented. Note: `xxd` is not available in `node:20-slim`; any hex encoding in helper scripts SHALL use `od -An -tx1` instead. |
 | SRS-5.1.12 | *(Phase 5)* Dockerfile SHALL install `redis` npm package (v4.6+) globally for worker-server.js. Not required until Phase 5 orchestration is implemented. |
 | SRS-5.1.13 | Dockerfile SHALL set `NODE_PATH=/usr/local/lib/node_modules` so that globally installed npm packages (e.g., `redis`) are resolvable by `require()` in scripts. |
 
@@ -367,30 +367,16 @@ is identical; only `.env` values and optional compose overrides differ.
 | Metric | Target |
 |--------|--------|
 | Container startup | All containers reach Claude Code prompt within 30 seconds of `docker compose up` |
-| Bind mount speed (Linux) | ~1.0x native (baseline) |
-| Bind mount speed (macOS, VirtioFS) | >= 0.3x native |
-| Bind mount speed (Windows, WSL2 fs) | >= 0.9x native |
+| Bind mount speed | Platform-dependent; see [cross-platform.md — Platform Comparison](cross-platform.md) for canonical performance ratios (Linux ~1.0x, macOS VirtioFS ~0.3x, Windows WSL2 fs ~0.9x) |
 | Image build time | Under 10 minutes on a 50 Mbps connection |
 
 ### 7.2 Resource Budget
 
-| Resource | Per Container | Formula for N containers |
-|----------|--------------|------------------------|
-| RAM (heap) | 4 GB | N x 4 GB |
-| Disk (writable layer) | 10-50 MB | N x 10-50 MB |
-| Disk (state directory) | 5-20 MB | N x 5-20 MB |
-| Disk (shared image) | ~800 MB | ~800 MB (constant) |
-| CPU | 1-2 cores | N x 1-2 cores |
+Resource requirements and scaling tables are maintained in [architecture.md — Resource Requirements](architecture.md#resource-requirements) (canonical SSOT). Summary:
 
-**Phase 5 orchestration resource budget** (manager + 3 workers + Redis):
-
-| Resource | Amount | Notes |
-|----------|--------|-------|
-| Docker RAM | ~17 GB | 4 containers x 4 GB + Redis 256 MB |
-| Host RAM (Linux) | ~20 GB | Docker + host overhead |
-| Host RAM (macOS/Windows) | ~24 GB | Docker Desktop VM overhead |
-| CPU cores | 8+ recommended | 4 containers x 2 cores |
-| Anthropic accounts | 4 | 1 manager + 3 workers (separate auth each) |
+- Per container: ~4 GB RAM, 1-2 CPU cores, ~10-50 MB disk (writable layer)
+- Phase 5 orchestration (4 containers + Redis): ~17 GB Docker RAM; 8+ CPU cores recommended
+- For per-platform host RAM requirements and multi-instance scaling tables, see the architecture.md reference above.
 
 ### 7.3 Security
 
@@ -464,7 +450,7 @@ is identical; only `.env` values and optional compose overrides differ.
 | SRS-8.3.2 | SHALL | Manager helpers SHALL provide `dispatch_parallel` function sending to all workers concurrently |
 | SRS-8.3.3 | SHALL | Manager helpers SHALL provide `get_findings` function reading findings from Redis via `redis-cli` |
 | SRS-8.3.4 | SHALL | Manager helpers SHALL provide `get_worker_status` function checking all worker statuses |
-| SRS-8.3.5 | SHALL | All helper functions SHALL use `set -euo pipefail` and return proper exit codes |
+| SRS-8.3.5 | SHALL | All helper functions SHALL use `set -euo pipefail` and return proper exit codes. Counter increments SHALL use `counter=$((counter + 1))` syntax; `((counter++))` SHALL NOT be used because it returns exit code 1 when the counter is 0 under `set -e`, causing script termination. |
 | SRS-8.3.6 | SHALL | Manager helpers SHALL verify Redis connectivity before dispatching tasks |
 | SRS-8.3.7 | SHALL | Manager SHALL clear `findings:all` list before starting a new analysis session |
 
@@ -518,11 +504,10 @@ is identical; only `.env` values and optional compose overrides differ.
 
 ### 8.8 Known Issues and Errata
 
-| ID | Description | Affected Spec | Fix |
-|----|-------------|---------------|-----|
-| ERRATA-1 | `xxd` is not available in `node:20-slim`; scripts using `xxd` for hex encoding SHALL use `od` instead (`od -An -tx1`) | SRS-8.3 | Replace `xxd` calls with `od -An -tx1` in manager-helpers.sh |
-| ERRATA-2 | `NODE_PATH=/usr/local/lib/node_modules` is required for globally installed npm packages to be resolvable by `require()` in worker-server.js | SRS-5.1.12 | Added SRS-5.1.13 |
-| ERRATA-3 | `((counter++))` returns exit code 1 when counter is 0 under `set -e`, causing script termination | SRS-8.3.5 | Use `counter=$((counter + 1))` instead of `((counter++))` in shell scripts |
+No open errata. Previously documented items have been folded into normative text:
+- ERRATA-1 (`xxd` → `od`): Resolved. Normative constraint added to SRS-5.1.11.
+- ERRATA-2 (`NODE_PATH`): Resolved. Addressed by SRS-5.1.13.
+- ERRATA-3 (`((counter++))` under `set -e`): Resolved. Normative constraint added to SRS-8.3.5.
 
 ---
 

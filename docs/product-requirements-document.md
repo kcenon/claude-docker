@@ -226,8 +226,8 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 
 | Category | Requirement | Reference |
 |----------|-------------|-----------|
-| **Performance** | Bind mount targets: Linux 1.0x, macOS ~0.3x (VirtioFS), Windows ~0.9x (WSL2 fs). `node_modules` in named volumes on macOS. | [macos-docker.md](reference/macos-docker.md) |
-| **Resources** | Host RAM: 12 GB (Linux), 16 GB (macOS/Windows). 4 GB heap per container. 4+ CPU cores. 2 GB free disk. | [architecture.md](architecture.md) |
+| **Performance** | Platform-specific bind mount speed ratios: see [cross-platform.md — Platform Comparison Matrix](cross-platform.md) (canonical SSOT). `node_modules` in named volumes on macOS. | [cross-platform.md](cross-platform.md) |
+| **Resources** | Host RAM, CPU, and disk requirements by platform and instance count: see [architecture.md — Resource Requirements](architecture.md#resource-requirements) (canonical SSOT). | [architecture.md](architecture.md) |
 | **Security** | API keys via `.env` only. No Docker socket mounting. State dirs mode 0700. Optional firewall whitelist. | [claude-code-container.md](reference/claude-code-container.md) |
 | **Portability** | Identical `docker-compose.yml` on all platforms; only `.env` values and Linux `user:` field differ. | [cross-platform.md](cross-platform.md) |
 | **Reliability** | Three auth paths: host-side Keychain extraction on macOS, container-internal OAuth on Linux/WSL2 (subscriptions), and API key (Console). All are production-grade with documented recovery procedures. | [claude-code-container.md](reference/claude-code-container.md) |
@@ -239,12 +239,12 @@ Priority: **P0** = must-have, **P1** = should-have, **P2** = nice-to-have.
 | Factor | Linux | macOS | Windows (WSL2) |
 |--------|-------|-------|----------------|
 | Docker engine | Native | VM (Apple Virtualization) | VM (Hyper-V) |
-| Bind mount speed | 1.0x | ~0.3x | ~0.9x (WSL2 fs) / ~0.04x (NTFS) |
+| Bind mount speed | See [cross-platform.md](cross-platform.md) for canonical ratios | See [cross-platform.md](cross-platform.md) | See [cross-platform.md](cross-platform.md) |
 | UID/GID handling | `user: "${UID}:${GID}"` + `HOME=/home/node` | Not needed | Not needed |
 | SELinux | `:z`/`:Z` flags (RHEL-family only) | N/A | N/A |
 | Line endings | N/A | N/A | `.gitattributes` with `eol=lf` required |
 | Antivirus | Minimal | None | Defender overhead; use WSL2 fs |
-| Min host RAM | 12 GB | 16 GB | 16 GB |
+| Min host RAM | See [architecture.md](architecture.md#resource-requirements) | See [architecture.md](architecture.md#resource-requirements) | See [architecture.md](architecture.md#resource-requirements) |
 
 **Linux**: Simplest. Match UID/GID. SELinux `:z`/`:Z` on RHEL-family only.
 See [linux-docker.md](reference/linux-docker.md).
