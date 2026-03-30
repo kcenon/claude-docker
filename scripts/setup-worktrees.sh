@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Setup git worktrees for Tier B (SRS-5.4.2)
+# Setup git worktrees for Tier B
 set -euo pipefail
 
 REPO_DIR="${1:?Usage: setup-worktrees.sh <repo-dir> [branch-a] [branch-b]}"

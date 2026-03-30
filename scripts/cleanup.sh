@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cleanup containers, worktrees, and state (SRS-5.5, FR-17)
+# Cleanup containers, worktrees, and state
 set -euo pipefail
 
 echo "=== Stopping containers ==="
