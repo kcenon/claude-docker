@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Complete removal script for claude-docker
 # Reverses everything install.sh set up: containers, volumes, images,
-# worktrees, state directories, archive, .env, and optionally host tools.
+# worktrees, state directories, .env, and optionally host tools.
 set -euo pipefail
 
 # --- Constants & Colors -------------------------------------------------------

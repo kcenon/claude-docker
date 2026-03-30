@@ -190,6 +190,18 @@ scripts/claude-docker exec claude-a claude auth login
 scripts/claude-docker exec claude-a claude auth status
 ```
 
+**GitHub CLI (`gh`)** is automatically available inside containers. The host's
+`~/.config/gh/` is bind-mounted read-only, so `gh` commands use the host's
+GitHub session without separate authentication.
+
+```bash
+# Verify gh auth inside container
+scripts/claude-docker exec claude-a gh auth status
+
+# Use gh normally
+scripts/claude-docker exec claude-a gh pr list
+```
+
 ### Running Commands Inside Containers
 
 ```bash
@@ -291,6 +303,7 @@ All state is preserved across container restarts via Docker volume mounts:
 | Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` |
 | Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` |
 | Settings | `~/.claude-state/account-a/settings.json` | `/home/node/.claude/settings.json` |
+| GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` (read-only) |
 | node_modules | Named volume `node_modules_a` | `/workspace/node_modules/` |
 | Project files | `${PROJECT_DIR}` bind mount | `/workspace/` |
 
