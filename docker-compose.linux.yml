@@ -3,9 +3,9 @@
 
 services:
   claude-a:
-    user: "${UID}:${GID}"           # SRS-6.1.1
+    user: "${UID}:${GID}"
     environment:
-      - HOME=/home/node             # SRS-6.1.2
+      - HOME=/home/node
 
   claude-b:
     user: "${UID}:${GID}"
