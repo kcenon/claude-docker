@@ -394,7 +394,7 @@ Show worker health and activity status from Redis.
 
 ### budget
 
-Token usage summary.
+Token usage per account aggregated during the current MCP server session.
 
 **Parameters:** None.
 
@@ -402,13 +402,43 @@ Token usage summary.
 
 ```json
 {
-  "message": "Use 'scripts/claude-docker usage' for detailed tracking"
+  "accounts": [
+    {
+      "name": "manager",
+      "type": "configured",
+      "inputTokens": 12500,
+      "outputTokens": 8300,
+      "calls": 5
+    },
+    {
+      "name": "a",
+      "type": "configured",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "calls": 0
+    },
+    {
+      "name": "worker-1",
+      "status": "unavailable"
+    }
+  ],
+  "total": {
+    "inputTokens": 12500,
+    "outputTokens": 8300
+  }
 }
 ```
 
+**Data sources:**
+- **API key accounts**: Token counts cached in-memory from each `delegate` SDK call.
+  The `calls` field shows how many delegate calls were made this session.
+  Accounts with no delegate calls yet show zero counts.
+- **OAuth accounts**: Queried via `docker exec <container> claude usage --json`.
+  If the container is stopped or the command fails, `status: "unavailable"` is returned.
+
 **Notes:**
-- Currently a pointer to the host-side `usage` subcommand (powered by ccusage).
-- Future enhancement: direct API-based token tracking per account.
+- Usage data resets when the MCP server restarts (session-level only).
+- For persistent historical tracking, use `scripts/claude-docker usage`.
 
 ## Environment Variables
 
