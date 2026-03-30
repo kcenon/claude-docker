@@ -11,7 +11,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - **Multi-account isolation** -- Each container has its own credentials, settings, and history
 - **Shared source code** -- Bind mount (Tier A) or git worktree (Tier B) for concurrent editing
 - **Cross-platform** -- Linux, macOS, Windows (WSL2)
-- **Subscription + API key** -- OAuth for Pro/Max/Team (via container), or `ANTHROPIC_API_KEY` for Console
+- **Flexible authentication** -- OAuth for Pro/Max/Team subscriptions, or API key for Console
 - **Scalable to N instances** -- Add accounts by copying a compose service block
 
 ## Prerequisites
@@ -77,12 +77,11 @@ Linux / WSL2:
 # Authenticate inside each container after starting
 scripts/claude-docker claude claude-a
 # Inside container: claude auth login
-# (follow OAuth URL in browser, paste code)
 ```
 
 Note: On macOS, container-internal OAuth fails due to Docker network
-boundary limitations ([#34917](https://github.com/anthropics/claude-code/issues/34917)).
-The `auth` command extracts tokens from macOS Keychain instead.
+boundary limitations. The `auth` command extracts tokens from macOS
+Keychain instead.
 
 **Path B -- Console API keys:**
 
@@ -101,29 +100,19 @@ scripts/claude-docker up
 ```
 
 The CLI wrapper auto-detects your platform and applies the correct
-compose overrides (Linux UID/GID, worktree, orchestration, firewall).
+compose overrides (Linux UID/GID, worktree).
 
-### 4. Authenticate and start
+### 4. Start Claude Code
 
 ```bash
-# Authenticate all containers (opens OAuth in browser)
-scripts/claude-docker auth
-
-# Start Claude Code
+# Primary account
 scripts/claude-docker claude
-```
 
-In a separate terminal:
-
-```bash
+# Second account (separate terminal)
 scripts/claude-docker claude claude-b
 ```
 
 ## Usage
-
-The `scripts/claude-docker` CLI wrapper automatically detects your
-configuration (platform, tier, orchestration, firewall) and builds the
-correct `docker compose -f` chain. All subcommands below use this wrapper.
 
 ### Quick Reference
 
@@ -139,16 +128,9 @@ scripts/claude-docker help       # Show all available commands
 | | `build` | Build/rebuild Docker image |
 | | `ps` | Show container status |
 | | `logs` | Follow container logs |
-| **Interactive** | `claude [service]` | Start Claude Code (default: primary service) |
-| | `auth [service]` | Authenticate via OAuth login |
+| **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
+| | `auth [service]` | Inject OAuth credentials from macOS Keychain |
 | | `exec <service>` | Open shell in a container |
-| **Orchestration** | `dispatch <worker> <prompt>` | Send task to worker |
-| | `analyze <prompt>` | Multi-persona project analysis |
-| | `status` | Show worker status |
-| | `findings [category]` | Show accumulated findings |
-| **Cold Memory** | `save` | Save session to archive |
-| | `restore [id\|latest]` | Restore session from archive |
-| | `sessions` | List archived sessions |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
@@ -156,23 +138,16 @@ scripts/claude-docker help       # Show all available commands
 ### Starting and Stopping
 
 ```bash
-# Start all containers (detached)
-scripts/claude-docker up
-
-# Stop all containers (state preserved on host via bind mounts)
-scripts/claude-docker down
-
-# Restart
-scripts/claude-docker restart
-
-# Check status
-scripts/claude-docker ps
+scripts/claude-docker up        # Start all containers
+scripts/claude-docker down      # Stop (state preserved via bind mounts)
+scripts/claude-docker restart   # Restart
+scripts/claude-docker ps        # Check status
 ```
 
 ### Running Claude Code
 
 ```bash
-# Start Claude Code in the primary service (claude-a or manager)
+# Start in the default container (claude-a)
 scripts/claude-docker claude
 
 # Start in a specific container
@@ -191,7 +166,7 @@ scripts/claude-docker claude claude-b
 
 Both sessions see the same project source at `/workspace` (Tier A) or
 their own worktree (Tier B). Each session has independent conversation
-history, settings, and credentials.
+history, settings, memory, and credentials.
 
 ### Authentication
 
@@ -202,7 +177,7 @@ Host-side authentication (`claude auth login`) must be completed first.
 On Linux/WSL2, authenticate directly inside containers.
 
 ```bash
-# macOS: extract from Keychain → inject to all containers
+# macOS: extract from Keychain -> inject to all containers
 scripts/claude-docker auth
 
 # macOS: inject to specific container only
@@ -226,33 +201,6 @@ scripts/claude-docker exec claude-a git status
 scripts/claude-docker exec claude-a claude --version
 ```
 
-### Viewing Logs
-
-```bash
-# Follow all container logs
-scripts/claude-docker logs
-
-# Follow a specific container
-scripts/claude-docker logs claude-a
-
-# Last 50 lines
-scripts/claude-docker logs --tail 50 claude-a
-```
-
-### Rebuilding the Image
-
-```bash
-# Rebuild with latest Claude Code
-scripts/claude-docker build --no-cache
-
-# Pin a specific version in .env:
-#   CLAUDE_CODE_VERSION=1.2.3
-scripts/claude-docker build
-
-# Recreate containers with the new image
-scripts/claude-docker up --force-recreate
-```
-
 ### Using Git Inside Containers
 
 **Tier A** (shared source) -- both containers share `.git`:
@@ -273,139 +221,6 @@ scripts/claude-docker exec claude-a git commit -am "feat: add feature"
 scripts/claude-docker exec claude-b git commit -am "fix: resolve bug"
 ```
 
-### Orchestration (Multi-Agent)
-
-#### Security
-
-`install.sh` auto-generates two secrets and writes them to `.env`:
-
-```bash
-WORKER_AUTH_TOKEN=<random 64-char hex>   # Bearer token for worker HTTP API
-REDIS_PASSWORD=<random 64-char hex>      # Redis --requirepass password
-```
-
-You can regenerate them at any time with:
-
-```bash
-echo "WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env
-echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> .env
-```
-
-All orchestration services (Redis, manager, workers) communicate over an isolated
-internal Docker network (`orchestration-internal`) that has no outbound access.
-The worker HTTP API (`POST /task`) rejects requests without a valid `Authorization: Bearer <token>` header.
-
-When orchestration is enabled (Phase 5), the CLI detects it automatically:
-
-```bash
-# Dispatch a task to a specific worker
-scripts/claude-docker dispatch worker-1 "analyze the authentication module"
-
-# Dispatch with custom timeout (seconds)
-scripts/claude-docker dispatch worker-2 "run security audit" 600
-
-# Check worker status
-scripts/claude-docker status
-
-# View findings
-scripts/claude-docker findings
-scripts/claude-docker findings security
-```
-
-### Analysis (Multi-Persona)
-
-Run a comprehensive project analysis using all three specialized worker
-personas in parallel:
-
-```bash
-# Analyze with default timeout (300s)
-scripts/claude-docker analyze "evaluate production readiness of this project"
-
-# Analyze with custom timeout
-scripts/claude-docker analyze "audit the authentication module" 600
-```
-
-Each analysis dispatches the prompt to three workers simultaneously:
-
-| Persona | Worker | Focus Area |
-|---------|--------|------------|
-| **Sentinel** | worker-1 | Security vulnerabilities, hardcoded secrets, injection flaws |
-| **Reviewer** | worker-2 | Dead code, duplication, SOLID violations, complexity |
-| **Profiler** | worker-3 | N+1 queries, blocking I/O, memory leaks, bundle size |
-
-Results are collected and displayed in a categorized summary. Sessions are
-automatically saved to cold storage after each analysis.
-
-#### Interactive Analysis
-
-When using `scripts/claude-docker claude` to enter the manager, the manager
-Claude Code reads `CLAUDE.md` and can automatically orchestrate analysis
-when you ask it to analyze, audit, or review code.
-
-### MCP Bridge (Native Tool Integration)
-
-Access all orchestration features directly from a Claude Code session
-without switching terminals. The MCP bridge exposes 8 tools via the
-Model Context Protocol.
-
-**Setup:**
-
-```bash
-# 1. Enable Redis host access
-echo "MCP_BRIDGE=yes" >> .env
-
-# 2. Install Node.js dependencies
-npm install
-
-# 3. Restart containers
-scripts/claude-docker up
-```
-
-Start Claude Code from the project directory -- the `.mcp.json` config
-is auto-discovered.
-
-**Available tools:**
-
-| Tool | Description |
-|------|-------------|
-| `delegate` | Run a prompt on a specified account (supports model selection) |
-| `analyze` | Multi-persona parallel analysis (security, quality, performance) |
-| `dispatch` | Send a task to a specific worker |
-| `accounts` | List configured accounts and routing status |
-| `findings` | Query analysis findings (live or archived) |
-| `sessions` | List archived analysis sessions |
-| `status` | Show worker health and activity |
-| `budget` | Token usage information |
-
-API key accounts route via the Anthropic SDK (fast, supports model
-selection). OAuth accounts route via `docker exec`. API key accounts
-fall back to `docker exec` automatically if the SDK call fails.
-
-For detailed tool schemas, input/output examples, and troubleshooting,
-see [MCP Bridge Reference](docs/mcp-bridge.md).
-
-### Session Archive (Cold Memory)
-
-Save and restore orchestration sessions across container restarts:
-
-```bash
-# Save current session (context + findings + task results)
-scripts/claude-docker save
-
-# List all archived sessions
-scripts/claude-docker sessions
-
-# Restore the latest session
-scripts/claude-docker restore
-
-# Restore a specific session by ID
-scripts/claude-docker restore 20260328T143000Z_a1b2c3d4
-```
-
-Sessions persist in `~/.claude-state/analysis-archive/` and survive
-`docker compose down -v`. Maximum 50 sessions retained; oldest pruned
-automatically.
-
 ### Token Usage Reports
 
 View aggregated token usage across all container accounts using
@@ -413,51 +228,24 @@ View aggregated token usage across all container accounts using
 inside containers) and requires Node.js/npx.
 
 ```bash
-# Daily usage (default)
-scripts/claude-docker usage
-
-# Monthly or per-session breakdown
-scripts/claude-docker usage monthly
-scripts/claude-docker usage session
-
-# Filter by date range
-scripts/claude-docker usage daily --since 20260301 --until 20260329
-
-# JSON output for scripting
-scripts/claude-docker usage daily --json
-
-# Per-model cost breakdown
-scripts/claude-docker usage daily --breakdown
+scripts/claude-docker usage                                  # Daily (default)
+scripts/claude-docker usage monthly                          # Monthly
+scripts/claude-docker usage daily --since 20260301 --json    # Date filter + JSON
 ```
 
-The command automatically detects all account state directories under
-`~/.claude-state/` and combines their data into a unified report.
-Containers do not need to be running.
-
-### Advanced: Raw Compose Commands
-
-For operations not covered by subcommands, pass arguments directly:
+### Rebuilding the Image
 
 ```bash
-# Show the resolved compose configuration
-scripts/claude-docker config
-
-# Pass raw docker compose arguments
-scripts/claude-docker compose exec claude-a npm install
-scripts/claude-docker compose run --rm claude-a npm test
+scripts/claude-docker build --no-cache                # Rebuild with latest Claude Code
+scripts/claude-docker up --force-recreate             # Recreate containers
 ```
 
 ### Cleanup and Removal
 
 ```bash
-# Stop and remove containers + named volumes (node_modules)
-scripts/claude-docker down -v
-
-# Full cleanup (containers, volumes, worktrees, state)
-scripts/cleanup.sh ~/work/project
-
-# Complete removal (everything install.sh created)
-scripts/remove.sh
+scripts/claude-docker down -v    # Stop + remove named volumes
+scripts/cleanup.sh               # Quick cleanup
+scripts/remove.sh                # Complete removal
 ```
 
 ## Configuration Tiers
@@ -467,21 +255,14 @@ scripts/remove.sh
 Both containers mount the same project directory. Simplest setup, minimum
 storage. Best when one session writes and the other reads/reviews.
 
-```bash
-scripts/claude-docker up
-```
-
 ### Tier B -- Git Worktree
 
 Each container gets its own worktree for full concurrent editing safety.
 No `.git/index.lock` contention.
 
 ```bash
-# Create worktrees (sets PROJECT_DIR_A/B in .env)
-scripts/setup-worktrees.sh ~/work/project
-
-# Start (CLI auto-detects worktree overlay from .env)
-scripts/claude-docker up
+scripts/setup-worktrees.sh ~/work/project    # Create worktrees
+scripts/claude-docker up                     # Auto-detects worktree overlay
 ```
 
 ## Adding More Accounts
@@ -491,7 +272,7 @@ scripts/claude-docker up
 mkdir -p ~/.claude-state/account-c
 
 # 2. Copy a service block in docker-compose.yml:
-#    claude-b → claude-c (rename account-b → account-c, _B → _C)
+#    claude-b -> claude-c (rename account-b -> account-c, _B -> _C)
 
 # 3. Start and authenticate the new container
 scripts/claude-docker up
@@ -500,33 +281,28 @@ scripts/claude-docker auth claude-c
 
 Each additional container needs ~4 GB RAM.
 
+## State and Memory Persistence
+
+All state is preserved across container restarts via Docker volume mounts:
+
+| State | Host Path | Container Path |
+|-------|-----------|----------------|
+| Claude Code config | `~/.claude-state/account-a/` | `/home/node/.claude/` |
+| Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` |
+| Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` |
+| Settings | `~/.claude-state/account-a/settings.json` | `/home/node/.claude/settings.json` |
+| node_modules | Named volume `node_modules_a` | `/workspace/node_modules/` |
+| Project files | `${PROJECT_DIR}` bind mount | `/workspace/` |
+
 ## Compose Overrides
 
-Override files separate platform and feature concerns from the base compose:
-
-| File | Purpose | When to use |
+| File | Purpose | When active |
 |------|---------|-------------|
 | `docker-compose.yml` | Base config (Tier A) | Always |
 | `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
-| `docker-compose.firewall.yml` | Outbound network whitelist | Security hardening |
-| `docker-compose.orchestration.yml` | Manager-worker with Redis | Multi-agent orchestration |
-| `docker-compose.mcp.yml` | Redis host port for MCP bridge | `MCP_BRIDGE=yes` in `.env` |
 
-Combine with `-f` (or let `scripts/claude-docker` detect them automatically):
-
-```bash
-# Manual: Linux + Tier B + Firewall
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.worktree.yml \
-  -f docker-compose.firewall.yml \
-  up -d
-
-# Equivalent via CLI wrapper (auto-detects all overlays):
-scripts/claude-docker up
-```
+The `scripts/claude-docker` CLI auto-detects which overlays to apply.
 
 ## Troubleshooting
 
@@ -534,10 +310,8 @@ scripts/claude-docker up
 
 macOS:
 ```bash
-# Re-authenticate on host first
-claude auth login
-# Then re-inject to containers
-scripts/claude-docker auth
+claude auth login              # Re-authenticate on host
+scripts/claude-docker auth     # Re-inject to containers
 ```
 
 Linux/WSL2:
@@ -548,7 +322,6 @@ scripts/claude-docker exec claude-a claude auth login
 **Permission denied on bind mount (Linux):**
 
 ```bash
-# Ensure UID/GID override is active
 export UID=$(id -u) GID=$(id -g)
 docker compose -f docker-compose.yml -f docker-compose.linux.yml up -d
 ```
@@ -568,67 +341,30 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 
 | Instances | Docker RAM | Host RAM (Linux / macOS / Windows) |
 |:---------:|:----------:|:----------------------------------:|
-| 2 | 8 GB | 12 / 16 / 16 GB |
-| 3 | 12 GB | 16 / 20 / 20 GB |
-| 4 | 16 GB | 20 / 24 / 24 GB |
+| 2 | 4 GB | 8 / 8 / 8 GB |
+| 3 | 6 GB | 10 / 10 / 10 GB |
+| 4 | 8 GB | 12 / 12 / 12 GB |
 
 ## Project Structure
 
 ```
 claude-docker/
-+-- CLAUDE.md                          Manager orchestration guide
-+-- Dockerfile                         Base image (Phase 1)
-+-- .dockerignore
-+-- docker-compose.yml                 Base config -- Tier A
++-- Dockerfile                         Base image
++-- docker-compose.yml                 Base config (Tier A)
 +-- docker-compose.linux.yml           Linux override
 +-- docker-compose.worktree.yml        Tier B override
-+-- docker-compose.firewall.yml        Firewall override
-+-- docker-compose.orchestration.yml  Manager-worker orchestration
-+-- docker-compose.mcp.yml            MCP bridge Redis overlay
-+-- .mcp.json                          MCP server auto-discovery
-+-- package.json                       MCP bridge dependencies
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
++-- LICENSE                            BSD 3-Clause
 +-- scripts/
-|   +-- init-firewall.sh             Outbound firewall (iptables whitelist)
-|   +-- setup-worktrees.sh            Tier B worktree setup
-|   +-- test-concurrent-git.sh        E2E test: Tier B concurrent git safety
-|   +-- test-orchestration.sh         E2E test: orchestration manager-worker
-|   +-- manager-helpers.sh             Orchestration manager helpers
-|   +-- worker-server.js              Orchestration worker HTTP server
-|   +-- personas.json                 Worker persona definitions
-|   +-- cleanup.sh                    Full cleanup
-|   +-- install.sh                    Interactive setup script
-|   +-- mcp-bridge-server.js           MCP bridge server (stdio)
-|   +-- claude-docker                  Unified CLI wrapper
-|   +-- remove.sh                     Complete removal script
-+-- docs/
-    +-- product-requirements-document.md
-    +-- software-requirements-specification.md
-    +-- software-design-specification.md
-    +-- architecture.md
-    +-- cross-platform.md
-    +-- threat-model.md                STRIDE threat analysis
-    +-- key-rotation.md                Secret rotation procedures
-    +-- mcp-bridge.md                  MCP bridge architecture and tool reference
-    +-- software-verification-plan.md  Verification procedures (SVP)
-    +-- reference/                     Platform-specific references
+    +-- claude-docker                  CLI wrapper
+    +-- install.sh                     Interactive setup
+    +-- remove.sh                      Complete removal
+    +-- cleanup.sh                     Quick cleanup
+    +-- setup-worktrees.sh             Tier B worktree setup
+    +-- test-concurrent-git.sh         E2E test: Tier B concurrent git
 ```
-
-## Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [PRD](docs/product-requirements-document.md) | Goals, personas, milestones, success criteria |
-| [SRS](docs/software-requirements-specification.md) | 43 testable specifications, verification matrix |
-| [SDS](docs/software-design-specification.md) | Dockerfile, compose files, scripts, operational flows |
-| [Architecture](docs/architecture.md) | Design overview, tiers, scaling, auth strategy |
-| [Cross-Platform](docs/cross-platform.md) | Linux / macOS / Windows comparison and templates |
-| [Threat Model](docs/threat-model.md) | STRIDE threat analysis, controls, residual risks |
-| [Key Rotation](docs/key-rotation.md) | Procedures for rotating secrets and OAuth tokens |
-| [MCP Bridge](docs/mcp-bridge.md) | Architecture, 8-tool reference, smart routing, troubleshooting |
-| [SVP](docs/software-verification-plan.md) | Verification procedures for all SRS requirements |
 
 ## License
 
