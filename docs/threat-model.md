@@ -239,18 +239,25 @@ network infrastructure outside the Docker host.
 
 ## Control Summary
 
-| Control | Threats Mitigated | Implementation |
-|---------|-------------------|----------------|
-| Bearer token auth (`WORKER_AUTH_TOKEN`) | T-01, T-07 | `scripts/worker-server.js`, `validateAuth()` |
-| Timing-safe token comparison | T-01 | `crypto.timingSafeEqual` |
-| Redis `--requirepass` | T-02 | `docker-compose.orchestration.yml` |
-| `orchestration-internal` network (`internal: true`) | T-01, T-02, T-07 | `docker-compose.orchestration.yml` |
-| Auto-generated 64-char hex secrets | T-01, T-02 | `scripts/install.sh` |
-| `chmod 600/.env`, `chmod 600/.credentials.json` | T-03 | `scripts/install.sh` |
-| `.env` in `.gitignore` + placeholder `.env.example` | T-04 | `.gitignore`, `.env.example` |
-| Workers mount source `:ro` | T-05 | `docker-compose.orchestration.yml` |
-| No `/var/run/docker.sock` mount | T-09 | Architecture constraint |
-| Structured audit log (no secret fields) | T-08 | `logEvent()` in `worker-server.js` |
+| Control | Threats Mitigated | Implementation | PR |
+|---------|-------------------|----------------|----|
+| Bearer token auth (`WORKER_AUTH_TOKEN`) | T-01, T-07 | `scripts/worker-server.js`, `validateAuth()` | #97 |
+| Timing-safe token comparison | T-01 | `crypto.timingSafeEqual` | #97 |
+| Redis `--requirepass` | T-02 | `docker-compose.orchestration.yml` | #97 |
+| `orchestration-internal` network (`internal: true`) | T-01, T-02, T-07 | `docker-compose.orchestration.yml` | #97 |
+| Auto-generated 64-char hex secrets | T-01, T-02 | `scripts/install.sh` | #97 |
+| Redis `maxmemory` + `allkeys-lru` eviction | T-07 | `docker-compose.orchestration.yml` | #98 |
+| Redis AOF persistence | T-06 (partial) | `docker-compose.orchestration.yml` | #98 |
+| `chmod 600/.env`, `chmod 600/.credentials.json` | T-03 | `scripts/install.sh` | #99 |
+| Structured audit log (no secret fields) | T-08 | `logEvent()` in `worker-server.js` | #99 |
+| `.env` in `.gitignore` + placeholder `.env.example` | T-04 | `.gitignore`, `.env.example` | #99 |
+| Outbound firewall enabled by default | T-09 (depth) | `docker-compose.firewall.yml`, `scripts/install.sh` | #100 |
+| Cold storage archive size limit (50 sessions) | T-03 (surface area) | `scripts/manager-helpers.sh` | #100 |
+| Input validation on `POST /task` body | T-07 | `scripts/worker-server.js` | #101 |
+| Circuit breaker on Redis connection | T-07 | `scripts/worker-server.js` | #101 |
+| Workers mount source `:ro` | T-05 | `docker-compose.orchestration.yml` | #97 |
+| No `/var/run/docker.sock` mount | T-09 | Architecture constraint | — |
+| Startup warnings for missing secrets | T-01, T-02 | `scripts/worker-server.js`, `scripts/install.sh` | #102 |
 
 ---
 
@@ -271,4 +278,10 @@ network infrastructure outside the Docker host.
 - [architecture.md — Security Considerations](architecture.md#security-considerations)
 - [key-rotation.md — Key Rotation Procedure](key-rotation.md)
 - [SRS-8.1.10, SRS-8.1.11, SRS-8.2.17, SRS-8.2.18](software-requirements-specification.md)
+- PR #97 — Worker HTTP API and Redis authentication (`WORKER_AUTH_TOKEN`, `REDIS_PASSWORD`, `orchestration-internal` network)
+- PR #98 — Redis memory limits, eviction policy, and AOF persistence
+- PR #99 — Credential storage hardening and structured audit logging
+- PR #100 — Firewall enabled by default, cold storage archive limits
+- PR #101 — Retry logic, circuit breaker, input validation on worker API
+- PR #102 — Startup warnings for missing secrets, dynamic scaling
 - [Microsoft STRIDE Threat Modeling](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats)
