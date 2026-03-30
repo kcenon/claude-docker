@@ -202,6 +202,23 @@ scripts/claude-docker exec claude-a gh auth status
 scripts/claude-docker exec claude-a gh pr list
 ```
 
+### Shared Configuration (claude-config)
+
+If you use [claude-config](https://github.com/kcenon/claude-config) to manage global
+Claude Code settings, containers automatically inherit your host configuration:
+
+| Config | Host Path | Container Path | Shared |
+|--------|-----------|----------------|--------|
+| Hooks (15 scripts) | `~/.claude/hooks/` | `/home/node/.claude/hooks/` | Read-only |
+| Skills (7 skills) | `~/.claude/skills/` | `/home/node/.claude/skills/` | Read-only |
+| Commands | `~/.claude/commands/` | `/home/node/.claude/commands/` | Read-only |
+| Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` | Read-only |
+| Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` | Read-only |
+| Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` | Read-only |
+
+These are mounted read-only -- containers cannot modify the host's configuration.
+Account-specific state (credentials, memory, sessions) remains per-container.
+
 ### Running Commands Inside Containers
 
 ```bash
@@ -297,15 +314,15 @@ Each additional container needs ~4 GB RAM.
 
 All state is preserved across container restarts via Docker volume mounts:
 
-| State | Host Path | Container Path |
-|-------|-----------|----------------|
-| Claude Code config | `~/.claude-state/account-a/` | `/home/node/.claude/` |
-| Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` |
-| Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` |
-| Settings | `~/.claude-state/account-a/settings.json` | `/home/node/.claude/settings.json` |
-| GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` (read-only) |
-| node_modules | Named volume `node_modules_a` | `/workspace/node_modules/` |
-| Project files | `${PROJECT_DIR}` bind mount | `/workspace/` |
+| State | Host Path | Container Path | Mode |
+|-------|-----------|----------------|------|
+| Account state | `~/.claude-state/account-a/` | `/home/node/.claude/` | Read-write |
+| Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` | Read-write |
+| Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` | Read-write |
+| Hooks, skills, settings | `~/.claude/hooks/`, `skills/`, `settings.json` | `/home/node/.claude/...` | Read-only |
+| GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
+| node_modules | Named volume `node_modules_a` | `/workspace/node_modules/` | Read-write |
+| Project files | `${PROJECT_DIR}` bind mount | `/workspace/` | Read-write |
 
 ## Compose Overrides
 

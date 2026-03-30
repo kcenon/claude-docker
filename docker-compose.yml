@@ -13,6 +13,14 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace
       - ${HOME}/.claude-state/account-a:/home/node/.claude
+      # Host claude-config: shared settings (read-only overlay)
+      - ${HOME}/.claude/hooks:/home/node/.claude/hooks:ro
+      - ${HOME}/.claude/skills:/home/node/.claude/skills:ro
+      - ${HOME}/.claude/commands:/home/node/.claude/commands:ro
+      - ${HOME}/.claude/CLAUDE.md:/home/node/.claude/CLAUDE.md:ro
+      - ${HOME}/.claude/commit-settings.md:/home/node/.claude/commit-settings.md:ro
+      - ${HOME}/.claude/settings.json:/home/node/.claude/settings.json:ro
+      # Host GitHub CLI auth (read-only)
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
       - node_modules_a:/workspace/node_modules
     environment:
@@ -39,6 +47,14 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace
       - ${HOME}/.claude-state/account-b:/home/node/.claude
+      # Host claude-config: shared settings (read-only overlay)
+      - ${HOME}/.claude/hooks:/home/node/.claude/hooks:ro
+      - ${HOME}/.claude/skills:/home/node/.claude/skills:ro
+      - ${HOME}/.claude/commands:/home/node/.claude/commands:ro
+      - ${HOME}/.claude/CLAUDE.md:/home/node/.claude/CLAUDE.md:ro
+      - ${HOME}/.claude/commit-settings.md:/home/node/.claude/commit-settings.md:ro
+      - ${HOME}/.claude/settings.json:/home/node/.claude/settings.json:ro
+      # Host GitHub CLI auth (read-only)
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
       - node_modules_b:/workspace/node_modules
     environment:
