@@ -75,16 +75,53 @@ dispatch_task() {
         "promptLength=${#prompt}" \
         "promptHash=${prompt_hash}"
 
-    curl -s --max-time "$((timeout + 30))" \
+    # Use -w to capture HTTP status, -o to capture body
+    local tmp_body
+    tmp_body=$(mktemp)
+    local http_status
+    http_status=$(curl -s --connect-timeout 10 --max-time "$((timeout + 30))" \
+        -o "$tmp_body" -w "%{http_code}" \
         -X POST "http://${worker}:9000/task" \
         -H "Content-Type: application/json" \
         "${auth_header[@]}" \
-        -d "$(jq -n \
-            --arg taskId "$task_id" \
-            --arg prompt "$prompt" \
-            --argjson timeout "$timeout" \
-            '{taskId: $taskId, prompt: $prompt, timeout: $timeout}'
-        )"
+        -d "$(jq -nc --arg id "$task_id" --arg p "$prompt" --arg t "$timeout" \
+            '{taskId: $id, prompt: $p, timeout: ($t | tonumber)}')")
+
+    local body
+    body=$(cat "$tmp_body")
+    rm -f "$tmp_body"
+
+    # Output body for callers that need it
+    echo "$body"
+
+    # Return non-zero for client/server errors so retry activates
+    [[ "$http_status" =~ ^[45] ]] && return 1
+    return 0
+}
+
+# Dispatch a task with retry and exponential backoff
+# Args: $1 = worker name, $2 = prompt text, $3 = timeout (default 300s), $4 = max retries (default 2)
+dispatch_task_with_retry() {
+    local worker="${1:?Usage: dispatch_task_with_retry <worker> <prompt> [timeout] [retries]}"
+    local prompt="${2:?}"
+    local timeout="${3:-300}"
+    local max_retries="${4:-2}"
+    local delay=2
+
+    local attempt=0
+    while true; do
+        if dispatch_task "$worker" "$prompt" "$timeout"; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        if (( attempt > max_retries )); then
+            echo "dispatch_task_with_retry: $worker failed after $((max_retries + 1)) attempts" >&2
+            return 1
+        fi
+        echo "  Retry $attempt/$max_retries for $worker in ${delay}s..." >&2
+        sleep "$delay"
+        delay=$((delay * 2))
+    done
 }
 
 # SRS-8.3.2: Dispatch same prompt to all workers in parallel
@@ -93,6 +130,11 @@ dispatch_parallel() {
     local prompt="$1"
     local count="${WORKER_COUNT:-3}"
     local pids=() tmpfiles=()
+
+    # Ensure temp files are cleaned up on error or exit
+    _dp_cleanup() { for f in "${tmpfiles[@]}"; do rm -f "$f"; done; }
+    trap _dp_cleanup EXIT ERR
+
     for i in $(seq 1 "$count"); do
         local tmp
         tmp=$(mktemp)
@@ -105,6 +147,8 @@ dispatch_parallel() {
         wait "$pid" || ((failures++))
     done
     for tmp in "${tmpfiles[@]}"; do cat "$tmp"; rm -f "$tmp"; done
+
+    trap - EXIT ERR
     return "$failures"
 }
 
@@ -544,8 +588,15 @@ run_analysis() {
     # --- Clear previous findings for clean run ---------------------------------
     clear_findings > /dev/null 2>&1
 
+    # --- Circuit breaker: track unhealthy workers within this analysis ---------
+    declare -A _unhealthy_workers
+
     # --- Dispatch each persona in parallel -------------------------------------
     local pids=() tmpfiles=() workers=() names=() categories=() icons=()
+
+    # Ensure temp files are cleaned up on error or exit
+    _ra_cleanup() { for f in "${tmpfiles[@]}"; do rm -f "$f"; done; }
+    trap _ra_cleanup EXIT ERR
 
     while IFS= read -r entry; do
         local key name role worker icon category
@@ -568,8 +619,16 @@ run_analysis() {
         categories+=("$category")
         icons+=("$icon")
 
+        # Circuit breaker: skip workers marked unhealthy in this session
+        if [[ -n "${_unhealthy_workers[$worker]:-}" ]]; then
+            echo "  [$icon] SKIPPED $worker ($name) — marked unhealthy" >&2
+            echo '{"status":"error","error":"circuit_breaker_open"}' > "$tmp"
+            pids+=("") # placeholder
+            continue
+        fi
+
         echo "  [$icon] Dispatching to $worker ($name — $role)..."
-        dispatch_task "$worker" "$wrapped_prompt" "$timeout" > "$tmp" 2>&1 &
+        dispatch_task_with_retry "$worker" "$wrapped_prompt" "$timeout" 2 > "$tmp" 2>&1 &
         pids+=($!)
     done < <(jq -c '.personas | to_entries[]' "$personas_file")
 
@@ -579,14 +638,20 @@ run_analysis() {
     local failures=0
     local i=0
     for pid in "${pids[@]}"; do
-        if wait "$pid" 2>/dev/null; then
+        if [[ -z "$pid" ]]; then
+            # Circuit-breaker skipped worker
+            failures=$((failures + 1))
+        elif wait "$pid" 2>/dev/null; then
             :
         else
             failures=$((failures + 1))
-            echo "  Warning: ${names[$i]} (${workers[$i]}) failed or timed out" >&2
+            _unhealthy_workers["${workers[$i]}"]="1"
+            echo "  Warning: ${names[$i]} (${workers[$i]}) failed — marked unhealthy" >&2
         fi
         i=$((i + 1))
     done
+
+    trap - EXIT ERR
 
     # --- Get total findings count from Redis -----------------------------------
     local total_findings

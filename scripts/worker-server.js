@@ -19,6 +19,7 @@ const WORKER_NAME = process.env.WORKER_NAME || `worker-${process.pid}`;
 const WORKER_PERSONA = process.env.WORKER_PERSONA || '';      // SRS-8.7.1
 const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN || ''; // SRS-8.6.1
 const MAX_BUFFER  = 10 * 1024 * 1024;                       // 10 MB
+const MAX_PROMPT_SIZE = parseInt(process.env.MAX_PROMPT_SIZE, 10) || 102400; // 100KB default
 const REDIS_RETRY_LIMIT    = 3;                              // SRS-8.2.15
 const REDIS_RETRY_DELAY_MS = 2000;
 
@@ -373,6 +374,13 @@ async function handleTask(req, res) {                        // SRS-8.2.1, SRS-8
   if (!taskId || !prompt) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing taskId or prompt' }));
+    return;
+  }
+
+  if (Buffer.byteLength(prompt, 'utf-8') > MAX_PROMPT_SIZE) {
+    logEvent('task_rejected', { taskId, reason: 'prompt_too_large', promptBytes: Buffer.byteLength(prompt, 'utf-8'), limitBytes: MAX_PROMPT_SIZE });
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Prompt too large', maxBytes: MAX_PROMPT_SIZE }));
     return;
   }
 
