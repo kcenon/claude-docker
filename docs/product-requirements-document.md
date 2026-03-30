@@ -345,12 +345,14 @@ incompatible with Claude Code TTY. See [windows-docker.md](reference/windows-doc
 
 ## 12. Open Questions
 
-1. **Pre-built image**: Should we publish to Docker Hub / GHCR, or require local builds only? Trade-off: convenience vs version pinning and license compliance.
-2. **Default tier**: Should Tier B (worktree) be the default compose config? Tier A is simpler for first-run; Tier B is safer for real use.
-3. **Upgrade path**: Rebuild image on new Claude Code release, or support in-place `npm update -g` inside running containers?
-4. **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user to re-authenticate (via `scripts/claude-docker auth` on macOS or `claude auth login` inside the container on Linux/WSL2)?
-5. **Firewall default**: Should Phase 4 firewall be opt-in or opt-out?
-6. **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)?
+| # | Question | Status | Decision / Owner | Target |
+|---|----------|--------|-----------------|--------|
+| Q1 | **Pre-built image**: Should we publish to Docker Hub / GHCR, or require local builds only? Trade-off: convenience vs version pinning and license compliance. | Open | Awaiting maintainer decision. License compliance review needed before publishing. Owner: project maintainer | Phase 8 |
+| Q2 | **Default tier**: Should Tier B (worktree) be the default compose config? Tier A is simpler for first-run; Tier B is safer for real use. | Open | Leaning toward Tier A as default with prominent Tier B documentation. Owner: project maintainer | Phase 8 |
+| Q3 | **Upgrade path**: Rebuild image on new Claude Code release, or support in-place `npm update -g` inside running containers? | Open | Rebuild preferred (reproducibility); in-place update is a convenience shortcut. Watchtower-style automation is an option. Owner: project maintainer | Phase 8 |
+| Q4 | **OAuth token refresh monitoring**: Should the setup include a health check that detects expired tokens and alerts the user? | Open | Low priority; Claude Code already surfaces token expiry errors. Automated re-auth is complex (requires interactive browser). Owner: project maintainer | Phase 8 |
+| Q5 | **Firewall default**: Should Phase 4 firewall be opt-in or opt-out? | **Resolved** | **Opt-out (default on).** `scripts/install.sh` sets `FIREWALL=yes` by default as of Phase 6 (PR #100). Addresses security finding #5. | Phase 6 (done) |
+| Q6 | **Future scope**: Is there a need for a third container role (e.g., shared MCP server or language server)? | Open | No immediate requirement. Phase 7 introduces manager auto-orchestration; shared MCP server is a candidate for Phase 8. Owner: project maintainer | Phase 8 |
 
 ---
 
@@ -381,3 +383,12 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 ## Appendix B: Document Map
 
 architecture.md → Sections 1-3, 5-6, 9-10 | cross-platform.md → 4, 7-9 | claude-code-container.md → 6-7, 9 | docker-storage.md → 5 | linux-docker.md → 7-9 | macos-docker.md → 7-9 | windows-docker.md → 4, 7-9
+
+---
+
+## Appendix C: Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1.0 | 2026-03-30 | §12 Open Questions updated: Q5 resolved (firewall default-on, Phase 6); Q1–Q4, Q6 assigned to Phase 8 with owner notes; §7 Performance and Resources rows updated to SSOT cross-references; §8 Cross-Platform table bind mount speed and host RAM rows replaced with SSOT references |
+| 1.0.0 | 2026-03-27 | Initial document |

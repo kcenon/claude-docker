@@ -257,3 +257,11 @@ git log --all --diff-filter=A --name-only --pretty=format: | grep "^\.env$"
 - [threat-model.md](threat-model.md) — STRIDE analysis of threats these rotations mitigate
 - [architecture.md — Authentication Strategy](architecture.md#authentication-strategy)
 - [install.sh](../scripts/install.sh) — Auto-generation of `WORKER_AUTH_TOKEN` and `REDIS_PASSWORD`
+
+---
+
+## Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0.0 | 2026-03-30 | Initial document: rotation procedures for WORKER_AUTH_TOKEN, REDIS_PASSWORD, Anthropic API keys, and OAuth tokens; emergency rotation procedure; cross-platform `perl -i -pe` sed pattern |

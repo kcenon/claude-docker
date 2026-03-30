@@ -609,3 +609,12 @@ a test procedure.
 | FR-32 (manager auto-orchestration) | SRS-8.6.5 | Send "analyze this project" to manager; verify `run_analysis` invoked automatically |
 | FR-33 (usage tracking) | SRS-8.7.1–3 | Run `scripts/claude-docker usage`; verify output includes per-account and total token data |
 | — (NODE_PATH) | SRS-5.1.13 | `docker compose exec worker-1 node -e "console.log(require.resolve('redis'))"` succeeds |
+
+---
+
+## 11. Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1.0 | 2026-03-30 | Phase 6 additions: SRS-8.1.10–11 (Redis auth, internal network), SRS-8.2.17–18 (Bearer token auth), SRS-8.5 (cold memory layer, extended to 15 specs); §4.1 env var table updated (WORKER_AUTH_TOKEN, REDIS_PASSWORD, WORKER_PERSONA); §8.3.5 normative shell arithmetic constraint; §8.8 errata resolved and folded into normative text; §7.1/§7.2 SSOT references to cross-platform.md and architecture.md |
+| 1.0.0 | 2026-03-27 | Initial document covering Phases 1–5 |

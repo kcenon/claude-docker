@@ -564,6 +564,7 @@ claude-docker/
     +-- cross-platform.md
     +-- threat-model.md                STRIDE threat analysis
     +-- key-rotation.md                Secret rotation procedures
+    +-- software-verification-plan.md  Verification procedures (SVP)
     +-- reference/                     Platform-specific references
 ```
 
@@ -578,6 +579,7 @@ claude-docker/
 | [Cross-Platform](docs/cross-platform.md) | Linux / macOS / Windows comparison and templates |
 | [Threat Model](docs/threat-model.md) | STRIDE threat analysis, controls, residual risks |
 | [Key Rotation](docs/key-rotation.md) | Procedures for rotating secrets and OAuth tokens |
+| [SVP](docs/software-verification-plan.md) | Verification procedures for all SRS requirements |
 
 ## License
 
