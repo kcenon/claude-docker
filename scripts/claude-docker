@@ -91,6 +91,13 @@ build_compose_cmd() {
         cmd+=" -f ${project_root}/docker-compose.firewall.yml"
     fi
 
+    # MCP Bridge overlay: opt-in via MCP_BRIDGE env var or .env setting
+    if [[ -f "${project_root}/docker-compose.mcp.yml" ]]; then
+        if [[ -n "${MCP_BRIDGE:-}" ]] || grep -qE '^MCP_BRIDGE=yes' "$PROJECT_ROOT/.env" 2>/dev/null; then
+            cmd+=" -f ${project_root}/docker-compose.mcp.yml"
+        fi
+    fi
+
     echo "$cmd"
 }
 
