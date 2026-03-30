@@ -368,7 +368,7 @@ Forward traceability: Goal → Functional Requirement → SRS Specification → 
 | G6 (cross-platform) | — | SRS-6.1–6.3 | SC-6 | 2, 3 |
 | G7 (subscription) | FR-7 | SRS-5.3.1 | SC-4 | 2 |
 | G8 (scalable N) | — | SRS-5.5 | SC-8 | 2, 3 |
-| G9 | FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24 | SRS-8.1.1–9, SRS-8.2.1–16, SRS-8.3.1–7, SRS-8.4.1–5 | SC-10 | 5 |
+| G9 | FR-18, FR-19, FR-20, FR-21, FR-22, FR-23, FR-24 | SRS-8.1.1–11, SRS-8.2.1–18, SRS-8.3.1–7, SRS-8.4.1–5 | SC-10 | 5, 6 |
 | G10 (hot) | FR-20 | SRS-8.2.3–4, SRS-8.2.7, SRS-8.3.3 | SC-11 | 5 |
 | G10 (cold) | FR-25, FR-26, FR-27, FR-28, FR-29 | SRS-8.5.1–15 | SC-12, SC-13 | 6 |
 | G9 (orchestration UX) | FR-30, FR-31, FR-32 | SRS-8.6.1–5 | SC-14, SC-15 | 7 |

@@ -1728,7 +1728,7 @@ Host                                    Docker (manager)             Docker (wor
 | SRS-4.5 (.env Format) | 4.1 .env.example | `.env.example` |
 | SRS-8.1.1~11 (Orchestration Compose) | 3.6 Orchestration Override | `docker-compose.orchestration.yml` |
 | SRS-8.2.1~18 (Worker Server) | 5.3 Worker Server | `scripts/worker-server.js` |
-| SRS-8.3.1~5 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
+| SRS-8.3.1~7 (Manager Helpers) | 5.4 Manager Helpers | `scripts/manager-helpers.sh` |
 | SRS-8.4.1~5 (Orchestration Tests) | 5.5 Test Script | `scripts/test-orchestration.sh` |
 | SRS-8.5.1~15 (Cold Memory) | 5.6 Cold Memory Layer | `scripts/manager-helpers.sh` (additions), `docker-compose.orchestration.yml` (mount) |
 
@@ -1750,7 +1750,7 @@ Host                                    Docker (manager)             Docker (wor
 | `scripts/cleanup.sh` | 4 | SRS-5.5 (FR-17) |
 | `docker-compose.orchestration.yml` | 5 | SRS-8.1.1~11 |
 | `scripts/worker-server.js` | 5 | SRS-8.2.1~18 |
-| `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~5 |
+| `scripts/manager-helpers.sh` | 5 | SRS-8.3.1~7 |
 | `scripts/init-firewall.sh` | 4 | SRS-7.3 |
 | `scripts/personas.json` | 7 | Worker persona definitions (Sentinel, Reviewer, Profiler) |
 | `CLAUDE.md` | 7 | Manager auto-orchestration instructions |
