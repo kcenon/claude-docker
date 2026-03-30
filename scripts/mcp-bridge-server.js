@@ -120,6 +120,57 @@ async function readArchiveIndex() {
 }
 
 // ---------------------------------------------------------------------------
+// Account registry — built once at startup, maps account names to routing info
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_DEFS = [
+  { name: 'manager', envKey: 'CLAUDE_API_KEY_MANAGER', service: 'manager', stateDir: 'account-manager' },
+  { name: 'a',       envKey: 'CLAUDE_API_KEY_A',       service: 'claude-a', stateDir: 'account-a' },
+  { name: 'b',       envKey: 'CLAUDE_API_KEY_B',       service: 'claude-b', stateDir: 'account-b' },
+  { name: 'worker-1', envKey: 'CLAUDE_API_KEY_1',      service: 'worker-1', stateDir: 'account-w1' },
+  { name: 'worker-2', envKey: 'CLAUDE_API_KEY_2',      service: 'worker-2', stateDir: 'account-w2' },
+  { name: 'worker-3', envKey: 'CLAUDE_API_KEY_3',      service: 'worker-3', stateDir: 'account-w3' },
+];
+
+// Registry: { [accountName]: { type: 'api-key'|'oauth', service, apiKey? } }
+let accountsRegistry = null;
+
+async function buildAccountsRegistry() {
+  const registry = {};
+  const envVars = await readEnvFile();
+  const stateBase = join(process.env.HOME || '', '.claude-state');
+
+  for (const def of ACCOUNT_DEFS) {
+    const apiKey = process.env[def.envKey] || envVars[def.envKey];
+    if (apiKey) {
+      registry[def.name] = { type: 'api-key', service: def.service, apiKey };
+      continue;
+    }
+    // Check for OAuth credentials
+    try {
+      await readFile(join(stateBase, def.stateDir, '.credentials.json'), 'utf8');
+      registry[def.name] = { type: 'oauth', service: def.service };
+    } catch {
+      // No credentials — account not configured
+    }
+  }
+
+  return registry;
+}
+
+async function getAccountsRegistry() {
+  if (!accountsRegistry) {
+    accountsRegistry = await buildAccountsRegistry();
+  }
+  return accountsRegistry;
+}
+
+/** Invalidate cached registry (e.g. after env changes). */
+function resetAccountsRegistry() {
+  accountsRegistry = null;
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -204,55 +255,53 @@ const TOOLS = [
 // Tool handlers
 // ---------------------------------------------------------------------------
 
-async function handleDelegate({ account, prompt, model }) {
-  const envVars = await readEnvFile();
+async function delegateViaSDK(apiKey, prompt, model) {
+  const client = new Anthropic({ apiKey });
+  const response = await client.messages.create({
+    model: model || 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  return response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+}
 
-  // Determine which API key maps to this account
-  const keyMap = {
-    manager: 'CLAUDE_API_KEY_MANAGER',
-    a: 'CLAUDE_API_KEY_A',
-    b: 'CLAUDE_API_KEY_B',
-    'worker-1': 'CLAUDE_API_KEY_1',
-    'worker-2': 'CLAUDE_API_KEY_2',
-    'worker-3': 'CLAUDE_API_KEY_3',
-  };
-
-  const envKey = keyMap[account];
-  const apiKey = envKey ? envVars[envKey] : undefined;
-
-  if (apiKey) {
-    // API key account — call Anthropic SDK directly
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: model || 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    const text = response.content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n');
-    return text;
-  }
-
-  // OAuth account — use docker exec + claude -p
-  const serviceMap = {
-    manager: 'manager',
-    a: 'claude-a',
-    b: 'claude-b',
-    'worker-1': 'worker-1',
-    'worker-2': 'worker-2',
-    'worker-3': 'worker-3',
-  };
-  const service = serviceMap[account] || account;
+async function delegateViaDocker(service, prompt) {
   const composeName = await getComposeProjectName();
   const container = `${composeName}-${service}-1`;
-
-  // Use execFile with explicit args to avoid shell injection
   const { stdout } = await run('docker', ['exec', '-T', container, 'claude', '-p', prompt], {
     timeout: 120_000,
   });
   return stdout;
+}
+
+async function handleDelegate({ account, prompt, model }) {
+  const registry = await getAccountsRegistry();
+  const entry = registry[account];
+
+  if (!entry) {
+    throw new Error(`Unknown account: ${account}. Available: ${Object.keys(registry).join(', ')}`);
+  }
+
+  if (entry.type === 'api-key') {
+    // Primary: Anthropic SDK (supports model selection)
+    try {
+      return await delegateViaSDK(entry.apiKey, prompt, model);
+    } catch (sdkErr) {
+      // Fallback: docker exec if SDK fails
+      try {
+        return await delegateViaDocker(entry.service, prompt);
+      } catch {
+        // Both failed — report the original SDK error
+        throw sdkErr;
+      }
+    }
+  }
+
+  // OAuth account — docker exec only
+  return delegateViaDocker(entry.service, prompt);
 }
 
 async function handleAnalyze({ prompt, timeout }) {
@@ -283,18 +332,9 @@ async function handleDispatch({ worker, prompt, timeout }) {
 }
 
 async function handleAccounts() {
-  const envVars = await readEnvFile();
-  const accounts = [];
-
-  // Check API key accounts
-  const apiKeyAccounts = [
-    { env: 'CLAUDE_API_KEY_MANAGER', name: 'manager', service: 'manager' },
-    { env: 'CLAUDE_API_KEY_A', name: 'a', service: 'claude-a' },
-    { env: 'CLAUDE_API_KEY_B', name: 'b', service: 'claude-b' },
-    { env: 'CLAUDE_API_KEY_1', name: 'worker-1', service: 'worker-1' },
-    { env: 'CLAUDE_API_KEY_2', name: 'worker-2', service: 'worker-2' },
-    { env: 'CLAUDE_API_KEY_3', name: 'worker-3', service: 'worker-3' },
-  ];
+  // Rebuild registry to pick up any changes
+  resetAccountsRegistry();
+  const registry = await getAccountsRegistry();
 
   // Get running containers
   let runningContainers = '';
@@ -305,35 +345,12 @@ async function handleAccounts() {
     // docker compose not available or not running
   }
 
-  for (const { env, name, service } of apiKeyAccounts) {
-    if (envVars[env]) {
-      const running = runningContainers.includes(service);
-      accounts.push({ name, type: 'configured', status: running ? 'running' : 'stopped' });
-    }
-  }
-
-  // Check OAuth accounts (look for .credentials.json in state dirs)
-  const stateBase = join(process.env.HOME || '', '.claude-state');
-  const oauthDirs = [
-    { dir: 'account-a', name: 'a', service: 'claude-a' },
-    { dir: 'account-b', name: 'b', service: 'claude-b' },
-    { dir: 'account-manager', name: 'manager', service: 'manager' },
-    { dir: 'account-w1', name: 'worker-1', service: 'worker-1' },
-    { dir: 'account-w2', name: 'worker-2', service: 'worker-2' },
-    { dir: 'account-w3', name: 'worker-3', service: 'worker-3' },
-  ];
-
-  for (const { dir, name, service } of oauthDirs) {
-    // Skip if already found as API key account
-    if (accounts.some((a) => a.name === name)) continue;
-    try {
-      await readFile(join(stateBase, dir, '.credentials.json'), 'utf8');
-      const running = runningContainers.includes(service);
-      accounts.push({ name, type: 'oauth', status: running ? 'running' : 'stopped' });
-    } catch {
-      // No credentials file — skip
-    }
-  }
+  const accounts = Object.entries(registry).map(([name, entry]) => ({
+    name,
+    type: 'configured',
+    routing: entry.type === 'api-key' ? 'sdk' : 'docker-exec',
+    status: runningContainers.includes(entry.service) ? 'running' : 'stopped',
+  }));
 
   return JSON.stringify(accounts, null, 2);
 }
