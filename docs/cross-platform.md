@@ -340,6 +340,62 @@ CLAUDE_API_KEY_B=sk-ant-...
 Run `docker compose up` from WSL2 terminal, not PowerShell.
 Ensure `.wslconfig` allocates enough resources.
 
+## VirtioFS I/O Contention Mitigation (macOS)
+
+On macOS, Docker Desktop uses VirtioFS to share the host filesystem with
+Linux containers. When multiple workers concurrently read from the same
+bind-mounted workspace, VirtioFS serializes filesystem operations through
+a single channel, creating I/O contention.
+
+### Symptoms
+
+- Worker startup latency > 5s (cold) on macOS vs. < 1s on Linux
+- `run_analysis` wall time 2-3x slower on macOS vs. Linux
+- High `com.apple.virtio-fs` CPU usage during parallel analysis
+
+### Mitigation: `:cached` Volume Flag
+
+Add the `:cached` consistency flag to workspace bind mounts. This allows
+the container to serve reads from its own cache without round-tripping
+to the host for every operation:
+
+```yaml
+# docker-compose.orchestration.yml (macOS optimization)
+volumes:
+  - ${PROJECT_DIR}:/workspace:ro,cached    # Cached reads reduce VirtioFS contention
+```
+
+The `:cached` flag relaxes consistency guarantees: the container may see
+slightly stale data. Since workers mount `/workspace:ro` (read-only) and
+the source code does not change during analysis, this is safe.
+
+### Alternative: OrbStack
+
+[OrbStack](https://orbstack.dev/) provides a drop-in replacement for
+Docker Desktop on macOS with up to 4x faster filesystem performance
+compared to Docker Desktop's VirtioFS implementation. OrbStack uses its
+own optimized file-sharing layer that significantly reduces I/O contention
+for multi-container workloads. No compose file changes are needed — simply
+install OrbStack and it handles the Docker runtime transparently.
+
+### Dynamic Worker Scaling
+
+On resource-constrained macOS hosts (< 16GB RAM), set `WORKER_COUNT=1`
+or `WORKER_COUNT=2` in `.env` to reduce concurrent VirtioFS pressure:
+
+```bash
+# .env
+WORKER_COUNT=1    # 8GB host mode — single worker, minimal I/O contention
+WORKER_COUNT=2    # 12GB host mode — two workers, moderate contention
+WORKER_COUNT=3    # 16GB+ default — all three workers
+```
+
+| Workers | Min RAM | macOS VirtioFS Impact | Recommended For |
+|---------|---------|----------------------|-----------------|
+| 1 | ~8 GB | Low contention | 8GB laptops, quick single-persona checks |
+| 2 | ~12 GB | Moderate contention | 12-16GB laptops, balanced throughput |
+| 3 | ~17 GB | High contention | 16GB+ desktops, Linux/WSL2 hosts |
+
 ## Platform Suitability Ranking
 
 For this specific dual-container architecture:
