@@ -171,6 +171,23 @@ function resetAccountsRegistry() {
 }
 
 // ---------------------------------------------------------------------------
+// Token usage cache — session-level per-account aggregation from SDK calls
+// ---------------------------------------------------------------------------
+
+// { [accountName]: { inputTokens: number, outputTokens: number, calls: number } }
+const usageCache = {};
+
+function recordUsage(account, usage) {
+  if (!usage) return;
+  if (!usageCache[account]) {
+    usageCache[account] = { inputTokens: 0, outputTokens: 0, calls: 0 };
+  }
+  usageCache[account].inputTokens += usage.input_tokens || 0;
+  usageCache[account].outputTokens += usage.output_tokens || 0;
+  usageCache[account].calls += 1;
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 
@@ -246,7 +263,7 @@ const TOOLS = [
   },
   {
     name: 'budget',
-    description: 'Token usage information',
+    description: 'Token usage per account (API key: session cache, OAuth: container query)',
     inputSchema: { type: 'object', properties: {} },
   },
 ];
@@ -262,10 +279,11 @@ async function delegateViaSDK(apiKey, prompt, model) {
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   });
-  return response.content
+  const text = response.content
     .filter((b) => b.type === 'text')
     .map((b) => b.text)
     .join('\n');
+  return { text, usage: response.usage };
 }
 
 async function delegateViaDocker(service, prompt) {
@@ -288,7 +306,9 @@ async function handleDelegate({ account, prompt, model }) {
   if (entry.type === 'api-key') {
     // Primary: Anthropic SDK (supports model selection)
     try {
-      return await delegateViaSDK(entry.apiKey, prompt, model);
+      const { text, usage } = await delegateViaSDK(entry.apiKey, prompt, model);
+      recordUsage(account, usage);
+      return text;
     } catch (sdkErr) {
       // Fallback: docker exec if SDK fails
       try {
@@ -432,10 +452,69 @@ async function handleStatus({ worker } = {}) {
   }
 }
 
-function handleBudget() {
-  return JSON.stringify({
-    message: "Use 'scripts/claude-docker usage' for detailed tracking",
-  });
+async function handleBudget() {
+  const registry = await getAccountsRegistry();
+  const accounts = [];
+  const total = { inputTokens: 0, outputTokens: 0 };
+
+  for (const [name, entry] of Object.entries(registry)) {
+    // API key accounts: use in-memory usage cache
+    if (entry.type === 'api-key' && usageCache[name]) {
+      const cached = usageCache[name];
+      accounts.push({
+        name,
+        type: 'configured',
+        inputTokens: cached.inputTokens,
+        outputTokens: cached.outputTokens,
+        calls: cached.calls,
+      });
+      total.inputTokens += cached.inputTokens;
+      total.outputTokens += cached.outputTokens;
+      continue;
+    }
+
+    // OAuth accounts: try docker exec claude usage
+    if (entry.type === 'oauth') {
+      try {
+        const composeName = await getComposeProjectName();
+        const container = `${composeName}-${entry.service}-1`;
+        const { stdout } = await run(
+          'docker', ['exec', '-T', container, 'claude', 'usage', '--json'],
+          { timeout: 15_000 },
+        );
+        const data = JSON.parse(stdout);
+        const input = data.inputTokens || data.input_tokens || 0;
+        const output = data.outputTokens || data.output_tokens || 0;
+        accounts.push({
+          name,
+          type: 'configured',
+          inputTokens: input,
+          outputTokens: output,
+        });
+        total.inputTokens += input;
+        total.outputTokens += output;
+      } catch {
+        accounts.push({ name, status: 'unavailable' });
+      }
+      continue;
+    }
+
+    // API key account with no cached usage yet
+    if (entry.type === 'api-key') {
+      accounts.push({
+        name,
+        type: 'configured',
+        inputTokens: 0,
+        outputTokens: 0,
+        calls: 0,
+      });
+      continue;
+    }
+
+    accounts.push({ name, status: 'unavailable' });
+  }
+
+  return JSON.stringify({ accounts, total }, null, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +558,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handleStatus(args);
         break;
       case 'budget':
-        result = handleBudget();
+        result = await handleBudget();
         break;
       default:
         return {
