@@ -66,10 +66,6 @@ build_full_compose_cmd() {
         cmd+=" -f docker-compose.linux.yml"
     [[ -f "$PROJECT_ROOT/docker-compose.worktree.yml" ]] && \
         cmd+=" -f docker-compose.worktree.yml"
-    [[ -f "$PROJECT_ROOT/docker-compose.orchestration.yml" ]] && \
-        cmd+=" -f docker-compose.orchestration.yml"
-    [[ -f "$PROJECT_ROOT/docker-compose.firewall.yml" ]] && \
-        cmd+=" -f docker-compose.firewall.yml"
 
     echo "$cmd"
 }
@@ -190,40 +186,11 @@ remove_state_directories() {
         echo -e "${DIM}    $item ($size)${NC}"
     done
 
-    # Analysis archive — ask separately (may contain valuable session history)
-    if [[ -d "$state_root/analysis-archive" ]]; then
-        local session_count=0
-        if [[ -f "$state_root/analysis-archive/index.json" ]]; then
-            session_count=$(jq '.sessions | length' "$state_root/analysis-archive/index.json" 2>/dev/null || echo 0)
-        fi
-        echo ""
-        if prompt_confirm "Remove analysis archive ($session_count sessions)?"; then
-            rm -rf "$state_root/analysis-archive"
-            log_success "Analysis archive removed"
-        else
-            log_info "Analysis archive preserved"
-        fi
-    fi
-
     # Account state directories
     echo ""
     if prompt_confirm "Remove all account state directories (~/.claude-state)?"; then
-        # If archive was preserved, move it out first
-        local archive_preserved=false
-        if [[ -d "$state_root/analysis-archive" ]]; then
-            mv "$state_root/analysis-archive" "/tmp/claude-archive-$$"
-            archive_preserved=true
-        fi
-
         rm -rf "$state_root"
         log_success "State directories removed"
-
-        # Restore archive if preserved
-        if [[ "$archive_preserved" == true ]]; then
-            mkdir -p "$state_root"
-            mv "/tmp/claude-archive-$$" "$state_root/analysis-archive"
-            log_info "Analysis archive restored to $state_root/analysis-archive"
-        fi
     else
         log_info "State directories kept"
     fi

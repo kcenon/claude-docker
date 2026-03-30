@@ -24,17 +24,10 @@ CURRENT_STEP=0
 PLATFORM=""
 AUTH_PATH=""
 TIER=""
-ORCHESTRATION="no"
-FIREWALL="yes"
 SOURCE_DIR=""
 CLAUDE_VERSION=""
 API_KEY_A=""
 API_KEY_B=""
-API_KEY_MANAGER=""
-API_KEY_W1=""
-API_KEY_W2=""
-API_KEY_W3=""
-WORKER_COUNT=3
 
 # --- Utility Functions --------------------------------------------------------
 
@@ -417,22 +410,6 @@ collect_configuration() {
     [[ "$tier_choice" == *"Tier A"* ]] && TIER="A" || TIER="B"
     log_info "Source sharing: Tier $TIER"
 
-    # Orchestration
-    if prompt_confirm "Enable Phase 5 orchestration (manager + 3 workers + Redis)?"; then
-        ORCHESTRATION="yes"
-        log_info "Orchestration: enabled"
-    else
-        log_info "Orchestration: disabled (standard 2-container setup)"
-    fi
-
-    # Firewall (default: enabled for security)
-    if prompt_confirm "Disable outbound firewall? (default: enabled for security)" "n"; then
-        FIREWALL="no"
-        log_warn "Firewall: disabled (containers will have unrestricted egress)"
-    else
-        log_info "Firewall: enabled (outbound traffic restricted to allowlisted hosts)"
-    fi
-
     # Project directory
     SOURCE_DIR=$(prompt_input "Absolute path to your project source code" "$(pwd)")
     SOURCE_DIR=$(cd "$SOURCE_DIR" 2>/dev/null && pwd || echo "$SOURCE_DIR")
@@ -483,16 +460,6 @@ collect_configuration() {
         log_success "API keys collected (2 accounts)"
     fi
 
-    # Orchestration API keys
-    if [[ "$ORCHESTRATION" == "yes" && "$AUTH_PATH" == "B" ]]; then
-        echo -e "\n${CYAN}Enter API keys for orchestration accounts:${NC}"
-        API_KEY_MANAGER=$(prompt_secret "API key for Manager")
-        API_KEY_W1=$(prompt_secret "API key for Worker 1")
-        API_KEY_W2=$(prompt_secret "API key for Worker 2")
-        API_KEY_W3=$(prompt_secret "API key for Worker 3")
-        WORKER_COUNT=$(prompt_input "Number of workers" "3")
-        log_success "Orchestration API keys collected"
-    fi
 }
 
 # --- .env Generation ----------------------------------------------------------
@@ -546,22 +513,6 @@ generate_env() {
             echo ""
         fi
 
-        if [[ "$ORCHESTRATION" == "yes" ]]; then
-            echo "# ==== Phase 5: Orchestration ===="
-            echo "WORKER_COUNT=$WORKER_COUNT"
-            if [[ "$AUTH_PATH" == "B" ]]; then
-                echo "CLAUDE_API_KEY_MANAGER=$API_KEY_MANAGER"
-                echo "CLAUDE_API_KEY_1=$API_KEY_W1"
-                echo "CLAUDE_API_KEY_2=$API_KEY_W2"
-                echo "CLAUDE_API_KEY_3=$API_KEY_W3"
-            fi
-            echo ""
-
-            echo "# ==== Security: Worker & Redis Auth ===="
-            echo "WORKER_AUTH_TOKEN=$(openssl rand -hex 32)"
-            echo "REDIS_PASSWORD=$(openssl rand -hex 32)"
-            echo ""
-        fi
     } > "$env_file"
 
     chmod 600 "$env_file"
@@ -577,16 +528,6 @@ create_state_dirs() {
         "$HOME/.claude-state/account-a"
         "$HOME/.claude-state/account-b"
     )
-
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        dirs+=(
-            "$HOME/.claude-state/account-manager"
-            "$HOME/.claude-state/account-w1"
-            "$HOME/.claude-state/account-w2"
-            "$HOME/.claude-state/account-w3"
-            "$HOME/.claude-state/analysis-archive/sessions"
-        )
-    fi
 
     for dir in "${dirs[@]}"; do
         if [[ -d "$dir" ]]; then
@@ -701,14 +642,6 @@ build_compose_cmd() {
         cmd+=" -f docker-compose.worktree.yml"
     fi
 
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        cmd+=" -f docker-compose.orchestration.yml"
-    fi
-
-    if [[ "$FIREWALL" == "yes" ]]; then
-        cmd+=" -f docker-compose.firewall.yml"
-    fi
-
     echo "$cmd"
 }
 
@@ -728,23 +661,8 @@ start_containers() {
         GID=$(id -g)
     fi
 
-    # Select worker profile based on WORKER_COUNT
-    local profile_flags=""
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        if (( WORKER_COUNT >= 2 )); then
-            profile_flags="--profile full"
-        fi
-        log_info "Worker count: $WORKER_COUNT"
-    fi
-
-    log_info "Compose command: $compose_cmd $profile_flags up -d"
-    eval "$compose_cmd $profile_flags up -d" 2>&1
-
-    # WORKER_COUNT=2: stop worker-3 after start
-    if [[ "$ORCHESTRATION" == "yes" && "$WORKER_COUNT" == "2" ]]; then
-        log_info "Stopping worker-3 (WORKER_COUNT=2 mode)"
-        eval "$compose_cmd stop worker-3" 2>/dev/null || true
-    fi
+    log_info "Compose command: $compose_cmd up -d"
+    eval "$compose_cmd up -d" 2>&1
 
     log_success "Containers started"
 }
@@ -760,9 +678,6 @@ install_dependencies() {
     compose_cmd=$(build_compose_cmd)
 
     local services=("claude-a" "claude-b")
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        services=("manager" "worker-1" "worker-2" "worker-3")
-    fi
 
     for svc in "${services[@]}"; do
         log_info "Installing npm dependencies in $svc..."
@@ -770,33 +685,6 @@ install_dependencies() {
             log_success "$svc: dependencies installed"
         else
             log_warn "$svc: npm install skipped or failed (project may not have package.json)"
-        fi
-    done
-}
-
-# --- Firewall Setup -----------------------------------------------------------
-
-setup_firewall() {
-    if [[ "$FIREWALL" != "yes" ]]; then
-        return 0
-    fi
-
-    log_step "Activating outbound firewall"
-
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
-
-    local services=("claude-a" "claude-b")
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        services=("manager" "worker-1" "worker-2" "worker-3")
-    fi
-
-    for svc in "${services[@]}"; do
-        log_info "Applying firewall rules in $svc..."
-        if eval "$compose_cmd exec -T $svc bash /scripts/init-firewall.sh" 2>&1 | tail -3; then
-            log_success "$svc: firewall active"
-        else
-            log_warn "$svc: firewall setup failed (may need NET_ADMIN capability)"
         fi
     done
 }
@@ -811,7 +699,6 @@ run_verification() {
     local compose_cmd
     compose_cmd=$(build_compose_cmd)
     local primary_svc="claude-a"
-    [[ "$ORCHESTRATION" == "yes" ]] && primary_svc="manager"
 
     # Check container is running
     if eval "$compose_cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$primary_svc"; then
@@ -852,8 +739,6 @@ print_summary() {
     echo -e "  Platform:        $(platform_label "$PLATFORM")"
     echo -e "  Authentication:  Path $AUTH_PATH"
     echo -e "  Source sharing:  Tier $TIER"
-    echo -e "  Orchestration:   $ORCHESTRATION"
-    echo -e "  Firewall:        $FIREWALL"
     echo -e "  Project:         $SOURCE_DIR"
     echo ""
     echo -e "${BOLD}Quick Commands (via CLI wrapper):${NC}"
@@ -862,21 +747,8 @@ print_summary() {
     echo -e "  scripts/claude-docker claude"
     echo ""
 
-    if [[ "$ORCHESTRATION" == "yes" ]]; then
-        echo -e "  ${CYAN}# Dispatch task to a worker${NC}"
-        echo -e "  scripts/claude-docker dispatch worker-1 \"analyze auth module\""
-        echo ""
-        echo -e "  ${CYAN}# Check worker status / findings${NC}"
-        echo -e "  scripts/claude-docker status"
-        echo -e "  scripts/claude-docker findings"
-        echo ""
-        echo -e "  ${CYAN}# Save / restore session${NC}"
-        echo -e "  scripts/claude-docker save"
-        echo -e "  scripts/claude-docker restore latest"
-    else
-        echo -e "  ${CYAN}# Start second account (separate terminal)${NC}"
-        echo -e "  scripts/claude-docker claude claude-b"
-    fi
+    echo -e "  ${CYAN}# Start second account (separate terminal)${NC}"
+    echo -e "  scripts/claude-docker claude claude-b"
 
     echo ""
     echo -e "  ${CYAN}# Container management${NC}"
@@ -929,10 +801,8 @@ main() {
     collect_configuration
 
     # Calculate total steps based on choices
-    TOTAL_STEPS=7  # base: prereqs, env, dirs, build, auth, start, verify
+    TOTAL_STEPS=8  # prereqs, env, dirs, build, auth, start, deps, verify
     [[ "$TIER" == "B" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
-    [[ "$FIREWALL" == "yes" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
-    TOTAL_STEPS=$((TOTAL_STEPS + 1))  # dependency install
 
     # Show configuration summary
     echo ""
@@ -940,8 +810,6 @@ main() {
     echo -e "  Platform:        $(platform_label "$PLATFORM")"
     echo -e "  Authentication:  Path $AUTH_PATH"
     echo -e "  Source sharing:  Tier $TIER"
-    echo -e "  Orchestration:   $ORCHESTRATION"
-    echo -e "  Firewall:        $FIREWALL"
     echo -e "  Project:         $SOURCE_DIR"
     echo -e "  Claude version:  ${CLAUDE_VERSION:-latest}"
     echo ""
@@ -960,7 +828,6 @@ main() {
     setup_worktrees
     start_containers
     install_dependencies
-    setup_firewall
     run_verification
     print_summary
 }

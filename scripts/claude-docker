@@ -1,31 +1,18 @@
 #!/usr/bin/env bash
-# claude-docker — unified CLI wrapper
-# Automatically builds the correct docker compose -f chain from your
-# environment and provides short subcommands for common operations.
+# claude-docker — multi-account CLI wrapper
+# Run multiple Claude Code instances with independent accounts.
 #
-# Usage:
-#   scripts/claude-docker <command> [args...]
+# Usage:  scripts/claude-docker <command> [args...]
 #
 # Commands:
-#   up            Start all containers (detached)
-#   down          Stop all containers
-#   restart       Restart all containers
-#   logs          Follow container logs (Ctrl+C to stop)
-#   ps            Show container status
-#   exec <svc>    Open interactive shell in a service
-#   claude [svc]  Start Claude Code in a service (default: claude-a or manager)
-#   dispatch <worker> <prompt>   Dispatch task to a worker
-#   status        Show worker status (orchestration)
-#   findings      Show accumulated findings (orchestration)
-#   save          Save session to cold archive
-#   restore [id]  Restore session from archive (default: latest)
-#   sessions      List archived sessions
-#   analyze <prompt>  Multi-persona project analysis
-#   usage [type]  Show token usage report (requires Node.js on host)
-#   build         Build/rebuild Docker image
-#   config        Show resolved compose configuration
-#   compose ...   Pass raw args to docker compose (with auto -f flags)
-#   help          Show this help message
+#   up/down/restart   Manage containers
+#   claude [svc]      Start Claude Code (default: claude-a)
+#   auth [svc]        Inject OAuth credentials from macOS Keychain
+#   exec <svc>        Open shell in a service
+#   usage [type]      Token usage report
+#   build             Build/rebuild Docker image
+#   config/compose    Advanced compose operations
+#   help              Show help
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +37,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Detect which overlay files are active by checking:
 # 1. Which compose files exist on disk
 # 2. Platform detection for linux override
-# 3. .env hints for worktree/orchestration/firewall
+# 3. .env hints for worktree
 build_compose_cmd() {
     local cmd="docker compose"
     local project_root="$PROJECT_ROOT"
@@ -74,30 +61,6 @@ build_compose_cmd() {
         fi
     fi
 
-    # Orchestration overlay: check if compose file exists AND has orchestration env vars
-    if [[ -f "${project_root}/docker-compose.orchestration.yml" ]]; then
-        # Check if orchestration services are expected (manager state dir exists or API key set)
-        if [[ -d "$HOME/.claude-state/account-manager" ]] || \
-           grep -qE '^CLAUDE_API_KEY_MANAGER=' "${project_root}/.env" 2>/dev/null; then
-            cmd+=" -f ${project_root}/docker-compose.orchestration.yml"
-        fi
-    fi
-
-    # Firewall overlay: only if init-firewall.sh exists (user opted in)
-    if [[ -f "${project_root}/docker-compose.firewall.yml" ]] && \
-       [[ -f "${project_root}/scripts/init-firewall.sh" ]]; then
-        # Check if firewall was enabled during install (heuristic: firewall compose exists)
-        # User can force with: claude-docker compose -f docker-compose.firewall.yml ...
-        cmd+=" -f ${project_root}/docker-compose.firewall.yml"
-    fi
-
-    # MCP Bridge overlay: opt-in via MCP_BRIDGE env var or .env setting
-    if [[ -f "${project_root}/docker-compose.mcp.yml" ]]; then
-        if [[ -n "${MCP_BRIDGE:-}" ]] || grep -qE '^MCP_BRIDGE=yes' "$PROJECT_ROOT/.env" 2>/dev/null; then
-            cmd+=" -f ${project_root}/docker-compose.mcp.yml"
-        fi
-    fi
-
     echo "$cmd"
 }
 
@@ -112,13 +75,7 @@ get_compose_cmd() {
 
 # Determine the primary interactive service
 get_primary_service() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    if [[ "$cmd" == *"orchestration"* ]]; then
-        echo "manager"
-    else
-        echo "claude-a"
-    fi
+    echo "claude-a"
 }
 
 # --- Config Dir Path Builder ---------------------------------------------------
@@ -163,44 +120,12 @@ build_merged_config_dir() {
 
 # --- Subcommands --------------------------------------------------------------
 
-# Resolve WORKER_COUNT: env var takes precedence over .env file
-resolve_worker_count() {
-    local worker_count="${WORKER_COUNT:-}"
-    if [[ -z "$worker_count" ]] && [[ -f "${PROJECT_ROOT}/.env" ]]; then
-        worker_count=$(grep -E '^WORKER_COUNT=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
-    fi
-    echo "${worker_count:-3}"  # final default
-}
-
 cmd_up() {
     local cmd
     cmd=$(get_compose_cmd)
-    local profile_flags=""
-
-    # Add --profile full for WORKER_COUNT >= 2 in orchestration mode
-    if [[ "$cmd" == *"orchestration"* ]]; then
-        local wc
-        wc=$(resolve_worker_count)
-        if (( wc >= 2 )); then
-            profile_flags="--profile full"
-        fi
-        log_info "Worker count: $wc"
-    fi
-
     echo -e "${CYAN}Starting containers...${NC}"
-    echo -e "${DIM}  $cmd $profile_flags up -d${NC}"
-    eval "$cmd $profile_flags up -d" "$@"
-
-    # WORKER_COUNT=2: stop worker-3 after start (profile includes both worker-2 and worker-3)
-    if [[ "$cmd" == *"orchestration"* ]]; then
-        local wc
-        wc=$(resolve_worker_count)
-        if [[ "$wc" == "2" ]]; then
-            log_info "Stopping worker-3 (WORKER_COUNT=2 mode)"
-            eval "$cmd stop worker-3" 2>/dev/null || true
-        fi
-    fi
-
+    echo -e "${DIM}  $cmd up -d${NC}"
+    eval "$cmd up -d" "$@"
     echo -e "${GREEN}Containers started.${NC}"
     echo ""
     eval "$cmd ps"
@@ -279,10 +204,6 @@ inject_credentials() {
     case "$svc" in
         claude-a)  state_dir="$HOME/.claude-state/account-a" ;;
         claude-b)  state_dir="$HOME/.claude-state/account-b" ;;
-        manager)   state_dir="$HOME/.claude-state/account-manager" ;;
-        worker-1)  state_dir="$HOME/.claude-state/account-w1" ;;
-        worker-2)  state_dir="$HOME/.claude-state/account-w2" ;;
-        worker-3)  state_dir="$HOME/.claude-state/account-w3" ;;
         *)         state_dir="$HOME/.claude-state/account-${svc}" ;;
     esac
 
@@ -319,8 +240,6 @@ cmd_auth() {
     local services=()
     if [[ -n "$service" ]]; then
         services=("$service")
-    elif [[ "$cmd" == *"orchestration"* ]]; then
-        services=("manager" "worker-1" "worker-2" "worker-3")
     else
         services=("claude-a" "claude-b")
     fi
@@ -345,51 +264,6 @@ cmd_auth() {
     else
         log_info "Containers not running. Credentials will be available on next start."
     fi
-}
-
-cmd_dispatch() {
-    local worker="${1:?Usage: claude-docker dispatch <worker> <prompt>}"
-    local prompt="${2:?Usage: claude-docker dispatch <worker> <prompt>}"
-    shift 2
-    local timeout="${1:-300}"
-    local cmd
-    cmd=$(get_compose_cmd)
-    echo -e "${CYAN}Dispatching task to $worker...${NC}"
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && dispatch_task \"$worker\" \"$prompt\" $timeout'"
-}
-
-cmd_status() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && get_worker_status'"
-}
-
-cmd_findings() {
-    local category="${1:-all}"
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && get_findings $category'"
-}
-
-cmd_save() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    echo -e "${CYAN}Saving session to cold archive...${NC}"
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && save_session'"
-}
-
-cmd_restore() {
-    local session_id="${1:-latest}"
-    local cmd
-    cmd=$(get_compose_cmd)
-    echo -e "${CYAN}Restoring session: $session_id${NC}"
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && restore_session $session_id'"
-}
-
-cmd_sessions() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && list_sessions'"
 }
 
 cmd_build() {
@@ -476,27 +350,13 @@ cmd_usage() {
     CLAUDE_CONFIG_DIR="$merged_dir" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
 }
 
-cmd_analyze() {
-    local prompt="${1:?Usage: claude-docker analyze <prompt> [timeout]}"
-    shift
-    local timeout="${1:-300}"
-    local cmd
-    cmd=$(get_compose_cmd)
-    echo -e "${BOLD}Multi-Persona Analysis${NC}"
-    echo -e "${DIM}Dispatching to Sentinel, Reviewer, and Profiler...${NC}"
-    echo ""
-    eval "$cmd exec -T manager bash -c 'source /scripts/manager-helpers.sh && run_analysis \"\$1\" \"\$2\"' -- \"$prompt\" \"$timeout\""
-}
-
 cmd_help() {
     local cmd
     cmd=$(get_compose_cmd)
-    local primary
-    primary=$(get_primary_service)
 
     cat <<HELP
 
-${BOLD}claude-docker${NC} — unified CLI wrapper
+${BOLD}claude-docker${NC} — multi-account CLI wrapper
 
 ${BOLD}USAGE${NC}
   scripts/claude-docker <command> [args...]
@@ -510,23 +370,9 @@ ${BOLD}LIFECYCLE${NC}
   ${GREEN}logs${NC}                  Follow container logs
 
 ${BOLD}INTERACTIVE${NC}
-  ${GREEN}claude${NC} [service]      Start Claude Code (default: $primary)
-  ${GREEN}auth${NC} [service]        Authenticate Claude Code (OAuth login in container)
+  ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
+  ${GREEN}auth${NC} [service]        Inject OAuth credentials from macOS Keychain
   ${GREEN}exec${NC} <service>        Open shell in a service
-
-${BOLD}ORCHESTRATION${NC}
-  ${GREEN}dispatch${NC} <worker> <prompt>   Send task to worker
-  ${GREEN}status${NC}                Show worker status
-  ${GREEN}findings${NC} [category]   Show accumulated findings
-
-${BOLD}ANALYSIS${NC}
-  ${GREEN}analyze${NC} <prompt> [timeout]  Multi-persona project analysis (default: 300s)
-                              Dispatches to Sentinel, Reviewer, and Profiler
-
-${BOLD}COLD MEMORY${NC}
-  ${GREEN}save${NC}                  Save session to archive
-  ${GREEN}restore${NC} [id|latest]   Restore session from archive
-  ${GREEN}sessions${NC}              List archived sessions
 
 ${BOLD}USAGE TRACKING${NC}
   ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
@@ -536,6 +382,10 @@ ${BOLD}USAGE TRACKING${NC}
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration
   ${GREEN}compose${NC} ...           Pass raw args to docker compose
+
+${BOLD}SERVICES${NC}
+  claude-a              Account A (default)
+  claude-b              Account B
 
 ${BOLD}DETECTED COMPOSE COMMAND${NC}
   ${DIM}$cmd${NC}
@@ -558,13 +408,6 @@ main() {
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
         auth)      cmd_auth "$@" ;;
-        dispatch)  cmd_dispatch "$@" ;;
-        status)    cmd_status "$@" ;;
-        findings)  cmd_findings "$@" ;;
-        save)      cmd_save "$@" ;;
-        restore)   cmd_restore "$@" ;;
-        sessions)  cmd_sessions "$@" ;;
-        analyze)   cmd_analyze "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
         config)    cmd_config "$@" ;;
