@@ -13,6 +13,7 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace
       - ${HOME}/.claude-state/account-a:/home/node/.claude
+      - ${HOME}/.config/gh:/home/node/.config/gh:ro
       - node_modules_a:/workspace/node_modules
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
@@ -38,6 +39,7 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace
       - ${HOME}/.claude-state/account-b:/home/node/.claude
+      - ${HOME}/.config/gh:/home/node/.config/gh:ro
       - node_modules_b:/workspace/node_modules
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
