@@ -1,17 +1,12 @@
-# SRS-5.1.1: Base MUST be node:20-slim (Debian/glibc, NOT Alpine)
+# Base: node:20-slim (Debian/glibc)
 FROM node:20-slim
 
-# SRS-5.1.3: Version pinning via build arg
+# Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
-# Why: Omitting default means "latest" when --build-arg is not passed.
-# Pinning: docker build --build-arg CLAUDE_CODE_VERSION=1.2.3 .
 
-# SRS-5.1.6: WORKDIR must NOT be / (causes full filesystem scan on install)
 WORKDIR /workspace
 
-# SRS-5.1.4: Dev tools — single layer, cache cleaned
-# SRS-5.1.8: apt cache removed in same RUN to avoid layer bloat
-# SRS-5.1.11: redis-tools for Phase 5 orchestration (redis-cli)
+# Dev tools — single layer, cache cleaned
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -20,7 +15,6 @@ RUN apt-get update \
        fzf \
        zsh \
        sudo \
-       redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
@@ -33,22 +27,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# SRS-5.1.2: Install Claude Code globally
-# SRS-5.1.8: npm cache cleaned in same RUN
+# Install Claude Code globally
 RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
     && npm cache clean --force
 
-# SRS-5.1.12: Redis client for worker-server.js orchestration (Phase 5)
-RUN npm install -g redis \
-    && npm cache clean --force
+# Memory heap limit
+ENV NODE_OPTIONS=--max-old-space-size=4096
 
-# SRS-5.1.5: Memory heap limit
-# NODE_PATH: Allow require() to find globally installed npm packages (e.g. redis)
-ENV NODE_OPTIONS=--max-old-space-size=4096 \
-    NODE_PATH=/usr/local/lib/node_modules
-
-# SRS-5.1.7: Run as non-root user
-# Why: node user (UID 1000) comes pre-created in node:20-slim
+# Run as non-root (node user UID 1000 is pre-created in node:20-slim)
 USER node
 
 # Default command keeps container alive for docker compose exec
