@@ -188,7 +188,48 @@ All three steps must exit 0 before the merge is considered stable.
 
 ---
 
-## 7. Traceability to SRS §10.2
+## 7. Phase Release Execution Checklist
+
+Use this checklist before tagging each phase release. Check off items as each
+verification procedure passes.
+
+### Phase 1–2 Checklist (Image + Account Separation)
+
+- [ ] VP-1.1: Base image is Debian (not Alpine)
+- [ ] VP-1.2: `claude --version` succeeds inside container
+- [ ] VP-1.5: Heap limit >= 4 GB
+- [ ] VP-1.10: Image size < 1 GB
+- [ ] VP-2.2: `/workspace` and `/home/node/.claude` accessible per container
+- [ ] VP-2.4: `CLAUDE_CONFIG_DIR` unique per container
+- [ ] VP-2.8: `.env.example` contains placeholders only (no real secrets)
+- [ ] VP-2.9: `.env` is in `.gitignore`
+
+### Phase 3–4 Checklist (Source Sharing + Hardening)
+
+- [ ] VP-3.1: Host file visible in container at `/workspace/`
+- [ ] VP-3.3: Tier B worktrees show different branches per container
+- [ ] VP-4.1: Firewall blocks outbound to non-whitelisted hosts
+- [ ] VP-4.2: `FIREWALL` default is `"yes"` in `install.sh`
+- [ ] VP-4.3: `:ro` mount prevents writes inside container
+- [ ] VP-4.5: State directory mode is `0700`
+- [ ] VP-4.6: Credentials file mode is `0600`
+
+### Phase 5–6 Checklist (Orchestration + Production Hardening)
+
+- [ ] VP-5.1: All 5 services (redis, manager, worker-1/2/3) running
+- [ ] VP-5.3: Redis rejects unauthenticated connections (NOAUTH)
+- [ ] VP-5.4: `orchestration-internal` has `"Internal": true`
+- [ ] VP-5.5: Host cannot connect to Redis port 6379 directly
+- [ ] VP-5.7: Worker returns HTTP 401 for requests without Bearer token
+- [ ] VP-5.15: `test-orchestration.sh` exits 0
+- [ ] VP-6.1: `install.sh` auto-generates 64-char hex secrets
+- [ ] VP-6.3: `crypto.timingSafeEqual` used in auth middleware
+- [ ] VP-6.4: No `((counter++))` pattern in `manager-helpers.sh`
+- [ ] S-1 through S-6: All security checks pass
+
+---
+
+## 8. Traceability to SRS §10.2
 
 | SRS §10.2 Row | SVP Procedure |
 |---------------|---------------|
@@ -232,8 +273,8 @@ All three steps must exit 0 before the merge is considered stable.
 
 ---
 
-## 8. Revision History
+## 9. Revision History
 
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0.0 | 2026-03-30 | docs-team | Initial document: extracted from SRS §10.2; expanded to VP-1 through VP-6; added security checklist and regression baseline |
+| Version | Date | Description |
+|---------|------|-------------|
+| 1.0.0 | 2026-03-30 | Initial release: extracted from SRS §10.2; expanded to VP-1.1 through VP-6.9 (47 procedures); added security verification checklist (S-1 through S-6), regression test baseline, phase release execution checklist, and traceability table |

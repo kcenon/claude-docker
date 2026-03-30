@@ -1,5 +1,9 @@
 # Dual Claude Code Container Architecture
 
+**Status**: Active | **Version**: 1.1.0 | **Date**: 2026-03-30
+
+**References**: [SRS §7.2](software-requirements-specification.md), [cross-platform.md](cross-platform.md), [threat-model.md](threat-model.md), [key-rotation.md](key-rotation.md)
+
 Storage-optimized architecture for running two Claude Code instances simultaneously
 on a single host using Docker. Supports Linux, macOS, and Windows (WSL2).
 
