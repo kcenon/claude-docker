@@ -20,6 +20,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_A:-}
+      - GH_TOKEN=${GH_TOKEN:-}
     deploy:
       resources:
         limits:
@@ -47,6 +48,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_B:-}
+      - GH_TOKEN=${GH_TOKEN:-}
     deploy:
       resources:
         limits:
