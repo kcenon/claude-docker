@@ -6,3 +6,4 @@
 # npm cache (from host claude install)
 .npm-cache/
 package-lock.json
+node_modules/
