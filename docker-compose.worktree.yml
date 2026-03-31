@@ -4,8 +4,8 @@
 services:
   claude-a:
     volumes:
-      - ${PROJECT_DIR_A}:/workspace   # Replaces shared PROJECT_DIR
+      - ${PROJECT_DIR_A}:${WORKSPACE_DIR:-/workspace}   # Replaces shared PROJECT_DIR
 
   claude-b:
     volumes:
-      - ${PROJECT_DIR_B}:/workspace
+      - ${PROJECT_DIR_B}:${WORKSPACE_DIR:-/workspace}

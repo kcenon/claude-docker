@@ -3,8 +3,9 @@ FROM node:20-slim
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
+ARG WORKSPACE_DIR=/workspace
 
-WORKDIR /workspace
+WORKDIR ${WORKSPACE_DIR}
 
 # Dev tools — single layer, cache cleaned
 RUN apt-get update \
@@ -34,6 +35,11 @@ RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE
 
 # Memory heap limit
 ENV NODE_OPTIONS=--max-old-space-size=4096
+
+# Pre-create .config directories with node ownership
+# (prevents root-owned dir when Docker bind-mounts ~/.config/gh)
+RUN mkdir -p /home/node/.config/ccstatusline \
+    && chown -R node:node /home/node/.config
 
 # Copy entrypoint script (symlinks host config into account state dir)
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh

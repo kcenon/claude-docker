@@ -52,7 +52,6 @@ echo "=== Running parallel commits ==="
 docker compose -f "$PROJECT_DIR/docker-compose.yml" \
     -f "$PROJECT_DIR/docker-compose.worktree.yml" \
     exec -T claude-a bash -c '
-        cd /workspace
         git config user.email "a@test.com"
         git config user.name "Agent A"
         for i in $(seq 1 5); do
@@ -66,7 +65,6 @@ PID_A=$!
 docker compose -f "$PROJECT_DIR/docker-compose.yml" \
     -f "$PROJECT_DIR/docker-compose.worktree.yml" \
     exec -T claude-b bash -c '
-        cd /workspace
         git config user.email "b@test.com"
         git config user.name "Agent B"
         for i in $(seq 1 5); do

@@ -22,6 +22,18 @@ if [ -d "$HOST_CONFIG" ]; then
             fi
         fi
     done
+
+    # Symlink ccstatusline config to XDG path (~/.config/ccstatusline/)
+    # ccstatusline reads from ~/.config/ccstatusline/settings.json, not ~/.claude/ccstatusline/
+    XDG_CCSL="/home/node/.config/ccstatusline"
+    mkdir -p "$XDG_CCSL" 2>/dev/null
+    if [ -d "$XDG_CCSL" ] && [ ! -e "$XDG_CCSL/settings.json" ]; then
+        if [ -f "$ACCOUNT_DIR/ccstatusline/settings.json" ]; then
+            ln -sf "$ACCOUNT_DIR/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
+        elif [ -f "$HOST_CONFIG/ccstatusline/settings.json" ]; then
+            ln -sf "$HOST_CONFIG/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
+        fi
+    fi
 fi
 
 exec "$@"
