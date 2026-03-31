@@ -55,7 +55,6 @@ Edit `.env`:
 
 ```bash
 PROJECT_DIR=/absolute/path/to/your/project
-# WORKSPACE_DIR=/workspace          # container-side mount path (default: /workspace)
 ```
 
 ### 2. Authenticate
@@ -165,7 +164,7 @@ scripts/claude-docker claude claude-a
 scripts/claude-docker claude claude-b
 ```
 
-Both sessions see the same project source at the workspace path (Tier A, default `/workspace`) or
+Both sessions see the same project source at `${PROJECT_DIR}` (Tier A) or
 their own worktree (Tier B). Each session has independent conversation
 history, settings, memory, and credentials.
 
@@ -330,8 +329,8 @@ All state is preserved across container restarts via Docker volume mounts:
 | Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` | Read-write |
 | Host config (claude-config) | `~/.claude/` | `/home/node/.claude-host/` (symlinked) | Read-only |
 | GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
-| node_modules | Named volume `node_modules_a` | `${WORKSPACE_DIR}/node_modules/` | Read-write |
-| Project files | `${PROJECT_DIR}` bind mount | `${WORKSPACE_DIR}/` (default `/workspace/`) | Read-write |
+| node_modules | Named volume `node_modules_a` | `${PROJECT_DIR}/node_modules/` | Read-write |
+| Project files | `${PROJECT_DIR}` bind mount | `${PROJECT_DIR}/` (mirrors host path) | Read-write |
 
 ## Compose Overrides
 

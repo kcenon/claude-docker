@@ -6,17 +6,16 @@ services:
       context: .
       args:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
-        WORKSPACE_DIR: ${WORKSPACE_DIR:-/workspace}
     image: claude-code-base:latest
-    working_dir: ${WORKSPACE_DIR:-/workspace}
+    working_dir: ${PROJECT_DIR}
     stdin_open: true
     tty: true
     volumes:
-      - ${PROJECT_DIR}:${WORKSPACE_DIR:-/workspace}
+      - ${PROJECT_DIR}:${PROJECT_DIR}
       - ${HOME}/.claude-state/account-a:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
-      - node_modules_a:${WORKSPACE_DIR:-/workspace}/node_modules
+      - node_modules_a:${PROJECT_DIR}/node_modules
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096
@@ -35,15 +34,15 @@ services:
     image: claude-code-base:latest
     depends_on:
       - claude-a
-    working_dir: ${WORKSPACE_DIR:-/workspace}
+    working_dir: ${PROJECT_DIR}
     stdin_open: true
     tty: true
     volumes:
-      - ${PROJECT_DIR}:${WORKSPACE_DIR:-/workspace}
+      - ${PROJECT_DIR}:${PROJECT_DIR}
       - ${HOME}/.claude-state/account-b:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
-      - node_modules_b:${WORKSPACE_DIR:-/workspace}/node_modules
+      - node_modules_b:${PROJECT_DIR}/node_modules
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - NODE_OPTIONS=--max-old-space-size=4096

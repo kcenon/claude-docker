@@ -3,9 +3,8 @@ FROM node:20-slim
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
-ARG WORKSPACE_DIR=/workspace
 
-WORKDIR ${WORKSPACE_DIR}
+WORKDIR /workspace
 
 # Dev tools — single layer, cache cleaned
 RUN apt-get update \

@@ -3,9 +3,13 @@
 
 services:
   claude-a:
+    working_dir: ${PROJECT_DIR_A}
     volumes:
-      - ${PROJECT_DIR_A}:${WORKSPACE_DIR:-/workspace}   # Replaces shared PROJECT_DIR
+      - ${PROJECT_DIR_A}:${PROJECT_DIR_A}
+      - node_modules_a:${PROJECT_DIR_A}/node_modules
 
   claude-b:
+    working_dir: ${PROJECT_DIR_B}
     volumes:
-      - ${PROJECT_DIR_B}:${WORKSPACE_DIR:-/workspace}
+      - ${PROJECT_DIR_B}:${PROJECT_DIR_B}
+      - node_modules_b:${PROJECT_DIR_B}/node_modules

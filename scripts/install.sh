@@ -447,10 +447,6 @@ collect_configuration() {
         log_info "Claude Code version: $CLAUDE_VERSION"
     fi
 
-    # Container workspace path
-    WORKSPACE_DIR=$(prompt_input "Container-side workspace path" "/workspace")
-    log_info "Container workspace: $WORKSPACE_DIR"
-
     # API keys (Path B)
     if [[ "$AUTH_PATH" == "B" ]]; then
         echo -e "\n${CYAN}Enter Console API keys (from console.anthropic.com):${NC}"
@@ -487,9 +483,6 @@ generate_env() {
         echo ""
         echo "# ==== Required ===="
         echo "PROJECT_DIR=$SOURCE_DIR"
-        echo ""
-        echo "# ==== Container workspace path ===="
-        echo "WORKSPACE_DIR=$WORKSPACE_DIR"
         echo ""
 
         if [[ -n "$CLAUDE_VERSION" ]]; then
