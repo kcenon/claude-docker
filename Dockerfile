@@ -35,8 +35,12 @@ RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE
 # Memory heap limit
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
+# Copy entrypoint script (symlinks host config into account state dir)
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+
 # Run as non-root (node user UID 1000 is pre-created in node:20-slim)
 USER node
 
-# Default command keeps container alive for docker compose exec
+# Entrypoint creates config symlinks, then runs the command
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["sleep", "infinity"]

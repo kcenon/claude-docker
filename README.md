@@ -205,21 +205,27 @@ scripts/claude-docker exec claude-a gh pr list
 ### Shared Configuration (claude-config)
 
 If you use [claude-config](https://github.com/kcenon/claude-config) to manage global
-Claude Code settings, containers automatically inherit your host configuration:
+Claude Code settings, containers automatically inherit your host configuration.
 
-| Config | Host Path | Container Path | Shared |
-|--------|-----------|----------------|--------|
-| Hooks (15 scripts) | `~/.claude/hooks/` | `/home/node/.claude/hooks/` | Read-only |
-| Skills (7 skills) | `~/.claude/skills/` | `/home/node/.claude/skills/` | Read-only |
-| Commands | `~/.claude/commands/` | `/home/node/.claude/commands/` | Read-only |
-| Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` | Read-only |
-| Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` | Read-only |
-| Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` | Read-only |
-| Statusline scripts | `~/.claude/scripts/` | `/home/node/.claude/scripts/` | Read-only |
-| Statusline layout | `~/.claude/ccstatusline/` | `/home/node/.claude/ccstatusline/` | Read-only |
+The host's `~/.claude/` is mounted read-only at `/home/node/.claude-host/` inside
+each container. On startup, the entrypoint script creates symlinks from the
+account state directory to the shared config:
 
-These are mounted read-only -- containers cannot modify the host's configuration.
-Account-specific state (credentials, memory, sessions) remains per-container.
+| Config | Host Path | Symlinked From |
+|--------|-----------|---------------|
+| Hooks | `~/.claude/hooks/` | `/home/node/.claude/hooks` -> `.claude-host/hooks` |
+| Skills | `~/.claude/skills/` | `/home/node/.claude/skills` -> `.claude-host/skills` |
+| Commands | `~/.claude/commands/` | `/home/node/.claude/commands` -> `.claude-host/commands` |
+| Scripts | `~/.claude/scripts/` | `/home/node/.claude/scripts` -> `.claude-host/scripts` |
+| Statusline | `~/.claude/ccstatusline/` | `/home/node/.claude/ccstatusline` -> `.claude-host/ccstatusline` |
+| Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` -> `.claude-host/CLAUDE.md` |
+| Commit settings | `~/.claude/commit-settings.md` | `.claude-host/commit-settings.md` |
+| Hook config | `~/.claude/settings.json` | `.claude-host/settings.json` |
+
+The host config is read-only. Account-specific state (credentials, memory,
+sessions) remains writable and per-container. Symlinks are only created if the
+target does not already exist in the account directory, so per-account overrides
+are preserved.
 
 ### Running Commands Inside Containers
 
@@ -321,7 +327,7 @@ All state is preserved across container restarts via Docker volume mounts:
 | Account state | `~/.claude-state/account-a/` | `/home/node/.claude/` | Read-write |
 | Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` | Read-write |
 | Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` | Read-write |
-| Hooks, skills, settings | `~/.claude/hooks/`, `skills/`, `settings.json` | `/home/node/.claude/...` | Read-only |
+| Host config (claude-config) | `~/.claude/` | `/home/node/.claude-host/` (symlinked) | Read-only |
 | GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
 | node_modules | Named volume `node_modules_a` | `/workspace/node_modules/` | Read-write |
 | Project files | `${PROJECT_DIR}` bind mount | `/workspace/` | Read-write |
@@ -392,6 +398,7 @@ claude-docker/
 +-- LICENSE                            BSD 3-Clause
 +-- scripts/
     +-- claude-docker                  CLI wrapper
+    +-- entrypoint.sh                 Container init (config symlinks)
     +-- install.sh                     Interactive setup
     +-- remove.sh                      Complete removal
     +-- cleanup.sh                     Quick cleanup
