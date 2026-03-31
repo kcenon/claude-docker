@@ -2,6 +2,10 @@
 # Cleanup containers, worktrees, and state
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "=== Stopping containers ==="
 docker compose down --remove-orphans 2>/dev/null || true
 

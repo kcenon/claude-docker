@@ -527,6 +527,7 @@ create_state_dirs() {
     local dirs=(
         "$HOME/.claude-state/account-a"
         "$HOME/.claude-state/account-b"
+        "$HOME/.claude"
     )
 
     for dir in "${dirs[@]}"; do

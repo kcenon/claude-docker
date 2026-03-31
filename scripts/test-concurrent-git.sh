@@ -40,6 +40,7 @@ echo "=== Building image ==="
 docker compose -f "$PROJECT_DIR/docker-compose.yml" build
 
 echo "=== Starting containers with worktree override ==="
+PROJECT_DIR="$REPO_DIR" \
 PROJECT_DIR_A="$WORKTREE_A" \
 PROJECT_DIR_B="$WORKTREE_B" \
     docker compose -f "$PROJECT_DIR/docker-compose.yml" \

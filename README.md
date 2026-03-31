@@ -219,13 +219,13 @@ account state directory to the shared config:
 | Scripts | `~/.claude/scripts/` | `/home/node/.claude/scripts` -> `.claude-host/scripts` |
 | Statusline | `~/.claude/ccstatusline/` | `/home/node/.claude/ccstatusline` -> `.claude-host/ccstatusline` |
 | Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` -> `.claude-host/CLAUDE.md` |
-| Commit settings | `~/.claude/commit-settings.md` | `.claude-host/commit-settings.md` |
-| Hook config | `~/.claude/settings.json` | `.claude-host/settings.json` |
+| Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` -> `.claude-host/commit-settings.md` |
+| Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` -> `.claude-host/settings.json` |
 
 The host config is read-only. Account-specific state (credentials, memory,
-sessions) remains writable and per-container. Symlinks are only created if the
-target does not already exist in the account directory, so per-account overrides
-are preserved.
+sessions) remains writable and per-container. Symlinks are created when the
+target does not exist or is an empty file, so per-account overrides with
+real content are preserved.
 
 ### Running Commands Inside Containers
 
@@ -377,8 +377,12 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 
 ## Resource Requirements
 
-| Instances | Docker RAM | Host RAM (Linux / macOS / Windows) |
-|:---------:|:----------:|:----------------------------------:|
+Each container has a 4 GB memory limit (2 GB reserved). Docker RAM below is the
+recommended Docker Desktop memory allocation to allow all containers to run at
+peak load.
+
+| Instances | Docker RAM (recommended) | Host RAM (Linux / macOS / Windows) |
+|:---------:|:------------------------:|:----------------------------------:|
 | 2 | 8 GB | 12 / 12 / 12 GB |
 | 3 | 12 GB | 16 / 16 / 16 GB |
 | 4 | 16 GB | 20 / 20 / 20 GB |
@@ -396,6 +400,7 @@ claude-docker/
 +-- .gitignore
 +-- .gitattributes                     LF line endings
 +-- LICENSE                            BSD 3-Clause
++-- README.md                          This file
 +-- scripts/
     +-- claude-docker                  CLI wrapper
     +-- entrypoint.sh                 Container init (config symlinks)
