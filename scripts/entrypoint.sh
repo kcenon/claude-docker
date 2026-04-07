@@ -36,4 +36,19 @@ if [ -d "$HOST_CONFIG" ]; then
     fi
 fi
 
+# --- Git identity ----------------------------------------------------------------
+# Set git user from environment variables (if not already configured)
+if [ -n "${GIT_USER_NAME:-}" ] && [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+    git config --global user.name "$GIT_USER_NAME"
+fi
+if [ -n "${GIT_USER_EMAIL:-}" ] && [ -z "$(git config --global user.email 2>/dev/null)" ]; then
+    git config --global user.email "$GIT_USER_EMAIL"
+fi
+
+# --- Git credential helper (gh) -------------------------------------------------
+# Wire gh as git credential helper so git push/pull uses the mounted gh token
+if command -v gh >/dev/null 2>&1 && [ -f /home/node/.config/gh/hosts.yml ]; then
+    gh auth setup-git 2>/dev/null || true
+fi
+
 exec "$@"
