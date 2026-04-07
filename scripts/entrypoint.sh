@@ -47,8 +47,23 @@ fi
 
 # --- Git credential helper (gh) -------------------------------------------------
 # Wire gh as git credential helper so git push/pull uses the mounted gh token
-if command -v gh >/dev/null 2>&1 && [ -f /home/node/.config/gh/hosts.yml ]; then
-    gh auth setup-git 2>/dev/null || true
+if command -v gh >/dev/null 2>&1; then
+    if [ -n "${GH_TOKEN:-}" ]; then
+        # GH_TOKEN env var takes precedence — no hosts.yml needed
+        gh auth setup-git 2>/dev/null || true
+        echo "[entrypoint] GitHub auth: using GH_TOKEN environment variable"
+    elif [ -f /home/node/.config/gh/hosts.yml ]; then
+        gh auth setup-git 2>/dev/null || true
+        # Validate token (macOS Keychain tokens are NOT in hosts.yml)
+        if ! gh auth status >/dev/null 2>&1; then
+            echo "[entrypoint] WARNING: GitHub token is invalid or missing."
+            echo "  On macOS, gh stores tokens in Keychain (not in hosts.yml)."
+            echo "  The read-only bind mount cannot access Keychain tokens."
+            echo ""
+            echo "  Fix: run on the host:"
+            echo "    gh auth login && scripts/claude-docker gh-auth"
+        fi
+    fi
 fi
 
 exec "$@"

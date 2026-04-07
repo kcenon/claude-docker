@@ -266,6 +266,65 @@ cmd_auth() {
     fi
 }
 
+cmd_gh_auth() {
+    # Extract GitHub token from host's gh CLI and inject as GH_TOKEN in .env
+    if ! command -v gh &>/dev/null; then
+        log_error "gh CLI not found on host."
+        exit 1
+    fi
+
+    if ! gh auth status >/dev/null 2>&1; then
+        log_error "GitHub CLI not authenticated on host."
+        echo -e "  Run first: ${DIM}gh auth login -h github.com${NC}"
+        exit 1
+    fi
+
+    local token
+    token=$(gh auth token 2>/dev/null)
+    if [[ -z "$token" ]]; then
+        log_error "Could not extract GitHub token from gh CLI."
+        exit 1
+    fi
+
+    local env_file="$PROJECT_ROOT/.env"
+    if [[ ! -f "$env_file" ]]; then
+        log_error ".env file not found at $env_file"
+        exit 1
+    fi
+
+    # Update or append GH_TOKEN in .env
+    if grep -q '^GH_TOKEN=' "$env_file" 2>/dev/null; then
+        sed -i '' "s|^GH_TOKEN=.*|GH_TOKEN=${token}|" "$env_file"
+    else
+        echo "GH_TOKEN=${token}" >> "$env_file"
+    fi
+    chmod 600 "$env_file"
+
+    echo -e "${GREEN}GitHub token injected into .env${NC}"
+
+    # Restart containers if running to pick up new env
+    local cmd
+    cmd=$(get_compose_cmd)
+    local running
+    running=$(eval "$cmd ps -q" 2>/dev/null | head -1)
+    if [[ -n "$running" ]]; then
+        echo -e "${CYAN}Restarting containers to apply...${NC}"
+        eval "$cmd down" && eval "$cmd up -d"
+
+        # Verify inside container
+        sleep 2
+        local cid
+        cid=$(get_container_id "claude-a")
+        if [[ -n "$cid" ]]; then
+            echo ""
+            echo -e "${BOLD}Verifying GitHub auth in claude-a:${NC}"
+            docker exec "$cid" gh auth status 2>&1 || true
+        fi
+    else
+        log_info "Containers not running. Token will be available on next start."
+    fi
+}
+
 cmd_build() {
     local cmd
     cmd=$(get_compose_cmd)
@@ -402,7 +461,8 @@ ${BOLD}LIFECYCLE${NC}
 
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
-  ${GREEN}auth${NC} [service]        Inject OAuth credentials from macOS Keychain
+  ${GREEN}auth${NC} [service]        Inject Claude OAuth credentials from macOS Keychain
+  ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
   ${GREEN}exec${NC} <service>        Open shell in a service
 
 ${BOLD}USAGE TRACKING${NC}
@@ -439,6 +499,7 @@ main() {
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
         auth)      cmd_auth "$@" ;;
+        gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
         update)    cmd_update "$@" ;;
