@@ -506,6 +506,17 @@ generate_env() {
             echo ""
         fi
 
+        # Git identity (auto-detect from host)
+        local git_name git_email
+        git_name=$(git config --global user.name 2>/dev/null || true)
+        git_email=$(git config --global user.email 2>/dev/null || true)
+        if [[ -n "$git_name" ]] || [[ -n "$git_email" ]]; then
+            echo "# ==== Git Identity ===="
+            [[ -n "$git_name" ]]  && echo "GIT_USER_NAME=$git_name"
+            [[ -n "$git_email" ]] && echo "GIT_USER_EMAIL=$git_email"
+            echo ""
+        fi
+
         if [[ "$PLATFORM" == "linux" ]]; then
             echo "# ==== Linux: UID/GID ===="
             echo "UID=$(id -u)"

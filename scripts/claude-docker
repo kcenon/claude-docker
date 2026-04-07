@@ -274,6 +274,36 @@ cmd_build() {
     echo -e "${GREEN}Build complete.${NC}"
 }
 
+cmd_update() {
+    local cmd
+    cmd=$(get_compose_cmd)
+
+    echo -e "${BOLD}Updating Claude Code to latest version${NC}"
+    echo ""
+
+    # Rebuild image without cache to force fresh npm install
+    echo -e "${CYAN}[1/3] Rebuilding image (--no-cache)...${NC}"
+    eval "$cmd build --no-cache"
+
+    # Recreate containers with the new image
+    echo -e "${CYAN}[2/3] Recreating containers...${NC}"
+    eval "$cmd up -d --force-recreate"
+
+    # Show installed version
+    echo -e "${CYAN}[3/3] Verifying version...${NC}"
+    local cid
+    cid=$(get_container_id "claude-a")
+    if [[ -n "$cid" ]]; then
+        local version
+        version=$(docker exec "$cid" claude --version 2>/dev/null || echo "unknown")
+        echo ""
+        echo -e "${GREEN}Update complete.${NC} Claude Code version: ${BOLD}$version${NC}"
+    else
+        echo ""
+        echo -e "${GREEN}Image rebuilt.${NC} Start containers with: ${DIM}scripts/claude-docker up${NC}"
+    fi
+}
+
 cmd_config() {
     local cmd
     cmd=$(get_compose_cmd)
@@ -366,6 +396,7 @@ ${BOLD}LIFECYCLE${NC}
   ${GREEN}down${NC}                  Stop all containers
   ${GREEN}restart${NC}               Restart all containers
   ${GREEN}build${NC}                 Build/rebuild Docker image
+  ${GREEN}update${NC}                Rebuild with latest Claude Code and recreate
   ${GREEN}ps${NC}                    Show container status
   ${GREEN}logs${NC}                  Follow container logs
 
@@ -410,6 +441,7 @@ main() {
         auth)      cmd_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
+        update)    cmd_update "$@" ;;
         config)    cmd_config "$@" ;;
         compose)   cmd_compose "$@" ;;
         help|--help|-h)  cmd_help ;;
