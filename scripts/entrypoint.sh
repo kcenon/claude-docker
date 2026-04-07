@@ -14,8 +14,13 @@ if [ -d "$HOST_CONFIG" ]; then
         fi
     done
 
-    # Symlink shared config files (replace empty files too)
-    for item in CLAUDE.md commit-settings.md settings.json; do
+    # settings.json: always force-link (Claude Code overwrites it at runtime)
+    if [ -f "$HOST_CONFIG/settings.json" ]; then
+        ln -sf "$HOST_CONFIG/settings.json" "$ACCOUNT_DIR/settings.json"
+    fi
+
+    # Symlink other shared config files (replace empty files too)
+    for item in CLAUDE.md commit-settings.md .claudeignore; do
         if [ -f "$HOST_CONFIG/$item" ]; then
             if [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
                 ln -sf "$HOST_CONFIG/$item" "$ACCOUNT_DIR/$item"

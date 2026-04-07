@@ -16,6 +16,7 @@ RUN apt-get update \
        fzf \
        zsh \
        sudo \
+       procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
