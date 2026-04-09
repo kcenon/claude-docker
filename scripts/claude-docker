@@ -44,43 +44,52 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # --- Compose Command Builder --------------------------------------------------
 
-# Detect which overlay files are active by checking:
-# 1. Which compose files exist on disk
-# 2. Platform detection for linux override
-# 3. .env hints for worktree
-build_compose_cmd() {
-    local cmd="docker compose"
-    local project_root="$PROJECT_ROOT"
+# Populates the COMPOSE_CMD array with the full `docker compose ...` invocation.
+# Array-based so paths containing whitespace survive argument parsing.
+#
+# Overlay selection logic:
+# 1. Base docker-compose.yml is always included
+# 2. docker-compose.linux.yml is added on Linux hosts when the file exists
+# 3. docker-compose.worktree.yml is added when .env declares PROJECT_DIR_A
+COMPOSE_CMD=()
+COMPOSE_CMD_INITIALIZED=0
 
-    # Base compose (always required)
-    cmd+=" -f ${project_root}/docker-compose.yml"
+build_compose_cmd() {
+    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
 
     # Linux override: auto-detect platform
-    if [[ "$(uname -s)" == "Linux" ]] && [[ -f "${project_root}/docker-compose.linux.yml" ]]; then
-        cmd+=" -f ${project_root}/docker-compose.linux.yml"
+    if [[ "$(uname -s)" == "Linux" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.linux.yml" ]]; then
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
         # Export UID/GID for linux override
-        export UID=$(id -u) GID=$(id -g)
+        export UID GID
+        UID=$(id -u)
+        GID=$(id -g)
     fi
 
     # Worktree override: check if PROJECT_DIR_A is set in .env
-    if [[ -f "${project_root}/.env" ]]; then
+    if [[ -f "${PROJECT_ROOT}/.env" ]]; then
         local pdir_a
-        pdir_a=$(grep -E '^PROJECT_DIR_A=' "${project_root}/.env" 2>/dev/null | cut -d'=' -f2- || true)
-        if [[ -n "$pdir_a" ]] && [[ -f "${project_root}/docker-compose.worktree.yml" ]]; then
-            cmd+=" -f ${project_root}/docker-compose.worktree.yml"
+        pdir_a=$(grep -E '^PROJECT_DIR_A=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+        if [[ -n "$pdir_a" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
+            COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
         fi
     fi
 
-    echo "$cmd"
+    COMPOSE_CMD_INITIALIZED=1
 }
 
-# Cache the compose command for the session
-COMPOSE_CMD=""
-get_compose_cmd() {
-    if [[ -z "$COMPOSE_CMD" ]]; then
-        COMPOSE_CMD=$(build_compose_cmd)
+# Ensure COMPOSE_CMD is populated. Idempotent — safe to call from every subcommand.
+ensure_compose_cmd() {
+    if [[ "$COMPOSE_CMD_INITIALIZED" -eq 0 ]]; then
+        build_compose_cmd
     fi
-    echo "$COMPOSE_CMD"
+}
+
+# Return a human-readable, shell-quoted version of COMPOSE_CMD for logging only.
+# NEVER feed this to eval — always execute COMPOSE_CMD via "${COMPOSE_CMD[@]}".
+compose_cmd_display() {
+    ensure_compose_cmd
+    printf '%q ' "${COMPOSE_CMD[@]}"
 }
 
 # Determine the primary interactive service
@@ -131,68 +140,62 @@ build_merged_config_dir() {
 # --- Subcommands --------------------------------------------------------------
 
 cmd_up() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     echo -e "${CYAN}Starting containers...${NC}"
-    echo -e "${DIM}  $cmd up -d${NC}"
-    eval "$cmd up -d" "$@"
+    echo -e "${DIM}  $(compose_cmd_display)up -d${NC}"
+    "${COMPOSE_CMD[@]}" up -d "$@"
     echo -e "${GREEN}Containers started.${NC}"
     echo ""
-    eval "$cmd ps"
+    "${COMPOSE_CMD[@]}" ps
 }
 
 cmd_down() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     echo -e "${CYAN}Stopping containers...${NC}"
-    eval "$cmd down" "$@"
+    "${COMPOSE_CMD[@]}" down "$@"
     echo -e "${GREEN}Containers stopped.${NC}"
 }
 
 cmd_restart() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     echo -e "${CYAN}Restarting containers...${NC}"
-    eval "$cmd restart" "$@"
+    "${COMPOSE_CMD[@]}" restart "$@"
     echo -e "${GREEN}Containers restarted.${NC}"
 }
 
 cmd_logs() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd logs -f" "$@"
+    ensure_compose_cmd
+    "${COMPOSE_CMD[@]}" logs -f "$@"
 }
 
 cmd_ps() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd ps" "$@"
+    ensure_compose_cmd
+    "${COMPOSE_CMD[@]}" ps "$@"
 }
 
 cmd_exec() {
     local service="${1:?Usage: claude-docker exec <service> [command...]}"
     shift
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     if [[ $# -eq 0 ]]; then
-        eval "$cmd exec $service bash"
+        "${COMPOSE_CMD[@]}" exec "$service" bash
     else
-        eval "$cmd exec $service" "$@"
+        "${COMPOSE_CMD[@]}" exec "$service" "$@"
     fi
 }
 
 cmd_claude() {
     local service="${1:-$(get_primary_service)}"
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
-    eval "$cmd exec $service claude"
+    "${COMPOSE_CMD[@]}" exec "$service" claude
 }
 
 # Resolve a compose service name to its running Docker container ID.
 get_container_id() {
     local svc="$1"
-    eval "$(get_compose_cmd) ps -q $svc 2>/dev/null"
+    ensure_compose_cmd
+    "${COMPOSE_CMD[@]}" ps -q "$svc" 2>/dev/null
 }
 
 # Extract OAuth credentials from macOS Keychain (host-side).
@@ -228,8 +231,7 @@ inject_credentials() {
 
 cmd_auth() {
     local service="${1:-}"
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
 
     # On macOS, extract credentials from Keychain (host-side auth)
     local creds=""
@@ -313,13 +315,12 @@ cmd_gh_auth() {
     echo -e "${GREEN}GitHub token injected into .env${NC}"
 
     # Restart containers if running to pick up new env
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     local running
-    running=$(eval "$cmd ps -q" 2>/dev/null | head -1)
+    running=$("${COMPOSE_CMD[@]}" ps -q 2>/dev/null | head -1)
     if [[ -n "$running" ]]; then
         echo -e "${CYAN}Restarting containers to apply...${NC}"
-        eval "$cmd down" && eval "$cmd up -d"
+        "${COMPOSE_CMD[@]}" down && "${COMPOSE_CMD[@]}" up -d
 
         # Verify inside container
         sleep 2
@@ -336,27 +337,25 @@ cmd_gh_auth() {
 }
 
 cmd_build() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
     echo -e "${CYAN}Building Docker image...${NC}"
-    eval "$cmd build" "$@"
+    "${COMPOSE_CMD[@]}" build "$@"
     echo -e "${GREEN}Build complete.${NC}"
 }
 
 cmd_update() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
 
     echo -e "${BOLD}Updating Claude Code to latest version${NC}"
     echo ""
 
     # Rebuild image without cache to force fresh native install
     echo -e "${CYAN}[1/3] Rebuilding image (--no-cache)...${NC}"
-    eval "$cmd build --no-cache"
+    "${COMPOSE_CMD[@]}" build --no-cache
 
     # Recreate containers with the new image
     echo -e "${CYAN}[2/3] Recreating containers...${NC}"
-    eval "$cmd up -d --force-recreate"
+    "${COMPOSE_CMD[@]}" up -d --force-recreate
 
     # Show installed version
     echo -e "${CYAN}[3/3] Verifying version...${NC}"
@@ -374,17 +373,15 @@ cmd_update() {
 }
 
 cmd_config() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    echo -e "${DIM}Compose command: $cmd${NC}"
+    ensure_compose_cmd
+    echo -e "${DIM}Compose command: $(compose_cmd_display)${NC}"
     echo ""
-    eval "$cmd config" "$@"
+    "${COMPOSE_CMD[@]}" config "$@"
 }
 
 cmd_compose() {
-    local cmd
-    cmd=$(get_compose_cmd)
-    eval "$cmd" "$@"
+    ensure_compose_cmd
+    "${COMPOSE_CMD[@]}" "$@"
 }
 
 cmd_usage() {
@@ -450,8 +447,9 @@ cmd_usage() {
 }
 
 cmd_help() {
-    local cmd
-    cmd=$(get_compose_cmd)
+    ensure_compose_cmd
+    local cmd_display
+    cmd_display=$(compose_cmd_display)
 
     cat <<HELP
 
@@ -489,7 +487,7 @@ ${BOLD}SERVICES${NC}
   claude-b              Account B
 
 ${BOLD}DETECTED COMPOSE COMMAND${NC}
-  ${DIM}$cmd${NC}
+  ${DIM}${cmd_display}${NC}
 
 HELP
 }
