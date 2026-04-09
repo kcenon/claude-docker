@@ -4,6 +4,16 @@
 # checks prerequisites, generates .env, builds images, and starts containers.
 set -euo pipefail
 
+# --- Prerequisite Check -------------------------------------------------------
+
+# perl is used for cross-platform in-place file edits (replaces BSD/GNU sed).
+# It is preinstalled on macOS and virtually all Linux distributions.
+if ! command -v perl >/dev/null 2>&1; then
+    echo "Error: perl is required but not installed." >&2
+    echo "Install perl via your package manager (brew install perl / apt install perl)." >&2
+    exit 1
+fi
+
 # --- Constants & Colors -------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -636,13 +646,7 @@ setup_worktrees() {
             # Remove worktree placeholders from .env
             local env_file="$PROJECT_ROOT/.env"
             if [[ -f "$env_file" ]]; then
-                sed -i.tmp '/^# ==== Tier B:/d' "$env_file"
-                sed -i.tmp '/^# (populated after/d' "$env_file"
-                sed -i.tmp '/^PROJECT_DIR_A=/d' "$env_file"
-                sed -i.tmp '/^PROJECT_DIR_B=/d' "$env_file"
-                sed -i.tmp '/^CONTAINER_PROJECT_DIR_A=/d' "$env_file"
-                sed -i.tmp '/^CONTAINER_PROJECT_DIR_B=/d' "$env_file"
-                rm -f "${env_file}.tmp"
+                perl -i -ne 'print unless /^# ==== Tier B:/ || /^# \(populated after/ || /^PROJECT_DIR_A=/ || /^PROJECT_DIR_B=/ || /^CONTAINER_PROJECT_DIR_A=/ || /^CONTAINER_PROJECT_DIR_B=/' "$env_file"
             fi
 
             log_success "Switched to Tier A"
@@ -662,8 +666,7 @@ setup_worktrees() {
         # Update PROJECT_DIR in .env
         local env_file="$PROJECT_ROOT/.env"
         if [[ -f "$env_file" ]]; then
-            sed -i.tmp "s|^PROJECT_DIR=.*|PROJECT_DIR=$new_dir|" "$env_file"
-            rm -f "${env_file}.tmp"
+            perl -i -pe "s|^PROJECT_DIR=.*|PROJECT_DIR=$new_dir|" "$env_file"
         fi
         log_info "Project directory updated: $new_dir"
     done
@@ -681,9 +684,8 @@ setup_worktrees() {
 
     # Update .env with worktree paths
     local env_file="$PROJECT_ROOT/.env"
-    sed -i.tmp "s|^PROJECT_DIR_A=.*|PROJECT_DIR_A=$worktree_a|" "$env_file"
-    sed -i.tmp "s|^PROJECT_DIR_B=.*|PROJECT_DIR_B=$worktree_b|" "$env_file"
-    rm -f "${env_file}.tmp"
+    perl -i -pe "s|^PROJECT_DIR_A=.*|PROJECT_DIR_A=$worktree_a|" "$env_file"
+    perl -i -pe "s|^PROJECT_DIR_B=.*|PROJECT_DIR_B=$worktree_b|" "$env_file"
 
     log_success "Worktrees created:"
     log_info "  A: $worktree_a (branch: $branch_a)"
