@@ -20,18 +20,50 @@ if [ -d "$CONFIG_SOURCE" ]; then
     # so config changes are picked up on container restart.
     FORCE_LINK="${CLAUDE_CONFIG_SOURCE:+true}"
 
-    # Symlink shared config dirs
+    # Symlink shared config dirs.
+    # Re-link when: forced, missing, or present as a stale physical copy
+    # (not a symlink). A stale physical copy is backed up before relinking,
+    # so no work is lost if the user customised it.
     for item in hooks skills commands scripts ccstatusline; do
         if [ -d "$CONFIG_SOURCE/$item" ]; then
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ]; then
-                ln -sfn "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
+            target="$ACCOUNT_DIR/$item"
+            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
+                if [ -e "$target" ] && [ ! -L "$target" ]; then
+                    backup="${target}.stale.$(date +%s)"
+                    mv "$target" "$backup"
+                    echo "[entrypoint] $item: backed up stale copy to $backup"
+                fi
+                ln -sfn "$CONFIG_SOURCE/$item" "$target"
             fi
         fi
     done
 
-    # settings.json: always force-link (Claude Code overwrites it at runtime)
+    # settings.json: generate a container-local copy with sandbox disabled.
+    #
+    # Why: the host settings.json sets sandbox.enabled=true with glob-based
+    # deny rules (Read(**/.env), etc.). On Linux that triggers:
+    #   - a "Sandbox disabled: bubblewrap/socat not installed" warning, and
+    #   - a "Glob patterns in sandbox permission rules not supported" warning.
+    # Neither issue exists inside the container: the container itself is the
+    # isolation boundary, and the PreToolUse sensitive-file-guard.sh hook
+    # applies the same glob-based protection at the application layer
+    # independently of the OS sandbox.
+    #
+    # Strategy: jq-merge sandbox.enabled=false into a local copy and symlink
+    # settings.json to that copy. The host file is never modified, so macOS
+    # Seatbelt-based protection on the host remains intact.
     if [ -f "$CONFIG_SOURCE/settings.json" ]; then
-        ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
+        CONTAINER_SETTINGS="$ACCOUNT_DIR/settings.container.json"
+        if command -v jq >/dev/null 2>&1; then
+            jq '.sandbox.enabled = false' "$CONFIG_SOURCE/settings.json" \
+                > "$CONTAINER_SETTINGS.tmp" \
+                && mv "$CONTAINER_SETTINGS.tmp" "$CONTAINER_SETTINGS"
+            ln -sf "$CONTAINER_SETTINGS" "$ACCOUNT_DIR/settings.json"
+        else
+            # Fallback: raw symlink (jq is always present in our image, this
+            # branch only runs on accidentally stripped-down base images).
+            ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
+        fi
     fi
 
     # Symlink other shared config files

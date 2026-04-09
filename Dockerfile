@@ -29,14 +29,27 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code via native installer (npm package is deprecated)
-# The install script downloads a platform binary, verifies its checksum,
-# and runs `claude install` which places the launcher at ~/.local/bin/claude.
-# Since Docker build runs as root, copy the binary to /usr/local/bin/ for all users.
-RUN curl -fsSL https://claude.ai/install.sh \
-      | bash -s -- ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
-    && cp /root/.local/bin/claude /usr/local/bin/claude \
-    && rm -rf /root/.local /root/.claude
+# Install Claude Code via native installer (npm package is deprecated).
+# The install script places:
+#   $HOME/.local/bin/claude                              (symlink to versioned binary)
+#   $HOME/.local/share/claude/versions/<VERSION>         (actual binary)
+# We force $HOME to /home/node during install so the layout lands directly
+# under the runtime user's home. This matters because:
+#   1. `claude` self-detects as a proper native install at ~/.local/bin/,
+#      avoiding /doctor's false-positive "leftover npm global install"
+#      warning when the binary lives in /usr/local/bin.
+#   2. The internal symlink chain (bin -> share/versions/<VERSION>) stays
+#      intact without manual rewiring.
+#   3. On Linux overrides with a custom UID/GID, world-readable permissions
+#      on the versioned tree let any user exec it.
+RUN HOME=/home/node curl -fsSL https://claude.ai/install.sh \
+      | HOME=/home/node bash -s -- ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+    && chown -R node:node /home/node/.local /home/node/.claude 2>/dev/null || true \
+    && chmod -R a+rX /home/node/.local \
+    && rm -rf /root/.claude
+
+# Add the native install location to PATH for all users
+ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Install statusline tools globally (still npm packages)
 RUN npm install -g ccstatusline claude-limitline \
