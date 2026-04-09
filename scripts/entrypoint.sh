@@ -3,27 +3,42 @@
 # Host config is mounted read-only at /home/node/.claude-host/
 # Account state is at /home/node/.claude/ (writable)
 
-HOST_CONFIG="/home/node/.claude-host"
+# Config source: CLAUDE_CONFIG_SOURCE overrides the default host config path.
+# Set CLAUDE_CONFIG_SOURCE to a path inside the project (e.g., /project/claude-config/global)
+# so that config changes are reflected immediately without running bootstrap on the host.
+CONFIG_SOURCE="${CLAUDE_CONFIG_SOURCE:-/home/node/.claude-host}"
 ACCOUNT_DIR="/home/node/.claude"
 
-if [ -d "$HOST_CONFIG" ]; then
-    # Symlink shared config dirs (skip if already exists)
+if [ -d "$CONFIG_SOURCE" ]; then
+    # Fix Windows CRLF line endings in shell scripts (bind mounts from Windows
+    # hosts may have \r\n even with .gitattributes if the repo lacks one).
+    if [ -n "$CLAUDE_CONFIG_SOURCE" ]; then
+        find "$CONFIG_SOURCE" -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
+    fi
+
+    # When CLAUDE_CONFIG_SOURCE is explicitly set, force-relink everything
+    # so config changes are picked up on container restart.
+    FORCE_LINK="${CLAUDE_CONFIG_SOURCE:+true}"
+
+    # Symlink shared config dirs
     for item in hooks skills commands scripts ccstatusline; do
-        if [ -d "$HOST_CONFIG/$item" ] && [ ! -e "$ACCOUNT_DIR/$item" ]; then
-            ln -sf "$HOST_CONFIG/$item" "$ACCOUNT_DIR/$item"
+        if [ -d "$CONFIG_SOURCE/$item" ]; then
+            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ]; then
+                ln -sfn "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
+            fi
         fi
     done
 
     # settings.json: always force-link (Claude Code overwrites it at runtime)
-    if [ -f "$HOST_CONFIG/settings.json" ]; then
-        ln -sf "$HOST_CONFIG/settings.json" "$ACCOUNT_DIR/settings.json"
+    if [ -f "$CONFIG_SOURCE/settings.json" ]; then
+        ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
     fi
 
-    # Symlink other shared config files (replace empty files too)
+    # Symlink other shared config files
     for item in CLAUDE.md commit-settings.md .claudeignore; do
-        if [ -f "$HOST_CONFIG/$item" ]; then
-            if [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
-                ln -sf "$HOST_CONFIG/$item" "$ACCOUNT_DIR/$item"
+        if [ -f "$CONFIG_SOURCE/$item" ]; then
+            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
+                ln -sf "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
             fi
         fi
     done
@@ -35,8 +50,8 @@ if [ -d "$HOST_CONFIG" ]; then
     if [ -d "$XDG_CCSL" ] && [ ! -e "$XDG_CCSL/settings.json" ]; then
         if [ -f "$ACCOUNT_DIR/ccstatusline/settings.json" ]; then
             ln -sf "$ACCOUNT_DIR/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
-        elif [ -f "$HOST_CONFIG/ccstatusline/settings.json" ]; then
-            ln -sf "$HOST_CONFIG/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
+        elif [ -f "$CONFIG_SOURCE/ccstatusline/settings.json" ]; then
+            ln -sf "$CONFIG_SOURCE/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
         fi
     fi
 fi

@@ -7,17 +7,19 @@ services:
       args:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
     image: claude-code-base:latest
-    working_dir: ${PROJECT_DIR}
+    working_dir: ${CONTAINER_PROJECT_DIR:-/project}
     stdin_open: true
     tty: true
     volumes:
-      - ${PROJECT_DIR}:${PROJECT_DIR}
+      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}
       - ${HOME}/.claude-state/account-a:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
-      - node_modules_a:${PROJECT_DIR}/node_modules
+      - node_modules_a:${CONTAINER_PROJECT_DIR:-/project}/node_modules
     environment:
+      - TERM=xterm-256color
       - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_A:-}
       - GH_TOKEN=${GH_TOKEN:-}
@@ -37,17 +39,19 @@ services:
     image: claude-code-base:latest
     depends_on:
       - claude-a
-    working_dir: ${PROJECT_DIR}
+    working_dir: ${CONTAINER_PROJECT_DIR:-/project}
     stdin_open: true
     tty: true
     volumes:
-      - ${PROJECT_DIR}:${PROJECT_DIR}
+      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}
       - ${HOME}/.claude-state/account-b:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${HOME}/.config/gh:/home/node/.config/gh:ro
-      - node_modules_b:${PROJECT_DIR}/node_modules
+      - node_modules_b:${CONTAINER_PROJECT_DIR:-/project}/node_modules
     environment:
+      - TERM=xterm-256color
       - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - NODE_OPTIONS=--max-old-space-size=4096
       - ANTHROPIC_API_KEY=${CLAUDE_API_KEY_B:-}
       - GH_TOKEN=${GH_TOKEN:-}

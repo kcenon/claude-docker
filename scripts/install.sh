@@ -483,6 +483,12 @@ generate_env() {
         echo ""
         echo "# ==== Required ===="
         echo "PROJECT_DIR=$SOURCE_DIR"
+        echo "CONTAINER_PROJECT_DIR=/project"
+        echo ""
+        echo "# ==== Claude Config Source (optional) ===="
+        echo "# Set to a path inside the container to source config directly from a repo."
+        echo "# Example: /project/claude-config/global"
+        echo "#CLAUDE_CONFIG_SOURCE="
         echo ""
 
         if [[ -n "$CLAUDE_VERSION" ]]; then
@@ -503,6 +509,8 @@ generate_env() {
             echo "# (populated after worktree setup)"
             echo "PROJECT_DIR_A="
             echo "PROJECT_DIR_B="
+            echo "CONTAINER_PROJECT_DIR_A=/project-a"
+            echo "CONTAINER_PROJECT_DIR_B=/project-b"
             echo ""
         fi
 
@@ -613,11 +621,52 @@ setup_worktrees() {
 
     log_step "Setting up git worktrees (Tier B)"
 
-    if [[ ! -d "$SOURCE_DIR/.git" ]]; then
-        log_error "$SOURCE_DIR is not a git repository. Tier B requires git."
-        log_error "Switch to Tier A or initialize a git repo first."
-        exit 1
-    fi
+    while [[ ! -d "$SOURCE_DIR/.git" ]]; do
+        log_warn "$SOURCE_DIR is not a git repository. Tier B requires git."
+
+        local recovery
+        recovery=$(prompt_select "How would you like to proceed?" \
+            "Enter a different project directory (must be a git repo)" \
+            "Fall back to Tier A (shared bind mount, no worktrees)")
+
+        if [[ "$recovery" == *"Tier A"* ]]; then
+            log_info "Switching to Tier A (shared bind mount)"
+            TIER="A"
+
+            # Remove worktree placeholders from .env
+            local env_file="$PROJECT_ROOT/.env"
+            if [[ -f "$env_file" ]]; then
+                sed -i.tmp '/^# ==== Tier B:/d' "$env_file"
+                sed -i.tmp '/^# (populated after/d' "$env_file"
+                sed -i.tmp '/^PROJECT_DIR_A=/d' "$env_file"
+                sed -i.tmp '/^PROJECT_DIR_B=/d' "$env_file"
+                sed -i.tmp '/^CONTAINER_PROJECT_DIR_A=/d' "$env_file"
+                sed -i.tmp '/^CONTAINER_PROJECT_DIR_B=/d' "$env_file"
+                rm -f "${env_file}.tmp"
+            fi
+
+            log_success "Switched to Tier A"
+            return 0
+        fi
+
+        # User chose to enter a different directory
+        local new_dir
+        new_dir=$(prompt_input "Absolute path to git repository" "")
+        if [[ ! -d "$new_dir" ]]; then
+            log_error "Directory does not exist: $new_dir"
+            continue
+        fi
+        new_dir=$(cd "$new_dir" && pwd)
+        SOURCE_DIR="$new_dir"
+
+        # Update PROJECT_DIR in .env
+        local env_file="$PROJECT_ROOT/.env"
+        if [[ -f "$env_file" ]]; then
+            sed -i.tmp "s|^PROJECT_DIR=.*|PROJECT_DIR=$new_dir|" "$env_file"
+            rm -f "${env_file}.tmp"
+        fi
+        log_info "Project directory updated: $new_dir"
+    done
 
     local branch_a
     local branch_b

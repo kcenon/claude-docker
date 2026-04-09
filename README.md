@@ -10,7 +10,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 
 - **Multi-account isolation** -- Each container has its own credentials, settings, and history
 - **Shared source code** -- Bind mount (Tier A) or git worktree (Tier B) for concurrent editing
-- **Cross-platform** -- Linux, macOS, Windows (WSL2)
+- **Cross-platform** -- Linux, macOS, Windows (WSL2 or native PowerShell)
 - **Flexible authentication** -- OAuth for Pro/Max/Team subscriptions, or API key for Console
 - **Scalable to N instances** -- Add accounts by copying a compose service block
 
@@ -26,7 +26,8 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 |----------|----------------------|
 | Linux | UID/GID matching (`id -u`, `id -g`) |
 | macOS | Docker Desktop with VirtioFS (default) |
-| Windows | WSL2 with source code on WSL2 filesystem (not `/mnt/c/`) |
+| Windows (WSL2) | Source code on WSL2 filesystem (not `/mnt/c/`) |
+| Windows (Native) | Docker Desktop with WSL2 backend, PowerShell 5.1+ |
 
 ## Quick Start
 
@@ -40,6 +41,19 @@ scripts/install.sh
 
 The script guides you through platform detection, authentication, source sharing,
 and container setup via interactive Q&A.
+
+### Option A-2: Interactive Setup on Windows (PowerShell)
+
+```powershell
+git clone <repo-url> claude-docker
+cd claude-docker
+.\scripts\install.ps1
+# or from cmd.exe:
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Same interactive Q&A as the bash version, adapted for Windows.
+Uses `winget` for auto-installing prerequisites (Docker Desktop, Git, Node.js).
 
 ### Option B: Manual Setup
 
@@ -174,6 +188,10 @@ On macOS, `scripts/claude-docker auth` extracts OAuth credentials from the
 host's macOS Keychain and injects them into each container's state directory.
 Host-side authentication (`claude auth login`) must be completed first.
 
+On Windows (native), `.\scripts\claude-docker.ps1 auth` copies credentials
+from the host's `~/.claude/.credentials.json` into each container's state
+directory. Authenticate on the host first with `claude auth login`.
+
 On Linux/WSL2, authenticate directly inside containers.
 
 ```bash
@@ -281,8 +299,12 @@ scripts/claude-docker up --force-recreate             # Recreate containers
 
 ```bash
 scripts/claude-docker down -v    # Stop + remove named volumes
-scripts/cleanup.sh               # Quick cleanup
-scripts/remove.sh                # Complete removal
+scripts/cleanup.sh               # Quick cleanup (bash)
+scripts/remove.sh                # Complete removal (bash)
+
+# Windows PowerShell equivalents
+.\scripts\cleanup.ps1            # Quick cleanup
+.\scripts\remove.ps1             # Complete removal
 ```
 
 ## Configuration Tiers
@@ -402,13 +424,21 @@ claude-docker/
 +-- LICENSE                            BSD 3-Clause
 +-- README.md                          This file
 +-- scripts/
-    +-- claude-docker                  CLI wrapper
+    +-- claude-docker                  CLI wrapper (bash)
+    +-- claude-docker.ps1              CLI wrapper (PowerShell)
+    +-- claude-docker.cmd              CLI wrapper (cmd.exe batch)
+    +-- ClaudeDocker.psm1              Shared PowerShell module
     +-- entrypoint.sh                 Container init (config symlinks)
-    +-- install.sh                     Interactive setup
-    +-- remove.sh                      Complete removal
-    +-- cleanup.sh                     Quick cleanup
-    +-- setup-worktrees.sh             Tier B worktree setup
-    +-- test-concurrent-git.sh         E2E test: Tier B concurrent git
+    +-- install.sh                     Interactive setup (bash)
+    +-- install.ps1                    Interactive setup (PowerShell)
+    +-- remove.sh                      Complete removal (bash)
+    +-- remove.ps1                     Complete removal (PowerShell)
+    +-- cleanup.sh                     Quick cleanup (bash)
+    +-- cleanup.ps1                    Quick cleanup (PowerShell)
+    +-- setup-worktrees.sh             Tier B worktree setup (bash)
+    +-- setup-worktrees.ps1            Tier B worktree setup (PowerShell)
+    +-- test-concurrent-git.sh         E2E test (bash)
+    +-- test-concurrent-git.ps1        E2E test (PowerShell)
 ```
 
 ## License
