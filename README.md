@@ -29,6 +29,22 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 | Windows (WSL2) | Source code on WSL2 filesystem (not `/mnt/c/`) |
 | Windows (Native) | Docker Desktop with WSL2 backend, PowerShell 5.1+ |
 
+## Platform Support
+
+claude-docker ships parallel bash and PowerShell implementations. Use the
+installer and CLI wrapper that match your host platform:
+
+| Platform | Installer | CLI Wrapper | Docker Backend | Notes |
+|----------|-----------|-------------|----------------|-------|
+| Linux (native) | `scripts/install.sh` | `scripts/claude-docker` | native Docker Engine | UID/GID auto-detected; uses `docker-compose.linux.yml` overlay |
+| macOS | `scripts/install.sh` | `scripts/claude-docker` | Docker Desktop (VirtioFS recommended) | OAuth tokens live in Keychain — see Troubleshooting |
+| Windows (native) | `scripts/install.ps1` | `scripts/claude-docker.ps1` or `.cmd` | Docker Desktop (WSL2 backend) | Run from PowerShell 5.1+ or PowerShell 7 |
+| Windows (WSL2) | `scripts/install.sh` (**inside** WSL2) | `scripts/claude-docker` | Docker Desktop (WSL2 integration) | Keep project files inside the WSL2 filesystem for performance |
+
+**Do not cross platforms.** Running `install.sh` from a native Windows shell
+(Git Bash / MSYS / Cygwin) or `install.ps1` from PowerShell 7 on Linux/macOS
+will fail fast with a clear error pointing at the correct script.
+
 ## Quick Start
 
 ### Option A: Interactive Setup (Recommended)
@@ -397,13 +413,42 @@ Docker Desktop alternative.
 Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **not** an NTFS path (`/mnt/c/...`). The difference is ~27x in performance.
 
+**CRLF errors in container (`$'\r': command not found`):**
+
+This happens when a Windows editor saved a `.sh` file with CRLF line endings,
+overriding the `.gitattributes eol=lf` rule. The container entrypoint now
+normalizes CRLF under `/project` at startup, so this should auto-heal on
+container restart. If it persists, run `dos2unix` on the offending file or
+configure your editor to use LF for `.sh` files.
+
+**`${HOME}` not expanding in docker-compose.yml (Windows):**
+
+The PowerShell installer writes `HOME` explicitly to `.env` at install time.
+If you edit `.env` manually, make sure the value uses forward slashes
+(`HOME=C:/Users/you`) so Docker Compose parses the path correctly.
+
+**`.env.tmp` files left over after running `install.sh`:**
+
+This was fixed by migrating the installer from BSD/GNU `sed -i` to cross-
+platform `perl -i -pe`. If you still see stale `.env.tmp` files from a
+pre-fix install, delete them manually — they are not consumed by the
+current installer.
+
+**Container memory limit vs reservation:**
+
+`docker-compose.yml` sets `limits.memory: 4G` (hard cap — Docker will refuse
+to let the container exceed this) and `reservations.memory: 2G` (soft
+guarantee — Docker ensures at least this much is available). The Resource
+Requirements section below uses `limits` to size Docker Desktop memory;
+`reservations` matters only when multiple containers compete for memory.
+
 ## Bumping the Base Image
 
-Both `Dockerfile` and `sources/claude_code_agent/docker/Dockerfile` pin the
-Node base image to a specific patch version for reproducible builds. To bump:
+The `Dockerfile` pins the Node base image to a specific patch version for
+reproducible builds. To bump:
 
 1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
-2. Update the `FROM` line in **both** Dockerfiles (keep them in sync)
+2. Update the `FROM` line in `Dockerfile`
 3. Update the `image:` tag in `docker-compose.yml` to today's date
    (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
 4. Optionally capture the digest for future verification:
