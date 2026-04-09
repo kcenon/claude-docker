@@ -4,15 +4,12 @@
 
 #Requires -Version 5.1
 
-# --- Environment Setup -------------------------------------------------------
-
-# Docker Compose uses ${HOME} in volume paths. Windows PowerShell does not set
-# $env:HOME by default, so map it from $env:USERPROFILE.
-if (-not $env:HOME) {
-    $env:HOME = $env:USERPROFILE
-}
-
 # --- Logging -----------------------------------------------------------------
+
+# NOTE: The previous `$env:HOME = $env:USERPROFILE` workaround was removed.
+# install.ps1 now writes HOME explicitly to .env at install time, so
+# docker compose reads the correct value from .env without needing a runtime
+# assignment on the caller's PowerShell session.
 
 function Write-LogInfo {
     [CmdletBinding()]

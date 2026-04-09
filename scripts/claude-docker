@@ -15,6 +15,16 @@
 #   help              Show help
 set -euo pipefail
 
+# Platform guard: same rationale as install.sh — refuse to run on native
+# Windows shells (Git Bash, MSYS, Cygwin) where docker-compose.linux.yml's
+# UID/GID override would be populated with meaningless values.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: scripts/claude-docker is not supported on native Windows shells." >&2
+        echo "Use: powershell scripts\\claude-docker.ps1 (or scripts\\claude-docker.cmd)" >&2
+        exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 

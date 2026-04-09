@@ -15,6 +15,28 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+
+# Platform guard: PowerShell 7 (Core) runs on Linux and macOS, but this script
+# writes Windows-specific state (USERPROFILE paths, docker-compose without the
+# Linux UID/GID override). Refuse to run outside Windows and point users at the
+# bash installer.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "install.ps1 is Windows-only. Use ./scripts/install.sh on macOS or Linux."
+    exit 1
+}
+
+# Canonical .env key list (must be written by all platform installers):
+#   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
+#   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
+#   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
+#   GIT_USER_NAME, GIT_USER_EMAIL (optional)
+#
+# Windows note: UID/GID are intentionally NOT written. Windows has no POSIX
+# UID/GID concept, and docker-compose.linux.yml (which consumes them) is not
+# activated on the Windows/WSL2 Docker Desktop backend. WSL2 users running
+# the Linux container with WSL2-backed Docker should use scripts/install.sh
+# from inside WSL2 instead, so UID/GID is correctly populated.
+
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
