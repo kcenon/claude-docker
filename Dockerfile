@@ -63,8 +63,11 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN mkdir -p /home/node/.config/ccstatusline \
     && chown -R node:node /home/node/.config
 
-# Copy entrypoint script (symlinks host config into account state dir)
+# Copy entrypoint script (symlinks host config into account state dir).
+# Explicit chmod ensures the executable bit is set regardless of the host
+# filesystem's core.filemode behavior (e.g., NTFS clones lose the +x bit).
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Run as non-root (node user UID 1000 is pre-created in node:20-slim)
 USER node
