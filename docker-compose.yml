@@ -6,7 +6,7 @@ services:
       context: .
       args:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
-    image: claude-code-base:latest
+    image: claude-code-base:2026.04.09
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}
     stdin_open: true
     tty: true
@@ -36,7 +36,7 @@ services:
     command: ["sleep", "infinity"]
 
   claude-b:
-    image: claude-code-base:latest
+    image: claude-code-base:2026.04.09
     depends_on:
       - claude-a
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}

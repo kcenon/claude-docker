@@ -1,5 +1,12 @@
-# Base: node:20-slim (Debian/glibc)
-FROM node:20-slim
+# Base: node:20.18.1-slim (Debian/glibc)
+# Pinned to a specific patch version for reproducible builds. To bump:
+#   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
+#   2. Update the tag below
+#   3. Optionally capture the digest:
+#      docker pull node:20.18.1-slim \
+#        && docker inspect --format='{{index .RepoDigests 0}}' node:20.18.1-slim
+#   4. Rebuild: docker compose build --no-cache
+FROM node:20.18.1-slim
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
@@ -21,13 +28,22 @@ RUN apt-get update \
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
 # Why: gh releases change independently from apt packages
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
+# The keyring is dearmored via gpg (the canonical method) instead of raw dd,
+# and `gpg --show-keys` logs the fingerprint for post-build audit. Reviewers
+# can cross-check the fingerprint against the value published by GitHub at
+# build time to detect an upstream keyring swap.
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends gnupg; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/gh.gpg; \
+    gpg --dearmor < /tmp/gh.gpg > /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    echo "[build] GitHub CLI keyring fingerprint:"; \
+    gpg --show-keys /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    rm /tmp/gh.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      | tee /etc/apt/sources.list.d/github-cli.list > /dev/null; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh; \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code via native installer (npm package is deprecated).
 # The install script places:

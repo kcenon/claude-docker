@@ -397,6 +397,25 @@ Docker Desktop alternative.
 Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **not** an NTFS path (`/mnt/c/...`). The difference is ~27x in performance.
 
+## Bumping the Base Image
+
+Both `Dockerfile` and `sources/claude_code_agent/docker/Dockerfile` pin the
+Node base image to a specific patch version for reproducible builds. To bump:
+
+1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
+2. Update the `FROM` line in **both** Dockerfiles (keep them in sync)
+3. Update the `image:` tag in `docker-compose.yml` to today's date
+   (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
+4. Optionally capture the digest for future verification:
+   ```bash
+   docker pull node:20.x.y-slim
+   docker inspect --format='{{index .RepoDigests 0}}' node:20.x.y-slim
+   ```
+5. Rebuild everything from scratch: `docker compose build --no-cache`
+6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
+   and confirm it matches prior builds (unexpected changes may indicate an
+   upstream keyring swap)
+
 ## Resource Requirements
 
 Each container has a 4 GB memory limit (2 GB reserved). Docker RAM below is the
