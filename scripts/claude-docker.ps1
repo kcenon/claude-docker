@@ -26,6 +26,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Platform guard: PowerShell 7 runs on Linux/macOS, but this wrapper assumes
+# Windows Docker Desktop semantics (no docker-compose.linux.yml overlay, no
+# POSIX UID/GID). Refuse to run outside Windows and point users at the bash
+# wrapper instead.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "claude-docker.ps1 is Windows-only. Use ./scripts/claude-docker on macOS or Linux."
+    exit 1
+}
+
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
