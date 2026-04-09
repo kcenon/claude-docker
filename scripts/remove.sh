@@ -223,9 +223,13 @@ remove_host_tools() {
     echo -e "${DIM}  authentication (Path A). Skip if you use them for other projects.${NC}"
     echo ""
 
-    # Claude Code (npm global)
+    # Claude Code (native install or legacy npm global)
     if command -v claude &>/dev/null; then
-        if prompt_confirm "Remove Claude Code from host (npm global)?"; then
+        if prompt_confirm "Remove Claude Code from host?"; then
+            # Native install: ~/.local/bin/claude + ~/.local/share/claude
+            rm -f "$HOME/.local/bin/claude" 2>/dev/null || true
+            rm -rf "$HOME/.local/share/claude" 2>/dev/null || true
+            # Legacy npm global (if still present)
             npm uninstall -g @anthropic-ai/claude-code 2>/dev/null || true
             log_success "Claude Code removed from host"
         else

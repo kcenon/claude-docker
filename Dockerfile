@@ -29,9 +29,17 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code and statusline tools globally
-RUN npm install -g @anthropic-ai/claude-code${CLAUDE_CODE_VERSION:+@$CLAUDE_CODE_VERSION} \
-       ccstatusline claude-limitline \
+# Install Claude Code via native installer (npm package is deprecated)
+# The install script downloads a platform binary, verifies its checksum,
+# and runs `claude install` which places the launcher at ~/.local/bin/claude.
+# Since Docker build runs as root, copy the binary to /usr/local/bin/ for all users.
+RUN curl -fsSL https://claude.ai/install.sh \
+      | bash -s -- ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+    && cp /root/.local/bin/claude /usr/local/bin/claude \
+    && rm -rf /root/.local /root/.claude
+
+# Install statusline tools globally (still npm packages)
+RUN npm install -g ccstatusline claude-limitline \
     && npm cache clean --force
 
 # Memory heap limit

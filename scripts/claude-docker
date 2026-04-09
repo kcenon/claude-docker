@@ -340,7 +340,7 @@ cmd_update() {
     echo -e "${BOLD}Updating Claude Code to latest version${NC}"
     echo ""
 
-    # Rebuild image without cache to force fresh npm install
+    # Rebuild image without cache to force fresh native install
     echo -e "${CYAN}[1/3] Rebuilding image (--no-cache)...${NC}"
     eval "$cmd build --no-cache"
 

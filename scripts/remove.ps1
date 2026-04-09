@@ -207,9 +207,15 @@ function Remove-HostTools {
     Write-Host '  Skip if you use them for other projects.' -ForegroundColor DarkGray
     Write-Host ''
 
-    # Claude Code (npm global)
+    # Claude Code (native install or legacy npm global)
     if (Test-Command 'claude') {
-        if (Read-Confirmation -Question 'Remove Claude Code from host (npm global)?') {
+        if (Read-Confirmation -Question 'Remove Claude Code from host?') {
+            # Native install: ~/.local/bin/claude.exe + ~/.local/share/claude
+            $localBin = Join-Path $env:USERPROFILE ".local\bin\claude.exe"
+            $localShare = Join-Path $env:USERPROFILE ".local\share\claude"
+            if (Test-Path $localBin) { Remove-Item -Path $localBin -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $localShare) { Remove-Item -Path $localShare -Recurse -Force -ErrorAction SilentlyContinue }
+            # Legacy npm global (if still present)
             & npm uninstall -g @anthropic-ai/claude-code 2>$null
             Write-LogSuccess 'Claude Code removed from host'
         }
