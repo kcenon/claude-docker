@@ -97,6 +97,22 @@ if [ -n "${GIT_USER_EMAIL:-}" ] && [ -z "$(git config --global user.email 2>/dev
     git config --global user.email "$GIT_USER_EMAIL"
 fi
 
+# --- Bind-mounted project script CRLF normalization ---------------------------
+# Windows hosts (or editors with CRLF defaults) may introduce \r\n into shell
+# scripts bind-mounted under /project, even when .gitattributes enforces LF.
+# Strip CR characters in-place so bash does not trip over '\r: command not found'
+# when executing project-local scripts inside the container.
+# Best-effort: bounded depth to avoid scanning huge monorepos, errors suppressed
+# so the entrypoint never fails on read-only mounts or missing directories.
+if [ -d /project ]; then
+    sh_count=$(find /project -maxdepth 3 -name '*.sh' -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${sh_count:-0}" -gt 0 ]; then
+        find /project -maxdepth 3 -name '*.sh' -type f \
+            -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+        echo "[entrypoint] CRLF normalized in ${sh_count} shell script(s) under /project"
+    fi
+fi
+
 # --- Git credential helper (gh) -------------------------------------------------
 # Wire gh as git credential helper so git push/pull uses the mounted gh token
 if command -v gh >/dev/null 2>&1; then
