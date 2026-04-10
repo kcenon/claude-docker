@@ -97,6 +97,31 @@ get_primary_service() {
     echo "claude-a"
 }
 
+# --- Account Helpers ----------------------------------------------------------
+
+# Read NUM_ACCOUNTS from .env (default: 2)
+get_num_accounts() {
+    local n
+    n=$(grep -E '^NUM_ACCOUNTS=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+    echo "${n:-2}"
+}
+
+# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
+_index_to_letter() {
+    printf "\\$(printf '%03o' $((96 + $1)))"
+}
+
+# Return space-separated list of service names based on NUM_ACCOUNTS
+get_service_names() {
+    local n
+    n=$(get_num_accounts)
+    local names=()
+    for i in $(seq 1 "$n"); do
+        names+=("claude-$(_index_to_letter "$i")")
+    done
+    echo "${names[@]}"
+}
+
 # --- Config Dir Path Builder ---------------------------------------------------
 
 # List account state directories under ~/.claude-state/account-*.
@@ -212,13 +237,9 @@ inject_credentials() {
     local svc="$1"
     local creds="$2"
 
-    # Map service name to host state directory
-    local state_dir
-    case "$svc" in
-        claude-a)  state_dir="$HOME/.claude-state/account-a" ;;
-        claude-b)  state_dir="$HOME/.claude-state/account-b" ;;
-        *)         state_dir="$HOME/.claude-state/account-${svc}" ;;
-    esac
+    # Map service name to host state directory (claude-X -> account-X)
+    local suffix="${svc#claude-}"
+    local state_dir="$HOME/.claude-state/account-${suffix}"
 
     if [[ ! -d "$state_dir" ]]; then
         mkdir -p "$state_dir"
@@ -253,7 +274,7 @@ cmd_auth() {
     if [[ -n "$service" ]]; then
         services=("$service")
     else
-        services=("claude-a" "claude-b")
+        read -ra services <<< "$(get_service_names)"
     fi
 
     echo -e "${BOLD}Injecting credentials from macOS Keychain${NC}"
@@ -372,6 +393,81 @@ cmd_update() {
     fi
 }
 
+cmd_scale() {
+    local new_count="${1:?Usage: claude-docker scale <N> (1-26)}"
+
+    # Validate
+    if ! [[ "$new_count" =~ ^[0-9]+$ ]] || [[ "$new_count" -lt 1 || "$new_count" -gt 26 ]]; then
+        log_error "Account count must be between 1 and 26 (got: $new_count)"
+        exit 1
+    fi
+
+    local current_count
+    current_count=$(get_num_accounts)
+    echo -e "${BOLD}Scaling: $current_count → $new_count account(s)${NC}"
+
+    # Update NUM_ACCOUNTS in .env
+    local env_file="$PROJECT_ROOT/.env"
+    if [[ ! -f "$env_file" ]]; then
+        log_error ".env not found. Run install.sh first."
+        exit 1
+    fi
+
+    if grep -q '^NUM_ACCOUNTS=' "$env_file" 2>/dev/null; then
+        perl -i -pe "s/^NUM_ACCOUNTS=.*/NUM_ACCOUNTS=$new_count/" "$env_file"
+    else
+        echo "NUM_ACCOUNTS=$new_count" >> "$env_file"
+    fi
+
+    # Create state directories for new accounts
+    if [[ "$new_count" -gt "$current_count" ]]; then
+        echo -e "${CYAN}Creating new state directories...${NC}"
+        for i in $(seq $((current_count + 1)) "$new_count"); do
+            local letter
+            letter=$(_index_to_letter "$i")
+            local state_dir="$HOME/.claude-state/account-${letter}"
+            if [[ ! -d "$state_dir" ]]; then
+                mkdir -p "$state_dir"
+                chmod 700 "$state_dir"
+                echo -e "  ${GREEN}+${NC} account-${letter}"
+            fi
+        done
+    fi
+
+    # Warn about memory when scaling up
+    local total_mem=$((new_count * 4))
+    if [[ "$new_count" -ge 4 ]]; then
+        log_warn "Total memory limit: ${total_mem}G (${new_count} x 4G). Ensure sufficient host RAM."
+    fi
+
+    # Regenerate compose files
+    echo -e "${CYAN}Regenerating compose files...${NC}"
+    "$SCRIPT_DIR/generate-compose.sh"
+
+    # Restart containers if running
+    ensure_compose_cmd
+    local running
+    running=$("${COMPOSE_CMD[@]}" ps -q 2>/dev/null | head -1)
+    if [[ -n "$running" ]]; then
+        echo -e "${CYAN}Restarting containers...${NC}"
+        "${COMPOSE_CMD[@]}" down
+        # Reinitialize COMPOSE_CMD after compose file regeneration
+        COMPOSE_CMD_INITIALIZED=0
+        ensure_compose_cmd
+        "${COMPOSE_CMD[@]}" up -d
+    fi
+
+    echo -e "${GREEN}Scaled to $new_count account(s).${NC}"
+
+    # Show summary
+    echo ""
+    echo -e "${BOLD}Active services:${NC}"
+    read -ra svc_names <<< "$(get_service_names)"
+    for svc in "${svc_names[@]}"; do
+        echo -e "  ${GREEN}*${NC} $svc"
+    done
+}
+
 cmd_config() {
     ensure_compose_cmd
     echo -e "${DIM}Compose command: $(compose_cmd_display)${NC}"
@@ -478,13 +574,29 @@ ${BOLD}USAGE TRACKING${NC}
                         Types: daily, monthly, session, blocks, statusline
                         Flags: --since, --until, --json, --breakdown, --compact
 
+${BOLD}SCALING${NC}
+  ${GREEN}scale${NC} <N>             Set number of accounts (1-26) and regenerate
+
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration
   ${GREEN}compose${NC} ...           Pass raw args to docker compose
 
-${BOLD}SERVICES${NC}
-  claude-a              Account A (default)
-  claude-b              Account B
+${BOLD}SERVICES ($(get_num_accounts) configured)${NC}
+HELP
+
+    # Dynamic service list
+    read -ra svc_names <<< "$(get_service_names)"
+    for idx in "${!svc_names[@]}"; do
+        local svc="${svc_names[$idx]}"
+        local suffix="${svc#claude-}"
+        local label="Account ${suffix^^}"
+        if [[ "$idx" -eq 0 ]]; then
+            label="$label (default)"
+        fi
+        printf "  %-22s%s\n" "$svc" "$label"
+    done
+
+    cat <<HELP
 
 ${BOLD}DETECTED COMPOSE COMMAND${NC}
   ${DIM}${cmd_display}${NC}
@@ -511,6 +623,7 @@ main() {
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
         update)    cmd_update "$@" ;;
+        scale)     cmd_scale "$@" ;;
         config)    cmd_config "$@" ;;
         compose)   cmd_compose "$@" ;;
         help|--help|-h)  cmd_help ;;

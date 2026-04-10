@@ -146,16 +146,13 @@ function Invoke-Auth {
     }
 
     # Determine which services to authenticate
-    $services = if ($service) { @($service) } else { @('claude-a', 'claude-b') }
+    $services = if ($service) { @($service) } else { @(Get-ServiceNames -ProjectRoot $ProjectRoot) }
 
     Write-Host 'Injecting credentials from host' -ForegroundColor White
 
     foreach ($svc in $services) {
-        $stateDir = switch ($svc) {
-            'claude-a' { Join-Path $env:USERPROFILE '.claude-state\account-a' }
-            'claude-b' { Join-Path $env:USERPROFILE '.claude-state\account-b' }
-            default     { Join-Path $env:USERPROFILE ".claude-state\account-$svc" }
-        }
+        $suffix = $svc -replace '^claude-', ''
+        $stateDir = Join-Path $env:USERPROFILE ".claude-state\account-$suffix"
 
         if (-not (Test-Path $stateDir)) {
             New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -256,6 +253,70 @@ function Invoke-Update {
         Write-Host ''
         Write-Host 'Image rebuilt. ' -ForegroundColor Green -NoNewline
         Write-Host 'Start containers with: .\scripts\claude-docker.ps1 up' -ForegroundColor DarkGray
+    }
+}
+
+function Invoke-Scale {
+    if ($Arguments.Count -eq 0) {
+        Write-LogError 'Usage: claude-docker scale <N> (1-26)'
+        exit 1
+    }
+
+    $newCount = [int]$Arguments[0]
+    if ($newCount -lt 1 -or $newCount -gt 26) {
+        Write-LogError "Account count must be between 1 and 26 (got: $newCount)"
+        exit 1
+    }
+
+    $currentCount = Get-NumAccounts -ProjectRoot $ProjectRoot
+    Write-Host "Scaling: $currentCount -> $newCount account(s)" -ForegroundColor White
+
+    # Update NUM_ACCOUNTS in .env
+    $envFile = Join-Path $ProjectRoot '.env'
+    if (-not (Test-Path $envFile)) {
+        Write-LogError '.env not found. Run install.ps1 first.'
+        exit 1
+    }
+    Set-EnvValue -Path $envFile -Key 'NUM_ACCOUNTS' -Value $newCount
+
+    # Create state directories for new accounts
+    if ($newCount -gt $currentCount) {
+        Write-Host 'Creating new state directories...' -ForegroundColor Cyan
+        for ($i = $currentCount + 1; $i -le $newCount; $i++) {
+            $letter = [char](96 + $i)
+            $stateDir = Join-Path $env:USERPROFILE ".claude-state\account-$letter"
+            if (-not (Test-Path $stateDir)) {
+                New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+                Write-Host "  + account-$letter" -ForegroundColor Green
+            }
+        }
+    }
+
+    # Warn about memory
+    $totalMem = $newCount * 4
+    if ($newCount -ge 4) {
+        Write-LogWarn "Total memory limit: ${totalMem}G ($newCount x 4G). Ensure sufficient host RAM."
+    }
+
+    # Regenerate compose files
+    Write-Host 'Regenerating compose files...' -ForegroundColor Cyan
+    & "$PSScriptRoot\generate-compose.ps1" -NumAccounts $newCount
+
+    # Restart containers if running
+    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    if ($running) {
+        Write-Host 'Restarting containers...' -ForegroundColor Cyan
+        Invoke-Compose -ProjectRoot $ProjectRoot down
+        Invoke-Compose -ProjectRoot $ProjectRoot up --detach
+    }
+
+    Write-Host "Scaled to $newCount account(s)." -ForegroundColor Green
+
+    # Show summary
+    Write-Host ''
+    Write-Host 'Active services:' -ForegroundColor White
+    foreach ($svc in (Get-ServiceNames -ProjectRoot $ProjectRoot)) {
+        Write-Host "  * $svc" -ForegroundColor Green
     }
 }
 
@@ -367,13 +428,23 @@ function Show-Help {
     Write-Host '  usage [type] [flags]  ' -ForegroundColor Green -NoNewline; Write-Host 'Token usage report (default: daily)'
     Write-Host '                        Types: daily, monthly, session, blocks, statusline'
     Write-Host ''
+    Write-Host 'SCALING' -ForegroundColor White
+    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host 'Set number of accounts (1-26) and regenerate'
+    Write-Host ''
     Write-Host 'ADVANCED' -ForegroundColor White
     Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show resolved compose configuration'
     Write-Host '  compose ...           ' -ForegroundColor Green -NoNewline; Write-Host 'Pass raw args to docker compose'
     Write-Host ''
-    Write-Host 'SERVICES' -ForegroundColor White
-    Write-Host '  claude-a              Account A (default)'
-    Write-Host '  claude-b              Account B'
+    $numAccts = Get-NumAccounts -ProjectRoot $ProjectRoot
+    Write-Host "SERVICES ($numAccts configured)" -ForegroundColor White
+    $svcNames = @(Get-ServiceNames -ProjectRoot $ProjectRoot)
+    for ($idx = 0; $idx -lt $svcNames.Count; $idx++) {
+        $svc = $svcNames[$idx]
+        $suffix = ($svc -replace '^claude-', '').ToUpper()
+        $label = "Account $suffix"
+        if ($idx -eq 0) { $label += ' (default)' }
+        Write-Host "  $($svc.PadRight(22))" -ForegroundColor Green -NoNewline; Write-Host $label
+    }
     Write-Host ''
     Write-Host 'DETECTED COMPOSE COMMAND' -ForegroundColor White
     Write-Host "  $composeDisplay" -ForegroundColor DarkGray
@@ -395,6 +466,7 @@ switch ($Command) {
     'usage'    { Invoke-Usage }
     'build'    { Invoke-Build }
     'update'   { Invoke-Update }
+    'scale'    { Invoke-Scale }
     'config'   { Invoke-Config }
     'compose'  { Invoke-ComposePass }
     { $_ -in 'help', '--help', '-h' } { Show-Help }

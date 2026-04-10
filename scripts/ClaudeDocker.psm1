@@ -224,6 +224,42 @@ function Set-EnvValue {
     Write-EnvContent -Path $Path -Content $content
 }
 
+# --- Account Helpers ---------------------------------------------------------
+
+function Get-NumAccounts {
+    <#
+    .SYNOPSIS
+    Read NUM_ACCOUNTS from .env (default: 2).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $envFile = Join-Path $ProjectRoot '.env'
+    if (Test-Path $envFile) {
+        $envData = Read-EnvFile -Path $envFile
+        $n = $envData['NUM_ACCOUNTS']
+        if ($n -and $n -match '^\d+$') { return [int]$n }
+    }
+    return 2
+}
+
+function Get-ServiceNames {
+    <#
+    .SYNOPSIS
+    Return an array of service names (claude-a, claude-b, ...) based on NUM_ACCOUNTS.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $n = Get-NumAccounts -ProjectRoot $ProjectRoot
+    $names = @()
+    for ($i = 1; $i -le $n; $i++) {
+        $letter = [char](96 + $i)
+        $names += "claude-$letter"
+    }
+    return $names
+}
+
 # --- Docker Compose Helpers --------------------------------------------------
 
 function Get-ComposeArgs {
@@ -324,6 +360,8 @@ Export-ModuleMember -Function @(
     'Read-Selection', 'Read-Input', 'Read-Secret', 'Read-Confirmation',
     # Utilities
     'Test-Command', 'ConvertTo-ForwardSlash',
+    # Accounts
+    'Get-NumAccounts', 'Get-ServiceNames',
     # .env
     'Read-EnvFile', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose
