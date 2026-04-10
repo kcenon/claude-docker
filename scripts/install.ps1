@@ -29,7 +29,9 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 #   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
 #   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
-#   GIT_USER_NAME, GIT_USER_EMAIL (optional)
+#   GIT_USER_NAME, GIT_USER_EMAIL (optional),
+#   GH_TOKEN (optional — auto-detected from gh CLI),
+#   GH_CONFIG_DIR (optional — platform-specific gh config path for volume mount)
 #
 # Windows note: UID/GID are intentionally NOT written. Windows has no POSIX
 # UID/GID concept, and docker-compose.linux.yml (which consumes them) is not
@@ -393,6 +395,27 @@ function New-EnvFile {
         $lines += '# ==== Git Identity ===='
         if ($gitName)  { $lines += "GIT_USER_NAME=$gitName" }
         if ($gitEmail) { $lines += "GIT_USER_EMAIL=$gitEmail" }
+        $lines += ''
+    }
+
+    # GitHub CLI token and config directory (auto-detect from host)
+    if (Test-Command 'gh') {
+        $null = & gh auth status 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $ghToken = & gh auth token 2>$null
+            if ($ghToken) {
+                $lines += '# ==== GitHub CLI ===='
+                $lines += "GH_TOKEN=$ghToken"
+                $lines += ''
+            }
+        }
+    }
+
+    # GitHub CLI config directory for volume mount
+    # Windows: %APPDATA%\GitHub CLI (not ~/.config/gh)
+    $ghConfigDir = Join-Path $env:APPDATA 'GitHub CLI'
+    if (Test-Path $ghConfigDir) {
+        $lines += "GH_CONFIG_DIR=$(ConvertTo-ForwardSlash -Path $ghConfigDir)"
         $lines += ''
     }
 

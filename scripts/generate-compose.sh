@@ -90,7 +90,7 @@ generate_base() {
             echo "      - \${PROJECT_DIR}:\${CONTAINER_PROJECT_DIR:-/project}"
             echo "      - \${HOME}/.claude-state/account-${letter}:/home/node/.claude"
             echo "      - \${HOME}/.claude:/home/node/.claude-host:ro"
-            echo "      - \${HOME}/.config/gh:/home/node/.config/gh:ro"
+            echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
             echo "      - node_modules_${letter}:\${CONTAINER_PROJECT_DIR:-/project}/node_modules"
             echo "    environment:"
             echo "      - TERM=xterm-256color"

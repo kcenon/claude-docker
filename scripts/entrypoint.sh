@@ -122,15 +122,24 @@ if command -v gh >/dev/null 2>&1; then
         echo "[entrypoint] GitHub auth: using GH_TOKEN environment variable"
     elif [ -f /home/node/.config/gh/hosts.yml ]; then
         gh auth setup-git 2>/dev/null || true
-        # Validate token (macOS Keychain tokens are NOT in hosts.yml)
+        # Validate token (macOS Keychain / Windows Credential Manager tokens
+        # are NOT in hosts.yml — only the host config structure is present)
         if ! gh auth status >/dev/null 2>&1; then
             echo "[entrypoint] WARNING: GitHub token is invalid or missing."
-            echo "  On macOS, gh stores tokens in Keychain (not in hosts.yml)."
-            echo "  The read-only bind mount cannot access Keychain tokens."
+            echo "  On macOS/Windows, gh stores tokens in OS credential stores"
+            echo "  (Keychain / Credential Manager), not in hosts.yml."
+            echo "  The read-only bind mount cannot access these tokens."
             echo ""
             echo "  Fix: run on the host:"
-            echo "    gh auth login && scripts/claude-docker gh-auth"
+            echo "    scripts/claude-docker gh-auth"
         fi
+    else
+        echo "[entrypoint] WARNING: No GitHub credentials found."
+        echo "  git push/pull and gh commands will fail without authentication."
+        echo ""
+        echo "  Fix: run on the host:"
+        echo "    scripts/claude-docker gh-auth"
+        echo "  Or re-run the installer to auto-detect from gh CLI."
     fi
 fi
 

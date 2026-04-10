@@ -105,7 +105,7 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}')
         [void]$sb.AppendLine("      - `${HOME}/.claude-state/account-${letter}:/home/node/.claude")
         [void]$sb.AppendLine('      - ${HOME}/.claude:/home/node/.claude-host:ro')
-        [void]$sb.AppendLine('      - ${HOME}/.config/gh:/home/node/.config/gh:ro')
+        [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
         [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
         [void]$sb.AppendLine('    environment:')
         [void]$sb.AppendLine('      - TERM=xterm-256color')

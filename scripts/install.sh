@@ -28,7 +28,9 @@ fi
 #   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
 #   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
-#   GIT_USER_NAME, GIT_USER_EMAIL (optional)
+#   GIT_USER_NAME, GIT_USER_EMAIL (optional),
+#   GH_TOKEN (optional — auto-detected from gh CLI),
+#   GH_CONFIG_DIR (optional — platform-specific gh config path for volume mount)
 #
 # Linux-only keys (bash installer adds):
 #   UID, GID (consumed by docker-compose.linux.yml)
@@ -575,6 +577,23 @@ generate_env() {
             echo "# ==== Git Identity ===="
             [[ -n "$git_name" ]]  && echo "GIT_USER_NAME=$git_name"
             [[ -n "$git_email" ]] && echo "GIT_USER_EMAIL=$git_email"
+            echo ""
+        fi
+
+        # GitHub CLI token (auto-detect from host)
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+            local gh_token
+            gh_token=$(gh auth token 2>/dev/null || true)
+            if [[ -n "$gh_token" ]]; then
+                echo "# ==== GitHub CLI ===="
+                echo "GH_TOKEN=$gh_token"
+                echo ""
+            fi
+        fi
+
+        # GitHub CLI config directory (for volume mount)
+        if [[ -d "$HOME/.config/gh" ]]; then
+            echo "GH_CONFIG_DIR=$HOME/.config/gh"
             echo ""
         fi
 
