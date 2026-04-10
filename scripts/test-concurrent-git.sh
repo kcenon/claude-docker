@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # E2E test: Tier B concurrent git safety
-# Verifies that two containers can commit to separate worktrees simultaneously
+# Verifies that N containers can commit to separate worktrees simultaneously
 # without conflicts or corruption.
+#
+# Usage:
+#   NUM_TEST_ACCOUNTS=3 scripts/test-concurrent-git.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMP_DIR="$(mktemp -d)"
 REPO_DIR="$TEMP_DIR/test-repo"
+NUM_TEST_ACCOUNTS="${NUM_TEST_ACCOUNTS:-2}"
+
+# Convert 1-based index to lowercase letter
+index_to_letter() {
+    printf "\\$(printf '%03o' $((96 + $1)))"
+}
 
 # Cleanup on exit
 cleanup() {
@@ -20,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== Setting up test repository ==="
+echo "=== Setting up test repository ($NUM_TEST_ACCOUNTS accounts) ==="
 mkdir -p "$REPO_DIR"
 cd "$REPO_DIR"
 git init
@@ -31,94 +40,100 @@ git add README.md
 git commit -m "Initial commit"
 
 echo "=== Creating worktrees ==="
-"$SCRIPT_DIR/setup-worktrees.sh" "$REPO_DIR" test-branch-a test-branch-b
-
-WORKTREE_A="${REPO_DIR}-a"
-WORKTREE_B="${REPO_DIR}-b"
+BRANCHES=()
+for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+    BRANCHES+=("test-branch-$(index_to_letter "$i")")
+done
+"$SCRIPT_DIR/setup-worktrees.sh" "$REPO_DIR" "${BRANCHES[@]}"
 
 echo "=== Building image ==="
+NUM_ACCOUNTS="$NUM_TEST_ACCOUNTS" "$SCRIPT_DIR/generate-compose.sh"
 docker compose -f "$PROJECT_DIR/docker-compose.yml" build
 
 echo "=== Starting containers with worktree override ==="
-PROJECT_DIR="$REPO_DIR" \
-PROJECT_DIR_A="$WORKTREE_A" \
-PROJECT_DIR_B="$WORKTREE_B" \
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-        -f "$PROJECT_DIR/docker-compose.worktree.yml" \
-        up -d
+# Set env vars for docker compose
+export PROJECT_DIR="$REPO_DIR"
+for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+    letter=$(index_to_letter "$i")
+    upper="${letter^^}"
+    export "PROJECT_DIR_${upper}=${REPO_DIR}-${letter}"
+done
+
+docker compose -f "$PROJECT_DIR/docker-compose.yml" \
+    -f "$PROJECT_DIR/docker-compose.worktree.yml" \
+    up -d
 
 echo "=== Running parallel commits ==="
-# Each container creates and commits a file in its own worktree
-docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-    -f "$PROJECT_DIR/docker-compose.worktree.yml" \
-    exec -T claude-a bash -c '
-        git config user.email "a@test.com"
-        git config user.name "Agent A"
-        for i in $(seq 1 5); do
-            echo "commit-a-$i" > "file-a-$i.txt"
-            git add "file-a-$i.txt"
-            git commit -m "Agent A: commit $i"
-        done
-    ' &
-PID_A=$!
+PIDS=()
+for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+    letter=$(index_to_letter "$i")
+    upper="${letter^^}"
+    svc="claude-${letter}"
 
-docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-    -f "$PROJECT_DIR/docker-compose.worktree.yml" \
-    exec -T claude-b bash -c '
-        git config user.email "b@test.com"
-        git config user.name "Agent B"
-        for i in $(seq 1 5); do
-            echo "commit-b-$i" > "file-b-$i.txt"
-            git add "file-b-$i.txt"
-            git commit -m "Agent B: commit $i"
-        done
-    ' &
-PID_B=$!
+    docker compose -f "$PROJECT_DIR/docker-compose.yml" \
+        -f "$PROJECT_DIR/docker-compose.worktree.yml" \
+        exec -T "$svc" bash -c "
+            git config user.email '${letter}@test.com'
+            git config user.name 'Agent ${upper}'
+            for j in \$(seq 1 5); do
+                echo 'commit-${letter}-\$j' > 'file-${letter}-\$j.txt'
+                git add 'file-${letter}-\$j.txt'
+                git commit -m 'Agent ${upper}: commit \$j'
+            done
+        " &
+    PIDS+=($!)
+done
 
-# Wait for both to complete
+# Wait for all to complete
 FAIL=0
-wait "$PID_A" || FAIL=1
-wait "$PID_B" || FAIL=1
+for pid in "${PIDS[@]}"; do
+    wait "$pid" || FAIL=1
+done
 
 if [ "$FAIL" -ne 0 ]; then
-    echo "FAIL: One or both containers failed during parallel commits"
+    echo "FAIL: One or more containers failed during parallel commits"
     exit 1
 fi
 
 echo "=== Verifying results ==="
 
-# Check worktree A has 5 commits from Agent A
-COUNT_A=$(cd "$WORKTREE_A" && git log --oneline --author="Agent A" | wc -l | tr -d ' ')
-if [ "$COUNT_A" -ne 5 ]; then
-    echo "FAIL: Expected 5 commits from Agent A, got $COUNT_A"
-    exit 1
-fi
+for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+    letter=$(index_to_letter "$i")
+    upper="${letter^^}"
+    worktree="${REPO_DIR}-${letter}"
 
-# Check worktree B has 5 commits from Agent B
-COUNT_B=$(cd "$WORKTREE_B" && git log --oneline --author="Agent B" | wc -l | tr -d ' ')
-if [ "$COUNT_B" -ne 5 ]; then
-    echo "FAIL: Expected 5 commits from Agent B, got $COUNT_B"
-    exit 1
-fi
+    # Check worktree has 5 commits from its agent
+    count=$(cd "$worktree" && git log --oneline --author="Agent ${upper}" | wc -l | tr -d ' ')
+    if [ "$count" -ne 5 ]; then
+        echo "FAIL: Expected 5 commits from Agent ${upper}, got $count"
+        exit 1
+    fi
 
-# Check no cross-contamination
-CROSS_A=$(cd "$WORKTREE_A" && git log --oneline --author="Agent B" | wc -l | tr -d ' ')
-CROSS_B=$(cd "$WORKTREE_B" && git log --oneline --author="Agent A" | wc -l | tr -d ' ')
-if [ "$CROSS_A" -ne 0 ] || [ "$CROSS_B" -ne 0 ]; then
-    echo "FAIL: Cross-contamination detected between worktrees"
-    exit 1
-fi
+    # Check no cross-contamination from other agents
+    for j in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+        if [ "$j" -eq "$i" ]; then continue; fi
+        other_upper="$(index_to_letter "$j")"
+        other_upper="${other_upper^^}"
+        cross=$(cd "$worktree" && git log --oneline --author="Agent ${other_upper}" | wc -l | tr -d ' ')
+        if [ "$cross" -ne 0 ]; then
+            echo "FAIL: Cross-contamination from Agent ${other_upper} in worktree-${letter}"
+            exit 1
+        fi
+    done
+done
 
 # Check git repo integrity
 cd "$REPO_DIR"
-git fsck --no-dangling > /dev/null 2>&1
-if [ $? -ne 0 ]; then
+if ! git fsck --no-dangling > /dev/null 2>&1; then
     echo "FAIL: Git repository integrity check failed"
     exit 1
 fi
 
 echo ""
 echo "=== ALL TESTS PASSED ==="
-echo "  Worktree A: $COUNT_A commits from Agent A (no cross-contamination)"
-echo "  Worktree B: $COUNT_B commits from Agent B (no cross-contamination)"
+for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
+    letter=$(index_to_letter "$i")
+    upper="${letter^^}"
+    echo "  Worktree ${upper}: 5 commits from Agent ${upper} (no cross-contamination)"
+done
 echo "  Repository integrity: OK"

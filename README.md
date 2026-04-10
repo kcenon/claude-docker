@@ -340,21 +340,30 @@ scripts/setup-worktrees.sh ~/work/project    # Create worktrees
 scripts/claude-docker up                     # Auto-detects worktree overlay
 ```
 
-## Adding More Accounts
+## Scaling Accounts
+
+Use the `scale` command to add or remove accounts dynamically:
 
 ```bash
-# 1. Create state directory
-mkdir -p ~/.claude-state/account-c
+# Scale to 4 accounts (claude-a through claude-d)
+scripts/claude-docker scale 4
 
-# 2. Copy a service block in docker-compose.yml:
-#    claude-b -> claude-c (rename account-b -> account-c, _B -> _C)
-
-# 3. Start and authenticate the new container
-scripts/claude-docker up
-scripts/claude-docker auth claude-c
+# Scale back to 2
+scripts/claude-docker scale 2
 ```
 
-Each additional container needs ~4 GB RAM.
+The `scale` command automatically:
+1. Updates `NUM_ACCOUNTS` in `.env`
+2. Creates new state directories (when scaling up)
+3. Regenerates Docker Compose files
+4. Restarts containers if running
+
+Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
+
+On Windows (PowerShell):
+```powershell
+.\scripts\claude-docker.ps1 scale 4
+```
 
 ## State and Memory Persistence
 
@@ -372,11 +381,19 @@ All state is preserved across container restarts via Docker volume mounts:
 
 ## Compose Overrides
 
+All compose files are **generated** by `scripts/generate-compose.sh` (or `.ps1`)
+based on `NUM_ACCOUNTS` in `.env`. Do not edit them manually.
+
 | File | Purpose | When active |
 |------|---------|-------------|
 | `docker-compose.yml` | Base config (Tier A) | Always |
 | `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
+
+To regenerate after editing `.env`:
+```bash
+scripts/generate-compose.sh
+```
 
 The `scripts/claude-docker` CLI auto-detects which overlays to apply.
 
@@ -472,6 +489,8 @@ peak load.
 | 2 | 8 GB | 12 / 12 / 12 GB |
 | 3 | 12 GB | 16 / 16 / 16 GB |
 | 4 | 16 GB | 20 / 20 / 20 GB |
+| 5 | 20 GB | 24 / 24 / 24 GB |
+| 6+ | N x 4 GB | (N x 4) + 4 GB |
 
 ## Project Structure
 
@@ -479,9 +498,9 @@ peak load.
 claude-docker/
 +-- .dockerignore                      Docker build context exclusions
 +-- Dockerfile                         Base image
-+-- docker-compose.yml                 Base config (Tier A)
-+-- docker-compose.linux.yml           Linux override
-+-- docker-compose.worktree.yml        Tier B override
++-- docker-compose.yml                 Generated: base config (Tier A)
++-- docker-compose.linux.yml           Generated: Linux override
++-- docker-compose.worktree.yml        Generated: Tier B override
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
@@ -492,6 +511,8 @@ claude-docker/
     +-- claude-docker.ps1              CLI wrapper (PowerShell)
     +-- claude-docker.cmd              CLI wrapper (cmd.exe batch)
     +-- ClaudeDocker.psm1              Shared PowerShell module
+    +-- generate-compose.sh            Compose file generator (bash)
+    +-- generate-compose.ps1           Compose file generator (PowerShell)
     +-- entrypoint.sh                 Container init (config symlinks)
     +-- install.sh                     Interactive setup (bash)
     +-- install.ps1                    Interactive setup (PowerShell)

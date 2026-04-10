@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Setup git worktrees for Tier B
+# Setup git worktrees for Tier B (supports N accounts)
+#
+# Usage:
+#   setup-worktrees.sh <repo-dir> [branch-1] [branch-2] ... [branch-N]
+#
+# If no branch names are provided, defaults to worktree-a and worktree-b.
 set -euo pipefail
 
-REPO_DIR="${1:?Usage: setup-worktrees.sh <repo-dir> [branch-a] [branch-b]}"
-BRANCH_A="${2:-worktree-a}"
-BRANCH_B="${3:-worktree-b}"
-WORKTREE_A="${REPO_DIR%/}-a"
-WORKTREE_B="${REPO_DIR%/}-b"
+REPO_DIR="${1:?Usage: setup-worktrees.sh <repo-dir> [branch...]}"; shift
+
+# Default branches if none provided
+if [[ $# -eq 0 ]]; then
+    set -- "worktree-a" "worktree-b"
+fi
+
+BRANCHES=("$@")
 
 # Validate
 if [ ! -d "$REPO_DIR/.git" ]; then
@@ -14,19 +22,31 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     exit 1
 fi
 
-# Create branches if they don't exist (based on current HEAD)
+# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
+index_to_letter() {
+    printf "\\$(printf '%03o' $((96 + $1)))"
+}
+
 cd "$REPO_DIR"
-git branch "$BRANCH_A" 2>/dev/null || true
-git branch "$BRANCH_B" 2>/dev/null || true
 
-# Create worktrees
-git worktree add "$WORKTREE_A" "$BRANCH_A"
-git worktree add "$WORKTREE_B" "$BRANCH_B"
+echo "Creating ${#BRANCHES[@]} worktree(s)..."
 
-echo "Worktrees created:"
-echo "  A: $WORKTREE_A (branch: $BRANCH_A)"
-echo "  B: $WORKTREE_B (branch: $BRANCH_B)"
+for i in "${!BRANCHES[@]}"; do
+    idx=$((i + 1))
+    branch="${BRANCHES[$i]}"
+    letter=$(index_to_letter "$idx")
+    worktree="${REPO_DIR%/}-${letter}"
+
+    git branch "$branch" 2>/dev/null || true
+    git worktree add "$worktree" "$branch"
+    echo "  ${letter^^}: $worktree (branch: $branch)"
+done
+
 echo ""
 echo "Add to .env:"
-echo "  PROJECT_DIR_A=$WORKTREE_A"
-echo "  PROJECT_DIR_B=$WORKTREE_B"
+for i in "${!BRANCHES[@]}"; do
+    idx=$((i + 1))
+    letter=$(index_to_letter "$idx")
+    upper="${letter^^}"
+    echo "  PROJECT_DIR_${upper}=${REPO_DIR%/}-${letter}"
+done

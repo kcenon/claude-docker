@@ -1,31 +1,29 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Setup git worktrees for Tier B concurrent editing.
+    Setup git worktrees for Tier B concurrent editing (supports N accounts).
 .DESCRIPTION
     PowerShell port of scripts/setup-worktrees.sh.
-    Creates two git worktrees from branches for independent container editing.
+    Creates N git worktrees from branches for independent container editing.
 .PARAMETER RepoDir
     Path to the git repository (required).
-.PARAMETER BranchA
-    Branch name for worktree A (default: worktree-a).
-.PARAMETER BranchB
-    Branch name for worktree B (default: worktree-b).
+.PARAMETER Branches
+    Branch names for worktrees. Defaults to ('worktree-a', 'worktree-b').
+.EXAMPLE
+    .\setup-worktrees.ps1 -RepoDir C:\Projects\myapp
+    .\setup-worktrees.ps1 -RepoDir C:\Projects\myapp -Branches 'feat-a','feat-b','feat-c'
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [string]$RepoDir,
 
-    [string]$BranchA = 'worktree-a',
-    [string]$BranchB = 'worktree-b'
+    [string[]]$Branches = @('worktree-a', 'worktree-b')
 )
 
 $ErrorActionPreference = 'Stop'
 
 $RepoDir = $RepoDir.TrimEnd('\', '/')
-$WorktreeA = "${RepoDir}-a"
-$WorktreeB = "${RepoDir}-b"
 
 # Validate
 if (-not (Test-Path (Join-Path $RepoDir '.git'))) {
@@ -33,24 +31,32 @@ if (-not (Test-Path (Join-Path $RepoDir '.git'))) {
     exit 1
 }
 
-# Create branches if they don't exist (based on current HEAD)
+Write-Host "Creating $($Branches.Count) worktree(s)..."
+
 Push-Location $RepoDir
 try {
-    & git branch $BranchA 2>$null
-    & git branch $BranchB 2>$null
+    for ($i = 0; $i -lt $Branches.Count; $i++) {
+        $idx = $i + 1
+        $branch = $Branches[$i]
+        $letter = [char](96 + $idx)  # a, b, c, ...
+        $upper  = [char](64 + $idx)  # A, B, C, ...
+        $worktree = "${RepoDir}-${letter}"
 
-    # Create worktrees
-    & git worktree add $WorktreeA $BranchA
-    & git worktree add $WorktreeB $BranchB
+        & git branch $branch 2>$null
+        & git worktree add $worktree $branch
+
+        Write-Host "  ${upper}: $worktree (branch: $branch)"
+    }
 }
 finally {
     Pop-Location
 }
 
-Write-Host 'Worktrees created:'
-Write-Host "  A: $WorktreeA (branch: $BranchA)"
-Write-Host "  B: $WorktreeB (branch: $BranchB)"
 Write-Host ''
 Write-Host 'Add to .env:'
-Write-Host "  PROJECT_DIR_A=$WorktreeA"
-Write-Host "  PROJECT_DIR_B=$WorktreeB"
+for ($i = 0; $i -lt $Branches.Count; $i++) {
+    $idx = $i + 1
+    $letter = [char](96 + $idx)
+    $upper  = [char](64 + $idx)
+    Write-Host "  PROJECT_DIR_${upper}=${RepoDir}-${letter}"
+}
