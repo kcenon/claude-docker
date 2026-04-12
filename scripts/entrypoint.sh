@@ -9,6 +9,52 @@
 CONFIG_SOURCE="${CLAUDE_CONFIG_SOURCE:-/home/node/.claude-host}"
 ACCOUNT_DIR="/home/node/.claude"
 
+# --- Settings transformation ---------------------------------------------------
+# Generate a container-local settings.json from the host settings.
+# The host settings may be macOS (.sh hooks) or Windows (.ps1/pwsh hooks).
+# The container always runs Linux, so we:
+#   1. Disable sandbox (container itself is the isolation boundary)
+#   2. Strip glob-based permission deny rules (sensitive-file-guard.sh handles this)
+#   3. Rewrite PowerShell hook commands to bash equivalents
+#   4. Fix statusLine command if it uses PowerShell
+#
+# The jq pipeline is idempotent: macOS settings pass through with only
+# sandbox/permissions changes; Windows settings get full hook rewriting.
+generate_container_settings() {
+    local src="$1"
+    local dst="$2"
+
+    jq '
+        # 1. Disable sandbox (container IS the isolation boundary)
+        .sandbox.enabled = false
+
+        # 2. Strip glob-based permission deny rules
+        #    (sensitive-file-guard.sh hook provides equivalent protection)
+        | if .permissions.deny then
+            .permissions.deny = [.permissions.deny[] | select(test("[*]") | not)]
+          else . end
+
+        # 3. Fix statusLine BEFORE walk() to prevent Join-Path pattern mangling
+        | if .statusLine.command? and (.statusLine.command | test("pwsh")) then
+            .statusLine.command = "~/.claude/scripts/statusline-command.sh"
+          else . end
+
+        # 4. Rewrite PowerShell hook commands to bash equivalents
+        | walk(
+            if type == "object" and .command? and (.command | type == "string") and (.command | test("pwsh"))
+            then .command = (.command
+                | gsub("pwsh(\\.exe)?\\s+-NoProfile\\s+(-ExecutionPolicy\\s+\\S+\\s+)?-File\\s+"; "")
+                | gsub("pwsh(\\.exe)?\\s+-NoProfile\\s+(-ExecutionPolicy\\s+\\S+\\s+)?-Command\\s+\"?"; "")
+                | gsub("\"$"; "")
+                | gsub("& "; "")
+                | gsub("; "; " && ")
+                | gsub("\\.ps1"; ".sh")
+            )
+            else . end
+        )
+    ' "$src" > "${dst}.tmp" && mv "${dst}.tmp" "$dst"
+}
+
 if [ -d "$CONFIG_SOURCE" ]; then
     # Fix Windows CRLF line endings in shell scripts (bind mounts from Windows
     # hosts may have \r\n even with .gitattributes if the repo lacks one).
@@ -20,11 +66,44 @@ if [ -d "$CONFIG_SOURCE" ]; then
     # so config changes are picked up on container restart.
     FORCE_LINK="${CLAUDE_CONFIG_SOURCE:+true}"
 
-    # Symlink shared config dirs.
-    # Re-link when: forced, missing, or present as a stale physical copy
-    # (not a symlink). A stale physical copy is backed up before relinking,
-    # so no work is lost if the user customised it.
-    for item in hooks skills commands scripts ccstatusline; do
+    # --- Executable dirs: copy with CRLF normalization -------------------------
+    # hooks/ and scripts/ contain shell scripts that may have Windows CRLF line
+    # endings from a Windows host. The default host mount is read-only, so we
+    # cannot sed -i in place. Instead, copy .sh files to the writable account
+    # dir, stripping CRLF during the copy. Non-.sh files (json, psm1) are
+    # copied as-is for completeness (hooks/lib/, hooks/known-issues.json).
+    for item in hooks scripts; do
+        if [ -d "$CONFIG_SOURCE/$item" ]; then
+            target="$ACCOUNT_DIR/$item"
+            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
+                if [ -z "$CLAUDE_CONFIG_SOURCE" ]; then
+                    # Read-only mount: copy + CRLF normalize
+                    rm -rf "$target" 2>/dev/null
+                    mkdir -p "$target"
+                    (cd "$CONFIG_SOURCE/$item" && find . -type f 2>/dev/null) | while IFS= read -r rel; do
+                        mkdir -p "$target/$(dirname "$rel")" 2>/dev/null
+                        case "$rel" in
+                            *.sh) sed 's/\r$//' "$CONFIG_SOURCE/$item/$rel" > "$target/$rel"
+                                  chmod +x "$target/$rel" ;;
+                            *)    cp "$CONFIG_SOURCE/$item/$rel" "$target/$rel" ;;
+                        esac
+                    done
+                    echo "[entrypoint] $item: copied and CRLF-normalized from read-only mount"
+                else
+                    # Writable CLAUDE_CONFIG_SOURCE: symlink as before
+                    if [ -e "$target" ] && [ ! -L "$target" ]; then
+                        backup="${target}.stale.$(date +%s)"
+                        mv "$target" "$backup"
+                        echo "[entrypoint] $item: backed up stale copy to $backup"
+                    fi
+                    ln -sfn "$CONFIG_SOURCE/$item" "$target"
+                fi
+            fi
+        fi
+    done
+
+    # --- Non-executable dirs: symlink (no CRLF concern) ----------------------
+    for item in skills commands ccstatusline; do
         if [ -d "$CONFIG_SOURCE/$item" ]; then
             target="$ACCOUNT_DIR/$item"
             if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
@@ -38,32 +117,60 @@ if [ -d "$CONFIG_SOURCE" ]; then
         fi
     done
 
-    # settings.json: generate a container-local copy with sandbox disabled.
+    # settings.json: generate a container-optimized copy.
     #
-    # Why: the host settings.json sets sandbox.enabled=true with glob-based
-    # deny rules (Read(**/.env), etc.). On Linux that triggers:
-    #   - a "Sandbox disabled: bubblewrap/socat not installed" warning, and
-    #   - a "Glob patterns in sandbox permission rules not supported" warning.
-    # Neither issue exists inside the container: the container itself is the
-    # isolation boundary, and the PreToolUse sensitive-file-guard.sh hook
-    # applies the same glob-based protection at the application layer
-    # independently of the OS sandbox.
+    # The host settings.json may be macOS (bash hooks, Seatbelt sandbox) or
+    # Windows (PowerShell hooks, no Linux sandbox). The container always runs
+    # Linux, so we apply a comprehensive transformation:
+    #   - Disable sandbox (container itself is the isolation boundary)
+    #   - Strip glob-based permission deny rules (hook provides protection)
+    #   - Rewrite PowerShell hook commands to bash equivalents
+    #   - Fix statusLine command if it uses PowerShell
     #
-    # Strategy: jq-merge sandbox.enabled=false into a local copy and symlink
-    # settings.json to that copy. The host file is never modified, so macOS
-    # Seatbelt-based protection on the host remains intact.
+    # The host file is never modified (read-only mount). The generated
+    # settings.container.json is symlinked as settings.json in the writable
+    # account state directory.
     if [ -f "$CONFIG_SOURCE/settings.json" ]; then
         CONTAINER_SETTINGS="$ACCOUNT_DIR/settings.container.json"
         if command -v jq >/dev/null 2>&1; then
-            jq '.sandbox.enabled = false' "$CONFIG_SOURCE/settings.json" \
-                > "$CONTAINER_SETTINGS.tmp" \
-                && mv "$CONTAINER_SETTINGS.tmp" "$CONTAINER_SETTINGS"
-            ln -sf "$CONTAINER_SETTINGS" "$ACCOUNT_DIR/settings.json"
+            if generate_container_settings "$CONFIG_SOURCE/settings.json" "$CONTAINER_SETTINGS"; then
+                # Validate the generated JSON
+                if jq empty "$CONTAINER_SETTINGS" 2>/dev/null; then
+                    ln -sf "$CONTAINER_SETTINGS" "$ACCOUNT_DIR/settings.json"
+                    # Log transformation summary
+                    pwsh_count=$(jq -r '[.. | objects | .command? // empty | select(test("pwsh"))] | length' "$CONFIG_SOURCE/settings.json" 2>/dev/null || echo 0)
+                    if [ "$pwsh_count" -gt 0 ]; then
+                        echo "[entrypoint] settings.json: rewrote $pwsh_count PowerShell hook(s) to bash"
+                    fi
+                    echo "[entrypoint] settings.json: container-optimized (sandbox=off, glob deny rules stripped)"
+                else
+                    echo "[entrypoint] ERROR: generated settings.container.json is invalid JSON, using raw host settings"
+                    ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
+                fi
+            else
+                echo "[entrypoint] ERROR: settings transformation failed, using raw host settings"
+                ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
+            fi
         else
             # Fallback: raw symlink (jq is always present in our image, this
             # branch only runs on accidentally stripped-down base images).
+            echo "[entrypoint] WARNING: jq not found, using raw host settings (warnings expected)"
             ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
         fi
+    fi
+
+    # Ensure logs directory exists (hooks write to ~/.claude/logs/)
+    mkdir -p "$ACCOUNT_DIR/logs" 2>/dev/null
+
+    # Warn about hook scripts referenced in settings but missing on disk
+    if [ -f "$ACCOUNT_DIR/settings.json" ] && command -v jq >/dev/null 2>&1; then
+        jq -r '.. | objects | .command? // empty' "$ACCOUNT_DIR/settings.json" 2>/dev/null \
+            | grep -oE '(~|/)[^ ]+\.sh' | sort -u | while IFS= read -r script; do
+            resolved="${script/#\~/$HOME}"
+            if [ ! -f "$resolved" ]; then
+                echo "[entrypoint] WARNING: hook references missing script: $script"
+            fi
+        done
     fi
 
     # Symlink other shared config files

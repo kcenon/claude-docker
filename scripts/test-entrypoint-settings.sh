@@ -1,0 +1,194 @@
+#!/bin/bash
+# test-entrypoint-settings.sh
+# Integration test for the entrypoint settings.json transformation.
+# Tests that both macOS and Windows host settings are correctly converted
+# to container-compatible settings.
+#
+# Usage: ./scripts/test-entrypoint-settings.sh [path-to-claude-config]
+# Default: assumes ../claude-config/ relative to this script's parent dir.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_CONFIG="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)/claude-config/global}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+PASS=0
+FAIL=0
+
+assert_eq() {
+    local desc="$1" expected="$2" actual="$3"
+    if [ "$expected" = "$actual" ]; then
+        echo -e "  ${GREEN}PASS${NC}: $desc"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: $desc"
+        echo "    expected: $expected"
+        echo "    actual:   $actual"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+assert_zero() {
+    local desc="$1" actual="$2"
+    if [ "$actual" = "0" ]; then
+        echo -e "  ${GREEN}PASS${NC}: $desc"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: $desc (got $actual)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+assert_nonzero() {
+    local desc="$1" actual="$2"
+    if [ "$actual" != "0" ] && [ -n "$actual" ]; then
+        echo -e "  ${GREEN}PASS${NC}: $desc (got $actual)"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: $desc (expected nonzero)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+# --- Load transformation function from entrypoint ---
+# Source only the function definition (not the full entrypoint logic)
+eval "$(sed -n '/^generate_container_settings()/,/^}/p' "$SCRIPT_DIR/entrypoint.sh")"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "ERROR: jq is required to run these tests"
+    exit 1
+fi
+
+TMPDIR_TEST=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_TEST"' EXIT
+
+# ============================================================================
+echo "=== Test Suite 1: macOS settings (settings.json) ==="
+# ============================================================================
+
+MACOS_SETTINGS="$CLAUDE_CONFIG/settings.json"
+if [ ! -f "$MACOS_SETTINGS" ]; then
+    echo "SKIP: $MACOS_SETTINGS not found"
+else
+    OUT="$TMPDIR_TEST/macos-container.json"
+    generate_container_settings "$MACOS_SETTINGS" "$OUT"
+
+    # sandbox disabled
+    val=$(jq -r '.sandbox.enabled' "$OUT")
+    assert_eq "sandbox.enabled = false" "false" "$val"
+
+    # no glob patterns in permissions.deny
+    glob_count=$(jq '[.permissions.deny[]? | select(test("[*]"))] | length' "$OUT")
+    assert_zero "no glob patterns in permissions.deny" "$glob_count"
+
+    # non-glob deny rules preserved
+    deny_count=$(jq '.permissions.deny | length' "$OUT")
+    assert_nonzero "non-glob deny rules preserved" "$deny_count"
+
+    # no pwsh anywhere
+    pwsh_count=$(jq '[.. | strings | select(test("pwsh"))] | length' "$OUT")
+    assert_zero "no pwsh references" "$pwsh_count"
+
+    # all hook commands end in .sh
+    non_sh=$(jq '[.. | objects | .command? // empty | select(test("\\.(ps1|exe)$"))] | length' "$OUT")
+    assert_zero "all hook commands use .sh" "$non_sh"
+
+    # statusLine uses .sh
+    sl=$(jq -r '.statusLine.command' "$OUT")
+    assert_eq "statusLine uses .sh script" "~/.claude/scripts/statusline-command.sh" "$sl"
+
+    # conflict-guard.sh present (macOS-only hook)
+    cg=$(jq '[.. | objects | .command? // empty | select(test("conflict-guard"))] | length' "$OUT")
+    assert_nonzero "conflict-guard.sh present (macOS)" "$cg"
+
+    # valid JSON
+    if jq empty "$OUT" 2>/dev/null; then
+        echo -e "  ${GREEN}PASS${NC}: output is valid JSON"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: output is not valid JSON"
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+# ============================================================================
+echo ""
+echo "=== Test Suite 2: Windows settings (settings.windows.json) ==="
+# ============================================================================
+
+WIN_SETTINGS="$CLAUDE_CONFIG/settings.windows.json"
+if [ ! -f "$WIN_SETTINGS" ]; then
+    echo "SKIP: $WIN_SETTINGS not found"
+else
+    OUT="$TMPDIR_TEST/windows-container.json"
+    generate_container_settings "$WIN_SETTINGS" "$OUT"
+
+    # sandbox disabled
+    val=$(jq -r '.sandbox.enabled' "$OUT")
+    assert_eq "sandbox.enabled = false" "false" "$val"
+
+    # no glob patterns
+    glob_count=$(jq '[.permissions.deny[]? | select(test("[*]"))] | length' "$OUT")
+    assert_zero "no glob patterns in permissions.deny" "$glob_count"
+
+    # no pwsh anywhere
+    pwsh_count=$(jq '[.. | strings | select(test("pwsh"))] | length' "$OUT")
+    assert_zero "no pwsh references" "$pwsh_count"
+
+    # all hook commands end in .sh
+    non_sh=$(jq '[.. | objects | .command? // empty | select(test("\\.(ps1|exe)$"))] | length' "$OUT")
+    assert_zero "all hook commands use .sh" "$non_sh"
+
+    # statusLine uses .sh
+    sl=$(jq -r '.statusLine.command' "$OUT")
+    assert_eq "statusLine uses .sh script" "~/.claude/scripts/statusline-command.sh" "$sl"
+
+    # conflict-guard absent (excluded in Windows source)
+    cg=$(jq '[.. | objects | .command? // empty | select(test("conflict-guard"))] | length' "$OUT")
+    assert_zero "conflict-guard absent (Windows)" "$cg"
+
+    # SessionEnd compound command correctly converted
+    se=$(jq -r '.hooks.SessionEnd[0].hooks[0].command' "$OUT")
+    assert_eq "SessionEnd compound command" "~/.claude/hooks/session-logger.sh end && ~/.claude/hooks/cleanup.sh" "$se"
+
+    # valid JSON
+    if jq empty "$OUT" 2>/dev/null; then
+        echo -e "  ${GREEN}PASS${NC}: output is valid JSON"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: output is not valid JSON"
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+# ============================================================================
+echo ""
+echo "=== Test Suite 3: Idempotency ==="
+# ============================================================================
+
+if [ -f "$MACOS_SETTINGS" ]; then
+    OUT1="$TMPDIR_TEST/idem-pass1.json"
+    OUT2="$TMPDIR_TEST/idem-pass2.json"
+    generate_container_settings "$MACOS_SETTINGS" "$OUT1"
+    generate_container_settings "$OUT1" "$OUT2"
+
+    if diff -q "$OUT1" "$OUT2" >/dev/null 2>&1; then
+        echo -e "  ${GREEN}PASS${NC}: transformation is idempotent"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}FAIL${NC}: transformation is NOT idempotent"
+        diff "$OUT1" "$OUT2" | head -20
+        FAIL=$((FAIL + 1))
+    fi
+fi
+
+# ============================================================================
+echo ""
+echo "=== Results ==="
+echo -e "  ${GREEN}Passed${NC}: $PASS"
+echo -e "  ${RED}Failed${NC}: $FAIL"
+
+[ "$FAIL" -eq 0 ] && exit 0 || exit 1
