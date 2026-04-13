@@ -82,6 +82,14 @@ function Invoke-Up {
     Write-Host 'Containers started.' -ForegroundColor Green
     Write-Host ''
     Invoke-Compose -ProjectRoot $ProjectRoot ps
+
+    # Lightweight post-start GitHub auth check (non-blocking)
+    Write-Host ''
+    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    if ($cid) {
+        Start-Sleep -Seconds 2  # wait for entrypoint gh auth setup
+        Test-ContainerGhAuth -Service 'claude-a' | Out-Null
+    }
 }
 
 function Invoke-Down {
@@ -224,6 +232,88 @@ function Invoke-GhAuth {
     }
 }
 
+# --- GitHub Auth Helpers ------------------------------------------------------
+
+function Refresh-GhToken {
+    <#
+    .SYNOPSIS
+    Refresh GH_TOKEN in .env from the host's gh CLI.
+    Returns $true if token was verified/refreshed, $false if gh is unavailable.
+    Non-blocking: callers should treat $false as a warning, not an error.
+    #>
+    $envFile = Join-Path $ProjectRoot '.env'
+
+    if (-not (Test-Command 'gh')) {
+        Write-LogInfo 'gh CLI not found on host — skipping GitHub token refresh.'
+        return $false
+    }
+
+    $null = & gh auth status 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-LogWarn 'GitHub CLI not authenticated on host.'
+        Write-Host '  Run: gh auth login -h github.com' -ForegroundColor DarkGray
+        Write-Host '  Then: .\scripts\claude-docker.ps1 gh-auth' -ForegroundColor DarkGray
+        return $false
+    }
+
+    $freshToken = & gh auth token 2>$null
+    if (-not $freshToken) {
+        Write-LogWarn 'Could not extract GitHub token from host gh CLI.'
+        return $false
+    }
+
+    # Compare with current .env value
+    $currentToken = ''
+    if (Test-Path $envFile) {
+        $envData = Read-EnvFile -Path $envFile
+        $currentToken = $envData['GH_TOKEN']
+    }
+
+    if ($freshToken -eq $currentToken) {
+        Write-Host '  * GH_TOKEN is current — no update needed.' -ForegroundColor Green
+        return $true
+    }
+
+    # Update or append GH_TOKEN
+    if (-not (Test-Path $envFile)) {
+        Write-LogWarn '.env not found — cannot save GH_TOKEN.'
+        return $false
+    }
+    Set-EnvValue -Path $envFile -Key 'GH_TOKEN' -Value $freshToken
+
+    if (-not $currentToken) {
+        Write-Host '  * GH_TOKEN added to .env.' -ForegroundColor Green
+    }
+    else {
+        Write-Host '  * GH_TOKEN refreshed in .env (token changed).' -ForegroundColor Green
+    }
+    return $true
+}
+
+function Test-ContainerGhAuth {
+    <#
+    .SYNOPSIS
+    Verify GitHub auth inside a running container.
+    Returns $true if gh auth is OK, $false otherwise.
+    #>
+    param([string]$Service = 'claude-a')
+
+    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $Service
+    if (-not $cid) { return $false }
+
+    $null = & docker exec $cid gh auth status 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  * GitHub auth: OK ($Service)" -ForegroundColor Green
+        return $true
+    }
+    else {
+        Write-Host "  ! GitHub auth: not configured ($Service)" -ForegroundColor Yellow
+        Write-Host '    git push/pull and gh commands may fail.' -ForegroundColor DarkGray
+        Write-Host '    Fix: .\scripts\claude-docker.ps1 gh-auth' -ForegroundColor DarkGray
+        return $false
+    }
+}
+
 function Invoke-Build {
     Write-Host 'Building Docker image...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot build @Arguments
@@ -234,20 +324,39 @@ function Invoke-Update {
     Write-Host 'Updating Claude Code to latest version' -ForegroundColor White
     Write-Host ''
 
-    Write-Host '[1/3] Rebuilding image (--no-cache)...' -ForegroundColor Cyan
+    # Pre-check and refresh GitHub auth token from host
+    Write-Host '[1/5] Checking GitHub auth on host...' -ForegroundColor Cyan
+    $ghOk = Refresh-GhToken
+    Write-Host ''
+
+    if (-not $ghOk) {
+        Write-Host '[2/5] Skipping token refresh (gh unavailable or unauthenticated)' -ForegroundColor Cyan
+    }
+    else {
+        Write-Host '[2/5] GitHub token verified' -ForegroundColor Cyan
+    }
+    Write-Host ''
+
+    Write-Host '[3/5] Rebuilding image (--no-cache)...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot build --no-cache
 
-    Write-Host '[2/3] Recreating containers...' -ForegroundColor Cyan
+    Write-Host '[4/5] Recreating containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
 
-    Write-Host '[3/3] Verifying version...' -ForegroundColor Cyan
+    # Verify version and GitHub auth
+    Write-Host '[5/5] Verifying...' -ForegroundColor Cyan
     $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
     if ($cid) {
         $version = & docker exec $cid claude --version 2>$null
         if (-not $version) { $version = 'unknown' }
+        Write-Host "  * Claude Code version: $version" -ForegroundColor Green
+
+        # Wait briefly for entrypoint to complete gh auth setup
+        Start-Sleep -Seconds 2
+        Test-ContainerGhAuth -Service 'claude-a' | Out-Null
+
         Write-Host ''
-        Write-Host 'Update complete. ' -ForegroundColor Green -NoNewline
-        Write-Host "Claude Code version: $version" -ForegroundColor White
+        Write-Host 'Update complete.' -ForegroundColor Green
     }
     else {
         Write-Host ''
