@@ -12,3 +12,8 @@ docker-compose.linux.yml
 .npm-cache/
 package-lock.json
 node_modules/
+
+# TUI dashboard build artifacts (Go binary, built by install.sh or 'build-tui')
+tui/claude-docker-tui
+tui/claude-docker-tui.exe
+tui/claude-docker-tui-*
