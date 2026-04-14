@@ -162,6 +162,23 @@ function Test-NodeInstalled {
     return $false
 }
 
+# Test-GoInstalled returns $true when Go >= 1.21 is available.
+# Go is OPTIONAL — only required for building the TUI dashboard binary.
+function Test-GoInstalled {
+    if (-not (Test-Command 'go')) { return $false }
+    $raw = (& go version 2>$null) -replace '.*go(\d+\.\d+).*', '$1'
+    if (-not $raw -or -not ($raw -match '^\d+\.\d+$')) { return $false }
+    $parts = $raw.Split('.')
+    [int]$major = $parts[0]
+    [int]$minor = $parts[1]
+    if ($major -gt 1 -or ($major -eq 1 -and $minor -ge 21)) {
+        Write-LogSuccess "Go $raw detected (TUI build available)"
+        return $true
+    }
+    Write-LogWarn "Go $raw detected but version < 1.21 — TUI build will be skipped"
+    return $false
+}
+
 function Install-Prerequisite {
     param([string]$Tool)
 
@@ -180,6 +197,10 @@ function Install-Prerequisite {
                 & winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
                 Write-LogWarn 'Node.js installed. You may need to restart your terminal for PATH updates.'
             }
+            'go' {
+                & winget install -e --id GoLang.Go --accept-source-agreements --accept-package-agreements
+                Write-LogWarn 'Go installed. You may need to restart your terminal for PATH updates.'
+            }
         }
         return ($LASTEXITCODE -eq 0)
     }
@@ -189,6 +210,7 @@ function Install-Prerequisite {
         'docker' { Write-LogInfo '  https://www.docker.com/products/docker-desktop/' }
         'git'    { Write-LogInfo '  https://git-scm.com/download/win' }
         'node'   { Write-LogInfo '  https://nodejs.org/' }
+        'go'     { Write-LogInfo '  https://go.dev/dl/' }
     }
     return $false
 }
@@ -481,6 +503,70 @@ function Invoke-ImageBuild {
     }
 }
 
+# --- TUI Dashboard Build ------------------------------------------------------
+
+# Invoke-TUIBuild compiles the Go-based TUI dashboard. Optional — silently
+# skips when Go toolchain is missing or tui/ directory is absent.
+function Invoke-TUIBuild {
+    $tuiDir = Join-Path $ProjectRoot 'tui'
+    $goMod = Join-Path $tuiDir 'go.mod'
+
+    if (-not (Test-Path $tuiDir) -or -not (Test-Path $goMod)) {
+        Write-LogInfo "TUI source not found at $tuiDir — skipping TUI build."
+        return
+    }
+
+    Write-LogStep 'Building TUI dashboard'
+
+    if (-not (Test-GoInstalled)) {
+        Write-LogWarn 'Go toolchain not available — TUI dashboard will not be built.'
+        Write-LogInfo "Install Go 1.21+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
+        $answer = Read-Host 'Install Go automatically now? [Y/n]'
+        if ($answer -eq '' -or $answer -match '^[Yy]') {
+            if (-not (Install-Prerequisite -Tool 'go')) {
+                Write-LogWarn 'Failed to install Go. Skipping TUI build.'
+                return
+            }
+            if (-not (Test-GoInstalled)) {
+                Write-LogWarn 'Go install did not complete. Skipping TUI build.'
+                return
+            }
+        }
+        else {
+            return
+        }
+    }
+
+    Write-LogInfo 'Compiling claude-docker-tui (this may take up to a minute)...'
+    Push-Location $tuiDir
+    try {
+        # Resolve module dependencies first
+        & go mod download 2>&1 | Select-Object -Last 3
+
+        # Version stamp from git
+        $version = 'dev'
+        try {
+            $gitVer = & git -C $ProjectRoot rev-parse --short HEAD 2>$null
+            if ($gitVer) { $version = $gitVer }
+        } catch {}
+
+        & go build -ldflags "-X main.version=$version" -o claude-docker-tui.exe . 2>&1 | Select-Object -Last 5
+
+        $binary = Join-Path $tuiDir 'claude-docker-tui.exe'
+        if (Test-Path $binary) {
+            $size = [math]::Round((Get-Item $binary).Length / 1MB, 1)
+            Write-LogSuccess "TUI dashboard built: tui\claude-docker-tui.exe (${size}MB)"
+            Write-LogInfo 'Launch with: scripts\claude-docker.ps1 tui'
+        }
+        else {
+            Write-LogWarn 'TUI binary not found after build. Check output above for errors.'
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 # --- Authentication -----------------------------------------------------------
 
 function Invoke-AuthSetup {
@@ -697,7 +783,7 @@ Write-Host ''
 Get-Configuration
 
 # Calculate total steps based on choices
-$totalSteps = 8  # prereqs, env, dirs, build, auth, start, deps, verify
+$totalSteps = 9  # prereqs, env, dirs, build, tui-build, auth, start, deps, verify
 if ($Script:Tier -eq 'B') { $totalSteps++ }
 Initialize-StepCounter -Total $totalSteps
 
@@ -721,6 +807,7 @@ Invoke-PrerequisiteChecks
 New-EnvFile
 New-StateDirs
 Invoke-ImageBuild
+Invoke-TUIBuild
 Invoke-AuthSetup
 Invoke-WorktreeSetup
 Start-Containers

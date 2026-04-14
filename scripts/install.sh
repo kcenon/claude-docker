@@ -307,6 +307,25 @@ check_git() {
     return 1
 }
 
+# check_go returns 0 if Go toolchain is available at version >= 1.21.
+# Go is OPTIONAL — used only to build the TUI dashboard binary.
+check_go() {
+    if ! check_command go; then
+        return 1
+    fi
+    local raw major minor
+    raw=$(go version 2>/dev/null | grep -oE 'go[0-9]+\.[0-9]+' | head -1 | sed 's/^go//')
+    [[ -z "$raw" ]] && return 1
+    major="${raw%%.*}"
+    minor="${raw##*.}"
+    if (( major > 1 )) || { (( major == 1 )) && (( minor >= 21 )); }; then
+        log_success "Go $raw detected (TUI build available)"
+        return 0
+    fi
+    log_warn "Go $raw detected but version < 1.21 — TUI build will be skipped"
+    return 1
+}
+
 install_prerequisite() {
     local tool="$1"
 
@@ -326,6 +345,7 @@ install_prerequisite() {
                         sudo apt-get install -y -qq nodejs
                         ;;
                     git) sudo apt-get install -y -qq git ;;
+                    go)  sudo apt-get install -y -qq golang-go ;;
                 esac
             else
                 log_error "apt-get not found. Please install $tool manually."
@@ -365,6 +385,7 @@ install_prerequisite() {
                         ;;
                     node) brew install node@20 ;;
                     git)  brew install git ;;
+                    go)   brew install go ;;
                 esac
             else
                 log_error "Homebrew not found. Please install $tool manually."
@@ -668,6 +689,62 @@ build_image() {
     log_success "Docker image built successfully"
 }
 
+# --- TUI Dashboard Build ------------------------------------------------------
+
+# build_tui compiles the Go-based TUI dashboard at tui/claude-docker-tui.
+# Silently skips when the Go toolchain is unavailable or tui/ directory is missing.
+# The TUI is optional — users can still use the bash CLI wrapper without it.
+build_tui() {
+    local tui_dir="$PROJECT_ROOT/tui"
+
+    if [[ ! -d "$tui_dir" ]] || [[ ! -f "$tui_dir/go.mod" ]]; then
+        log_info "TUI source not found at $tui_dir — skipping TUI build."
+        return 0
+    fi
+
+    log_step "Building TUI dashboard"
+
+    if ! check_go; then
+        log_warn "Go toolchain not available — TUI dashboard will not be built."
+        log_info "Install Go 1.21+ and re-run 'scripts/claude-docker build-tui' later."
+        if prompt_confirm "Install Go automatically now?" "y"; then
+            install_prerequisite go || {
+                log_warn "Failed to install Go. Skipping TUI build."
+                return 0
+            }
+            # Re-check after install
+            if ! check_go; then
+                log_warn "Go install did not complete. Skipping TUI build."
+                return 0
+            fi
+        else
+            return 0
+        fi
+    fi
+
+    log_info "Compiling claude-docker-tui (this may take up to a minute)..."
+    (
+        cd "$tui_dir"
+        # Resolve module dependencies first (safe to re-run)
+        go mod download 2>&1 | tail -3
+        # Build with version stamp matching the current git state if available
+        local version="dev"
+        if command -v git >/dev/null 2>&1 && git -C "$PROJECT_ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
+            version=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)
+        fi
+        go build -ldflags "-X main.version=$version" -o claude-docker-tui . 2>&1 | tail -5
+    )
+
+    if [[ -x "$tui_dir/claude-docker-tui" ]]; then
+        local size
+        size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
+        log_success "TUI dashboard built: tui/claude-docker-tui ($size)"
+        log_info "Launch with: scripts/claude-docker tui"
+    else
+        log_warn "TUI binary not found after build. Check output above for errors."
+    fi
+}
+
 # --- Authentication -----------------------------------------------------------
 
 run_authentication() {
@@ -879,6 +956,14 @@ print_summary() {
     echo ""
     echo -e "${BOLD}Quick Commands (via CLI wrapper):${NC}"
     echo ""
+
+    # Advertise TUI dashboard when the binary was built
+    if [[ -x "$PROJECT_ROOT/tui/claude-docker-tui" ]]; then
+        echo -e "  ${CYAN}# Interactive multi-account dashboard (recommended)${NC}"
+        echo -e "  scripts/claude-docker tui"
+        echo ""
+    fi
+
     echo -e "  ${CYAN}# Start Claude Code${NC}"
     echo -e "  scripts/claude-docker claude"
     echo ""
@@ -937,7 +1022,7 @@ main() {
     collect_configuration
 
     # Calculate total steps based on choices
-    TOTAL_STEPS=8  # prereqs, env, dirs, build, auth, start, deps, verify
+    TOTAL_STEPS=9  # prereqs, env, dirs, build, tui-build, auth, start, deps, verify
     [[ "$TIER" == "B" ]] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
 
     # Show configuration summary
@@ -960,6 +1045,7 @@ main() {
     generate_env
     create_state_dirs
     build_image
+    build_tui
     run_authentication
     setup_worktrees
     start_containers

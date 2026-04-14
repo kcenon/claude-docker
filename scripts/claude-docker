@@ -648,6 +648,53 @@ cmd_usage() {
     CLAUDE_CONFIG_DIR="$merged_dir" npx ccusage@latest "$report_type" ${pass_args[@]+"${pass_args[@]}"}
 }
 
+cmd_tui() {
+    local tui_bin="$PROJECT_ROOT/tui/claude-docker-tui"
+    if [[ ! -x "$tui_bin" ]]; then
+        log_error "TUI binary not found at $tui_bin"
+        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build it."
+        echo -e "  Requires Go 1.21+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
+        exit 1
+    fi
+    exec "$tui_bin" "$@"
+}
+
+cmd_build_tui() {
+    local tui_dir="$PROJECT_ROOT/tui"
+    if [[ ! -d "$tui_dir" ]] || [[ ! -f "$tui_dir/go.mod" ]]; then
+        log_error "TUI source not found at $tui_dir"
+        exit 1
+    fi
+    if ! command -v go >/dev/null 2>&1; then
+        log_error "Go toolchain not found. Install Go 1.21+ first:"
+        echo -e "  macOS:  ${DIM}brew install go${NC}"
+        echo -e "  Linux:  ${DIM}sudo apt install golang-go${NC}"
+        exit 1
+    fi
+
+    echo -e "${CYAN}Building TUI dashboard...${NC}"
+    local version="dev"
+    if git -C "$PROJECT_ROOT" rev-parse --short HEAD >/dev/null 2>&1; then
+        version=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)
+    fi
+
+    (
+        cd "$tui_dir"
+        go mod download 2>&1 | tail -3
+        go build -ldflags "-X main.version=$version" -o claude-docker-tui . 2>&1
+    )
+
+    if [[ -x "$tui_dir/claude-docker-tui" ]]; then
+        local size
+        size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
+        echo -e "${GREEN}TUI built:${NC} $tui_dir/claude-docker-tui ($size)"
+        echo -e "  Launch with ${GREEN}scripts/claude-docker tui${NC}"
+    else
+        log_error "Build failed — binary not produced."
+        exit 1
+    fi
+}
+
 cmd_help() {
     ensure_compose_cmd
     local cmd_display
@@ -671,6 +718,7 @@ ${BOLD}LIFECYCLE${NC}
 
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
+  ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
   ${GREEN}auth${NC} [service]        Inject Claude OAuth credentials from macOS Keychain
   ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
   ${GREEN}exec${NC} <service>        Open shell in a service
@@ -679,6 +727,7 @@ ${BOLD}USAGE TRACKING${NC}
   ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
                         Types: daily, monthly, session, blocks, statusline
                         Flags: --since, --until, --json, --breakdown, --compact
+  ${GREEN}build-tui${NC}             Rebuild TUI dashboard binary (requires Go 1.21+)
 
 ${BOLD}SCALING${NC}
   ${GREEN}scale${NC} <N>             Set number of accounts (1-26) and regenerate
@@ -728,6 +777,8 @@ main() {
         gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
+        build-tui) cmd_build_tui "$@" ;;
+        tui|dashboard) cmd_tui "$@" ;;
         update)    cmd_update "$@" ;;
         scale)     cmd_scale "$@" ;;
         config)    cmd_config "$@" ;;

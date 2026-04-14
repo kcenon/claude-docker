@@ -562,22 +562,77 @@ function Show-Help {
 
 # --- Main --------------------------------------------------------------------
 
+function Invoke-Tui {
+    $tuiBin = Join-Path $ProjectRoot 'tui\claude-docker-tui.exe'
+    if (-not (Test-Path $tuiBin)) {
+        Write-Host "TUI binary not found at $tuiBin" -ForegroundColor Red
+        Write-Host "  Run 'scripts\claude-docker.ps1 build-tui' to build it." -ForegroundColor White
+        Write-Host "  Requires Go 1.21+ toolchain. Install with 'winget install GoLang.Go' or from https://go.dev/dl/" -ForegroundColor DarkGray
+        exit 1
+    }
+    & $tuiBin @Arguments
+    exit $LASTEXITCODE
+}
+
+function Invoke-BuildTui {
+    $tuiDir = Join-Path $ProjectRoot 'tui'
+    if (-not (Test-Path (Join-Path $tuiDir 'go.mod'))) {
+        Write-Host "TUI source not found at $tuiDir" -ForegroundColor Red
+        exit 1
+    }
+    if (-not (Get-Command 'go' -ErrorAction SilentlyContinue)) {
+        Write-Host 'Go toolchain not found. Install Go 1.21+ first:' -ForegroundColor Red
+        Write-Host '  winget install GoLang.Go' -ForegroundColor DarkGray
+        Write-Host '  or: https://go.dev/dl/' -ForegroundColor DarkGray
+        exit 1
+    }
+
+    Write-Host 'Building TUI dashboard...' -ForegroundColor Cyan
+    $version = 'dev'
+    try {
+        $gitVer = & git -C $ProjectRoot rev-parse --short HEAD 2>$null
+        if ($gitVer) { $version = $gitVer }
+    } catch {}
+
+    Push-Location $tuiDir
+    try {
+        & go mod download 2>&1 | Select-Object -Last 3
+        & go build -ldflags "-X main.version=$version" -o claude-docker-tui.exe . 2>&1
+
+        $binary = Join-Path $tuiDir 'claude-docker-tui.exe'
+        if (Test-Path $binary) {
+            $size = [math]::Round((Get-Item $binary).Length / 1MB, 1)
+            Write-Host "TUI built: tui\claude-docker-tui.exe (${size}MB)" -ForegroundColor Green
+            Write-Host "  Launch with scripts\claude-docker.ps1 tui" -ForegroundColor White
+        } else {
+            Write-Host 'Build failed - binary not produced.' -ForegroundColor Red
+            exit 1
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 switch ($Command) {
-    'up'       { Invoke-Up }
-    'down'     { Invoke-Down }
-    'restart'  { Invoke-Restart }
-    'logs'     { Invoke-Logs }
-    'ps'       { Invoke-Ps }
-    'exec'     { Invoke-Exec }
-    'claude'   { Invoke-Claude }
-    'auth'     { Invoke-Auth }
-    'gh-auth'  { Invoke-GhAuth }
-    'usage'    { Invoke-Usage }
-    'build'    { Invoke-Build }
-    'update'   { Invoke-Update }
-    'scale'    { Invoke-Scale }
-    'config'   { Invoke-Config }
-    'compose'  { Invoke-ComposePass }
+    'up'         { Invoke-Up }
+    'down'       { Invoke-Down }
+    'restart'    { Invoke-Restart }
+    'logs'       { Invoke-Logs }
+    'ps'         { Invoke-Ps }
+    'exec'       { Invoke-Exec }
+    'claude'     { Invoke-Claude }
+    'tui'        { Invoke-Tui }
+    'dashboard'  { Invoke-Tui }
+    'auth'       { Invoke-Auth }
+    'gh-auth'    { Invoke-GhAuth }
+    'usage'      { Invoke-Usage }
+    'build'      { Invoke-Build }
+    'build-tui'  { Invoke-BuildTui }
+    'update'     { Invoke-Update }
+    'scale'      { Invoke-Scale }
+    'config'     { Invoke-Config }
+    'compose'    { Invoke-ComposePass }
     { $_ -in 'help', '--help', '-h' } { Show-Help }
     default {
         Write-Host "Unknown command: $Command" -ForegroundColor Red
