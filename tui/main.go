@@ -34,10 +34,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	env, err := config.LoadEnv(filepath.Join(projectRoot, ".env"))
+	envPath := filepath.Join(projectRoot, ".env")
+	env, err := config.LoadEnv(envPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: cannot load .env: %v\n", err)
-		env = config.NewEmptyEnv(projectRoot)
+		env = config.NewEmptyEnv(envPath)
 	}
 
 	composeClient := docker.NewClient(projectRoot, env)

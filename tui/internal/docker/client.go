@@ -94,6 +94,45 @@ func (c *Client) ExecArgs(service string, cmd ...string) (string, []string) {
 	return "docker", args
 }
 
+// BuildArgs returns (bin, args) for `docker compose build`.
+// When noCache is true, passes --no-cache to force a full rebuild.
+func (c *Client) BuildArgs(noCache bool) (string, []string) {
+	args := append(BuildComposeArgs(c.projectRoot, c.env), "build")
+	if noCache {
+		args = append(args, "--no-cache")
+	}
+	return "docker", args
+}
+
+// UpRecreateArgs returns (bin, args) for `docker compose up -d --force-recreate`.
+// Used after image rebuild or .env change so containers pick up new config.
+func (c *Client) UpRecreateArgs() (string, []string) {
+	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d", "--force-recreate")
+	return "docker", args
+}
+
+// RestartArgs returns (bin, args) for restarting a single service.
+// service must be a name produced by ServiceNames() (e.g. "claude-a").
+func (c *Client) RestartArgs(service string) (string, []string) {
+	args := append(BuildComposeArgs(c.projectRoot, c.env), "restart", service)
+	return "docker", args
+}
+
+// HasRunningContainers returns true if any compose service is currently up.
+// Used by gh-auth flow to decide whether a recreate is needed.
+func (c *Client) HasRunningContainers() bool {
+	infos, err := c.PS()
+	if err != nil {
+		return false
+	}
+	for _, ci := range infos {
+		if strings.EqualFold(ci.State, "running") {
+			return true
+		}
+	}
+	return false
+}
+
 // ServiceNames returns the expected service names based on NUM_ACCOUNTS.
 func (c *Client) ServiceNames() []string {
 	n := 1

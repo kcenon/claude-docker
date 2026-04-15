@@ -34,7 +34,7 @@ func NewApp(version, projectRoot string, env *config.Env, client *docker.Client)
 		env:         env,
 		client:      client,
 		manager:     mgr,
-		dashboard:   dashboard.New(mgr, client),
+		dashboard:   dashboard.New(mgr, client, env),
 	}
 }
 

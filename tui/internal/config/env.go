@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -79,6 +80,53 @@ func (e *Env) Set(key, value string) {
 	}
 	e.index[key] = len(e.entries)
 	e.entries = append(e.entries, entry{key: key, value: value, raw: key + "=" + value})
+}
+
+// Save writes the env file back to disk, preserving order/comments.
+// Uses atomic rename + 0600 permissions because the file holds secrets.
+func (e *Env) Save() error {
+	if e.path == "" {
+		return fmt.Errorf("env path not set")
+	}
+	dir := filepath.Dir(e.path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".env.tmp-*")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	w := bufio.NewWriter(tmp)
+	for _, ent := range e.entries {
+		if ent.key != "" {
+			if _, err := fmt.Fprintf(w, "%s=%s\n", ent.key, ent.value); err != nil {
+				tmp.Close()
+				return fmt.Errorf("write: %w", err)
+			}
+		} else {
+			if _, err := fmt.Fprintln(w, ent.raw); err != nil {
+				tmp.Close()
+				return fmt.Errorf("write: %w", err)
+			}
+		}
+	}
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("flush: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
+	if err := os.Rename(tmpName, e.path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }
 
 // NumAccounts returns the NUM_ACCOUNTS value from .env (default 1).
