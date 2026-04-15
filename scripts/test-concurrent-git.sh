@@ -18,6 +18,12 @@ index_to_letter() {
     printf "\\$(printf '%03o' $((96 + $1)))"
 }
 
+# Uppercase a single-letter string. Portable replacement for bash 4+ ${var^^}
+# (macOS ships bash 3.2 which does not support the ^^ expansion).
+to_upper() {
+    printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 # Cleanup on exit
 cleanup() {
     echo "=== Cleaning up ==="
@@ -55,7 +61,7 @@ echo "=== Starting containers with worktree override ==="
 export PROJECT_DIR="$REPO_DIR"
 for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     letter=$(index_to_letter "$i")
-    upper="${letter^^}"
+    upper=$(to_upper "$letter")
     export "PROJECT_DIR_${upper}=${REPO_DIR}-${letter}"
 done
 
@@ -67,7 +73,7 @@ echo "=== Running parallel commits ==="
 PIDS=()
 for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     letter=$(index_to_letter "$i")
-    upper="${letter^^}"
+    upper=$(to_upper "$letter")
     svc="claude-${letter}"
 
     docker compose -f "$PROJECT_DIR/docker-compose.yml" \
@@ -99,7 +105,7 @@ echo "=== Verifying results ==="
 
 for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     letter=$(index_to_letter "$i")
-    upper="${letter^^}"
+    upper=$(to_upper "$letter")
     worktree="${REPO_DIR}-${letter}"
 
     # Check worktree has 5 commits from its agent
@@ -112,8 +118,7 @@ for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     # Check no cross-contamination from other agents
     for j in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
         if [ "$j" -eq "$i" ]; then continue; fi
-        other_upper="$(index_to_letter "$j")"
-        other_upper="${other_upper^^}"
+        other_upper=$(to_upper "$(index_to_letter "$j")")
         cross=$(cd "$worktree" && git log --oneline --author="Agent ${other_upper}" | wc -l | tr -d ' ')
         if [ "$cross" -ne 0 ]; then
             echo "FAIL: Cross-contamination from Agent ${other_upper} in worktree-${letter}"
@@ -133,7 +138,7 @@ echo ""
 echo "=== ALL TESTS PASSED ==="
 for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     letter=$(index_to_letter "$i")
-    upper="${letter^^}"
+    upper=$(to_upper "$letter")
     echo "  Worktree ${upper}: 5 commits from Agent ${upper} (no cross-contamination)"
 done
 echo "  Repository integrity: OK"
