@@ -132,58 +132,6 @@ function Invoke-Claude {
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
 }
 
-function Invoke-Auth {
-    $service = if ($Arguments.Count -gt 0) { $Arguments[0] } else { '' }
-
-    # On Windows, look for file-based credentials from host Claude installation
-    $credFile = Join-Path $env:USERPROFILE '.claude\.credentials.json'
-    $creds = ''
-
-    if (Test-Path $credFile) {
-        $creds = Get-Content $credFile -Raw
-    }
-
-    if (-not $creds) {
-        Write-LogWarn 'No credentials found at ~/.claude/.credentials.json'
-        Write-Host 'Authenticate on the host first, then re-run this command:'
-        Write-Host '  claude auth login' -ForegroundColor DarkGray
-        Write-Host ''
-        Write-Host 'Or set API keys in .env (Path B):'
-        Write-Host '  CLAUDE_API_KEY_A=sk-ant-...' -ForegroundColor DarkGray
-        exit 1
-    }
-
-    # Determine which services to authenticate
-    $services = if ($service) { @($service) } else { @(Get-ServiceNames -ProjectRoot $ProjectRoot) }
-
-    Write-Host 'Injecting credentials from host' -ForegroundColor White
-
-    foreach ($svc in $services) {
-        $suffix = $svc -replace '^claude-', ''
-        $stateDir = Join-Path $env:USERPROFILE ".claude-state\account-$suffix"
-
-        if (-not (Test-Path $stateDir)) {
-            New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-        }
-
-        $destCred = Join-Path $stateDir '.credentials.json'
-        [System.IO.File]::WriteAllText($destCred, $creds, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "  * $svc - credentials written" -ForegroundColor Green
-    }
-
-    Write-Host ''
-
-    # Verify in first running container
-    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $services[0]
-    if ($cid) {
-        Write-Host "Verifying ($($services[0])):" -ForegroundColor DarkGray
-        & docker exec $cid claude auth status 2>&1
-    }
-    else {
-        Write-LogInfo 'Containers not running. Credentials will be available on next start.'
-    }
-}
-
 function Invoke-GhAuth {
     if (-not (Test-Command 'gh')) {
         Write-LogError 'gh CLI not found on host.'
@@ -529,7 +477,6 @@ function Show-Help {
     Write-Host ''
     Write-Host 'INTERACTIVE' -ForegroundColor White
     Write-Host '  claude [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Claude Code (default: claude-a)'
-    Write-Host '  auth [service]        ' -ForegroundColor Green -NoNewline; Write-Host 'Inject Claude credentials from host'
     Write-Host '  gh-auth               ' -ForegroundColor Green -NoNewline; Write-Host 'Inject GitHub token from host gh CLI'
     Write-Host '  exec <service>        ' -ForegroundColor Green -NoNewline; Write-Host 'Open shell in a service'
     Write-Host ''
@@ -624,7 +571,6 @@ switch ($Command) {
     'claude'     { Invoke-Claude }
     'tui'        { Invoke-Tui }
     'dashboard'  { Invoke-Tui }
-    'auth'       { Invoke-Auth }
     'gh-auth'    { Invoke-GhAuth }
     'usage'      { Invoke-Usage }
     'build'      { Invoke-Build }
