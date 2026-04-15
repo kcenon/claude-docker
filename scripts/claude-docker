@@ -7,7 +7,6 @@
 # Commands:
 #   up/down/restart   Manage containers
 #   claude [svc]      Start Claude Code (default: claude-a)
-#   auth [svc]        Inject OAuth credentials from macOS Keychain
 #   exec <svc>        Open shell in a service
 #   usage [type]      Token usage report
 #   build             Build/rebuild Docker image
@@ -307,82 +306,6 @@ verify_container_gh_auth() {
         echo -e "    ${DIM}git push/pull and gh commands may fail.${NC}"
         echo -e "    Fix: ${DIM}scripts/claude-docker gh-auth${NC}"
         return 1
-    fi
-}
-
-# Extract OAuth credentials from macOS Keychain (host-side).
-# Returns JSON string or empty on failure.
-get_keychain_credentials() {
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        return 1
-    fi
-    security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null
-}
-
-# Inject credentials JSON into a container's state directory on the host.
-inject_credentials() {
-    local svc="$1"
-    local creds="$2"
-
-    # Map service name to host state directory (claude-X -> account-X)
-    local suffix="${svc#claude-}"
-    local state_dir="$HOME/.claude-state/account-${suffix}"
-
-    if [[ ! -d "$state_dir" ]]; then
-        mkdir -p "$state_dir"
-        chmod 700 "$state_dir"
-    fi
-
-    echo "$creds" > "$state_dir/.credentials.json"
-    chmod 600 "$state_dir/.credentials.json"
-}
-
-cmd_auth() {
-    local service="${1:-}"
-    ensure_compose_cmd
-
-    # On macOS, extract credentials from Keychain (host-side auth)
-    local creds=""
-    creds=$(get_keychain_credentials) || true
-
-    if [[ -z "$creds" ]]; then
-        # Not macOS or no credentials in Keychain
-        echo -e "${YELLOW}No credentials found in macOS Keychain.${NC}"
-        echo -e "Authenticate on the host first, then re-run this command:"
-        echo -e "  ${DIM}claude auth login${NC}"
-        echo -e ""
-        echo -e "Or set API keys in .env (Path B):"
-        echo -e "  ${DIM}CLAUDE_API_KEY_A=sk-ant-...${NC}"
-        exit 1
-    fi
-
-    # Determine which services to authenticate
-    local services=()
-    if [[ -n "$service" ]]; then
-        services=("$service")
-    else
-        read -ra services <<< "$(get_service_names)"
-    fi
-
-    echo -e "${BOLD}Injecting credentials from macOS Keychain${NC}"
-    echo ""
-
-    for svc in "${services[@]}"; do
-        inject_credentials "$svc" "$creds"
-        echo -e "  ${GREEN}*${NC} $svc — credentials written"
-    done
-
-    echo ""
-
-    # Verify: check auth status in first running container
-    local first_svc="${services[0]}"
-    local cid
-    cid=$(get_container_id "$first_svc")
-    if [[ -n "$cid" ]]; then
-        echo -e "${DIM}Verifying ($first_svc):${NC}"
-        docker exec "$cid" claude auth status 2>&1 || true
-    else
-        log_info "Containers not running. Credentials will be available on next start."
     fi
 }
 
@@ -719,7 +642,6 @@ ${BOLD}LIFECYCLE${NC}
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
   ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
-  ${GREEN}auth${NC} [service]        Inject Claude OAuth credentials from macOS Keychain
   ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
   ${GREEN}exec${NC} <service>        Open shell in a service
 
@@ -744,7 +666,7 @@ HELP
     for idx in "${!svc_names[@]}"; do
         local svc="${svc_names[$idx]}"
         local suffix="${svc#claude-}"
-        local label="Account ${suffix^^}"
+        local label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
         if [[ "$idx" -eq 0 ]]; then
             label="$label (default)"
         fi
@@ -773,7 +695,6 @@ main() {
         ps)        cmd_ps "$@" ;;
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
-        auth)      cmd_auth "$@" ;;
         gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;

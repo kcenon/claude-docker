@@ -39,7 +39,7 @@ for i in "${!BRANCHES[@]}"; do
 
     git branch "$branch" 2>/dev/null || true
     git worktree add "$worktree" "$branch"
-    echo "  ${letter^^}: $worktree (branch: $branch)"
+    echo "  $(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]'): $worktree (branch: $branch)"
 done
 
 echo ""
@@ -47,6 +47,6 @@ echo "Add to .env:"
 for i in "${!BRANCHES[@]}"; do
     idx=$((i + 1))
     letter=$(index_to_letter "$idx")
-    upper="${letter^^}"
+    upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
     echo "  PROJECT_DIR_${upper}=${REPO_DIR%/}-${letter}"
 done

@@ -93,25 +93,14 @@ Choose your authentication path:
 
 **Path A -- Subscription accounts (Pro / Max / Team):**
 
-macOS:
+Authenticate inside each container after starting:
 ```bash
-# 1. Authenticate on host (one-time, opens browser)
-claude auth login
-
-# 2. Inject credentials into all containers
-scripts/claude-docker auth
-```
-
-Linux / WSL2:
-```bash
-# Authenticate inside each container after starting
 scripts/claude-docker claude claude-a
 # Inside container: claude auth login
 ```
 
-Note: On macOS, container-internal OAuth fails due to Docker network
-boundary limitations. The `auth` command extracts tokens from macOS
-Keychain instead.
+Note: Container-internal OAuth may fail on macOS due to Docker network
+boundary limitations. If it does, use Path B (API keys) below.
 
 **Path B -- Console API keys:**
 
@@ -159,7 +148,6 @@ scripts/claude-docker help       # Show all available commands
 | | `ps` | Show container status |
 | | `logs` | Follow container logs |
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
-| | `auth [service]` | Inject OAuth credentials from macOS Keychain |
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Advanced** | `config` | Show resolved compose configuration |
@@ -200,29 +188,20 @@ history, settings, memory, and credentials.
 
 ### Authentication
 
-On macOS, `scripts/claude-docker auth` extracts OAuth credentials from the
-host's macOS Keychain and injects them into each container's state directory.
-Host-side authentication (`claude auth login`) must be completed first.
-
-On Windows (native), `.\scripts\claude-docker.ps1 auth` copies credentials
-from the host's `~/.claude/.credentials.json` into each container's state
-directory. Authenticate on the host first with `claude auth login`.
-
-On Linux/WSL2, authenticate directly inside containers.
+Authenticate directly inside each container. Each container keeps its own
+credentials in its bind-mounted state directory, so you run this once per
+account.
 
 ```bash
-# macOS: extract from Keychain -> inject to all containers
-scripts/claude-docker auth
-
-# macOS: inject to specific container only
-scripts/claude-docker auth claude-a
-
-# Linux/WSL2: authenticate inside container
+# Authenticate inside a specific container
 scripts/claude-docker exec claude-a claude auth login
 
 # Check status in any container
 scripts/claude-docker exec claude-a claude auth status
 ```
+
+If container-internal OAuth fails on macOS due to Docker network boundary
+limitations, switch to Path B (API keys) in `.env`.
 
 **GitHub CLI (`gh`)** is automatically available inside containers. The host's
 `~/.config/gh/` is bind-mounted read-only, so `gh` commands use the host's
@@ -401,13 +380,6 @@ The `scripts/claude-docker` CLI auto-detects which overlays to apply.
 
 **"Authentication expired" inside container:**
 
-macOS:
-```bash
-claude auth login              # Re-authenticate on host
-scripts/claude-docker auth     # Re-inject to containers
-```
-
-Linux/WSL2:
 ```bash
 scripts/claude-docker exec claude-a claude auth login
 ```

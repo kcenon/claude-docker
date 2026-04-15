@@ -514,7 +514,8 @@ collect_configuration() {
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
             letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-            local upper="${letter^^}"
+            local upper
+            upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
             API_KEYS+=("$(prompt_secret "API key for Account $upper (sk-ant-...)")")
         done
 
@@ -571,7 +572,8 @@ generate_env() {
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
                 letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-                local upper="${letter^^}"
+                local upper
+                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "CLAUDE_API_KEY_${upper}=${API_KEYS[$((i-1))]}"
             done
             echo ""
@@ -583,7 +585,8 @@ generate_env() {
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
                 letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-                local upper="${letter^^}"
+                local upper
+                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "PROJECT_DIR_${upper}="
                 echo "CONTAINER_PROJECT_DIR_${upper}=/project-${letter}"
             done
