@@ -62,20 +62,22 @@ type Model struct {
 	nextRetryAt   time.Time // scheduled time for next auto-retry (zero = no retry pending)
 
 	// Action state (Docker rebuild / gh-auth / restart).
-	busy         bool        // true while a background op is running
-	showHelp     bool        // ? toggles a key-map overlay
-	statusText   string      // last toast message
-	statusLevel  statusLevel // toast color
-	statusExpiry time.Time   // when the toast should disappear
+	busy            bool        // true while a background op is running
+	showHelp        bool        // ? toggles a key-map overlay
+	skipPermissions bool        // pass --dangerously-skip-permissions to claude
+	statusText      string      // last toast message
+	statusLevel     statusLevel // toast color
+	statusExpiry    time.Time   // when the toast should disappear
 }
 
 // New creates a new dashboard model.
-func New(mgr *account.Manager, client *docker.Client, env *config.Env) Model {
+func New(mgr *account.Manager, client *docker.Client, env *config.Env, skipPermissions bool) Model {
 	return Model{
-		manager: mgr,
-		client:  client,
-		env:     env,
-		loading: true,
+		manager:         mgr,
+		client:          client,
+		env:             env,
+		loading:         true,
+		skipPermissions: skipPermissions,
 	}
 }
 
@@ -274,7 +276,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor < len(m.accounts) {
 				acct := m.accounts[m.cursor]
 				if acct.IsRunning() {
-					bin, args := m.client.ExecArgs(acct.ServiceName, "claude")
+					claudeArgs := []string{"claude"}
+					if m.skipPermissions {
+						claudeArgs = append(claudeArgs, "--dangerously-skip-permissions")
+					}
+					bin, args := m.client.ExecArgs(acct.ServiceName, claudeArgs...)
 					cmd := exec.Command(bin, args...)
 					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 						return sessionFinishedMsg{err: err}
@@ -342,6 +348,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opRestart, err: err}
 			})
+
+		case "p":
+			m.skipPermissions = !m.skipPermissions
+			if m.skipPermissions {
+				m = m.toast("--dangerously-skip-permissions ON", statusInfo)
+			} else {
+				m = m.toast("--dangerously-skip-permissions OFF", statusInfo)
+			}
+			return m, m.toastExpireCmd()
 
 		case "g":
 			return m.startGHAuth()
@@ -439,13 +454,17 @@ func (m Model) View() string {
 	}
 
 	actionsText := fmt.Sprintf(
-		"  [u] Up  [d] Down  [r] Refresh  [Enter] Attach  [?] Keys  (%d/%d running)",
+		"  [u] Up  [d] Down  [r] Refresh  [Enter] Attach  [p] Perms  [?] Keys  (%d/%d running)",
 		runningCount, len(m.accounts))
 	if m.busy {
 		actionsText = "  Busy... (keys disabled; see status below)"
 	}
 	actions := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).
 		Render(actionsText)
+	if m.skipPermissions {
+		actions += lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#EAB308")).
+			Render("  [SKIP-PERMS]")
+	}
 	b.WriteString(actions)
 
 	if m.statusText != "" {
@@ -643,6 +662,7 @@ func renderHelp() string {
 	rows := [][2]string{
 		{"j / k", "Move cursor down / up"},
 		{"Enter / c", "Attach to selected account's claude session"},
+		{"p", "Toggle --dangerously-skip-permissions"},
 		{"r", "Refresh dashboard"},
 		{"u / d", "docker compose up -d / down (all)"},
 		{"b", "docker compose build (cached)"},

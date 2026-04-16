@@ -125,11 +125,24 @@ function Invoke-Exec {
 }
 
 function Invoke-Claude {
-    $service = if ($Arguments.Count -gt 0) { $Arguments[0] } else { 'claude-a' }
+    $skipPerms = $false
+    $service = ''
+    foreach ($arg in $Arguments) {
+        if ($arg -eq '--dangerously-skip-permissions') {
+            $skipPerms = $true
+        } elseif (-not $service) {
+            $service = $arg
+        }
+    }
+    if (-not $service) { $service = 'claude-a' }
     Write-Host "Starting Claude Code in " -ForegroundColor Cyan -NoNewline
     Write-Host $service -ForegroundColor White -NoNewline
     Write-Host '...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
+    if ($skipPerms) {
+        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude --dangerously-skip-permissions
+    } else {
+        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
+    }
 }
 
 function Invoke-GhAuth {

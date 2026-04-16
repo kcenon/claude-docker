@@ -218,10 +218,22 @@ cmd_exec() {
 }
 
 cmd_claude() {
-    local service="${1:-$(get_primary_service)}"
+    local skip_perms=false
+    local service=""
+    for arg in "$@"; do
+        case "$arg" in
+            --dangerously-skip-permissions) skip_perms=true ;;
+            *) [[ -z "$service" ]] && service="$arg" ;;
+        esac
+    done
+    service="${service:-$(get_primary_service)}"
     ensure_compose_cmd
     echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
-    "${COMPOSE_CMD[@]}" exec "$service" claude
+    if [[ "$skip_perms" == true ]]; then
+        "${COMPOSE_CMD[@]}" exec "$service" claude --dangerously-skip-permissions
+    else
+        "${COMPOSE_CMD[@]}" exec "$service" claude
+    fi
 }
 
 # Resolve a compose service name to its running Docker container ID.
