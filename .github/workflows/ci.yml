@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fixture: [minimal, tier-b, n5, with-special-chars]
+        fixture: [minimal, tier-b, n5, n30, with-special-chars]
     steps:
       - uses: actions/checkout@v4
       - name: Stage fixture

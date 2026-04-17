@@ -9,9 +9,8 @@ is copied to the repo root as `.env`, then `scripts/generate-compose.sh` and
 | `minimal.env` | Default 2-account Tier A setup without API keys |
 | `tier-b.env` | Worktree paths (`PROJECT_DIR_A/B`, `CONTAINER_PROJECT_DIR_A/B`) |
 | `n5.env` | `NUM_ACCOUNTS=5` scaling path (claude-a..claude-e) |
-
-`with-special-chars.env` (values containing `#`, `=`, quotes, whitespace) is
-added by #170 alongside the unified `.env` parser.
+| `n30.env` | `NUM_ACCOUNTS=30` Excel-style letter enumeration (#178) |
+| `with-special-chars.env` | Values containing `#`, `=`, quotes, whitespace — exercises the #170 parser |
 
 ## Running locally
 

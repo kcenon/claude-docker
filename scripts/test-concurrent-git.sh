@@ -13,9 +13,17 @@ TEMP_DIR="$(mktemp -d)"
 REPO_DIR="$TEMP_DIR/test-repo"
 NUM_TEST_ACCOUNTS="${NUM_TEST_ACCOUNTS:-2}"
 
-# Convert 1-based index to lowercase letter
+# Convert 1-based index to Excel-style lowercase letters (a, z, aa, az, ba, zz).
 index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
+    local n="$1"
+    local out=""
+    local rem
+    while (( n > 0 )); do
+        rem=$(( (n - 1) % 26 ))
+        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
+        n=$(( (n - 1) / 26 ))
+    done
+    printf '%s' "$out"
 }
 
 # Uppercase a single-letter string. Portable replacement for bash 4+ ${var^^}

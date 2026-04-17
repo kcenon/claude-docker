@@ -22,9 +22,18 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     exit 1
 fi
 
-# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
+# Convert 1-based index to Excel-style lowercase letters:
+#   1→a, 26→z, 27→aa, 52→az, 702→zz.
 index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
+    local n="$1"
+    local out=""
+    local rem
+    while (( n > 0 )); do
+        rem=$(( (n - 1) % 26 ))
+        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
+        n=$(( (n - 1) / 26 ))
+    done
+    printf '%s' "$out"
 }
 
 cd "$REPO_DIR"

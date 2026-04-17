@@ -59,8 +59,8 @@ if ([string]::IsNullOrEmpty($ImageTag)) {
     }
 }
 
-if ($NumAccounts -lt 1 -or $NumAccounts -gt 26) {
-    Write-Error "NUM_ACCOUNTS must be between 1 and 26 (got: $NumAccounts)"
+if ($NumAccounts -lt 1 -or $NumAccounts -gt 702) {
+    Write-Error "NUM_ACCOUNTS must be between 1 and 702 (got: $NumAccounts)"
     exit 1
 }
 
@@ -81,13 +81,30 @@ $MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
 $MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
 
 function ConvertTo-Letter([int]$Index) {
-    # 1 -> a, 2 -> b, ..., 26 -> z
-    [char](96 + $Index)
+    # Excel-style: 1 -> a, 26 -> z, 27 -> aa, 52 -> az, 702 -> zz.
+    # 1-26 identical to the former single-letter mapping.
+    # Casts to [int] are required because [math]::Floor and `%` can
+    # return Double/Decimal, which will not implicit-cast to [char].
+    [int]$n = $Index
+    $builder = ''
+    while ($n -gt 0) {
+        [int]$rem = ($n - 1) % 26
+        $builder = [char]([int](97 + $rem)) + $builder
+        [int]$n = [math]::Floor(($n - 1) / 26)
+    }
+    return $builder
 }
 
 function ConvertTo-UpperLetter([int]$Index) {
-    # 1 -> A, 2 -> B, ..., 26 -> Z
-    [char](64 + $Index)
+    # Same scheme, uppercase.
+    [int]$n = $Index
+    $builder = ''
+    while ($n -gt 0) {
+        [int]$rem = ($n - 1) % 26
+        $builder = [char]([int](65 + $rem)) + $builder
+        [int]$n = [math]::Floor(($n - 1) / 26)
+    }
+    return $builder
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------

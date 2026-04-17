@@ -403,6 +403,10 @@ The `scale` command automatically:
 
 Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
 
+Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
+53→`ba`, ..., 702→`zz`. You can set `NUM_ACCOUNTS` up to 702, though host
+memory is usually the binding constraint well before then.
+
 On Windows (PowerShell):
 ```powershell
 .\scripts\claude-docker.ps1 scale 4
