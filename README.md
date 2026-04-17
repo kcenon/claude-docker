@@ -203,6 +203,14 @@ scripts/claude-docker exec claude-a claude auth status
 If container-internal OAuth fails on macOS due to Docker network boundary
 limitations, switch to Path B (API keys) in `.env`.
 
+> **Switching between Path A and Path B**: After editing `CLAUDE_API_KEY_*`
+> in `.env`, re-run `scripts/generate-compose.sh` (or `.ps1`) and
+> `docker compose up -d` so the generated compose files reflect the new
+> state. `ANTHROPIC_API_KEY` is only injected into a container when the
+> matching `CLAUDE_API_KEY_<LETTER>` is set at generate time — emitting
+> it with an empty string would otherwise make the SDK ignore the
+> `.credentials.json` from OAuth.
+
 **GitHub CLI (`gh`)** is automatically available inside containers. The host's
 `~/.config/gh/` is bind-mounted read-only, so `gh` commands use the host's
 GitHub session without separate authentication.

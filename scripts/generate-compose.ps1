@@ -112,7 +112,15 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
         [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
-        [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}:-}")
+        # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is set at
+        # generate time. Path A (OAuth) users have no value; emitting
+        # ANTHROPIC_API_KEY= with an empty string makes the SDK prefer the
+        # empty env var over .credentials.json in the mounted state dir.
+        $keyVarName = "CLAUDE_API_KEY_${upper}"
+        $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
+        if (-not [string]::IsNullOrEmpty($keyValue)) {
+            [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}}")
+        }
         [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
         [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
         [void]$sb.AppendLine('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
