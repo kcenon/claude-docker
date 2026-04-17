@@ -917,6 +917,14 @@ start_containers() {
 install_dependencies() {
     log_step "Installing project dependencies in containers"
 
+    # Skip entirely for non-Node projects so Python/Go/Rust/etc. users do
+    # not see a misleading "npm install skipped or failed" warning on every
+    # container and do not pay the npm registry round-trip for nothing.
+    if [[ ! -f "$SOURCE_DIR/package.json" ]]; then
+        log_info "No package.json at $SOURCE_DIR — skipping npm install."
+        return 0
+    fi
+
     cd "$PROJECT_ROOT"
 
     local compose_cmd

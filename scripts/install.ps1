@@ -702,6 +702,15 @@ function Start-Containers {
 function Install-Dependencies {
     Write-LogStep 'Installing project dependencies in containers'
 
+    # Skip entirely for non-Node projects so Python/Go/Rust/etc. users do
+    # not see a misleading "npm install skipped or failed" warning on every
+    # container and do not pay the npm registry round-trip for nothing.
+    $pkgJson = Join-Path $Script:SourceDir 'package.json'
+    if (-not (Test-Path $pkgJson -PathType Leaf)) {
+        Write-LogInfo "No package.json at $($Script:SourceDir) — skipping npm install."
+        return
+    }
+
     $services = @(Get-ServiceNames -ProjectRoot $ProjectRoot)
 
     foreach ($svc in $services) {
