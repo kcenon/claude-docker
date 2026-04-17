@@ -1,4 +1,8 @@
+#!/usr/bin/env bash
 # parse_env.sh — Robust .env parser for claude-docker bash scripts.
+#
+# Library file meant to be `source`d, but the shebang serves as an
+# unambiguous shell directive for tooling (shellcheck SC2148).
 #
 # Provides a single source of truth for reading and writing .env key/value
 # pairs so that behavior stays consistent across install.sh, claude-docker,
