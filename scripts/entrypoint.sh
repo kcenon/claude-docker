@@ -150,6 +150,24 @@ if [ -d "$CONFIG_SOURCE" ]; then
                         echo "[entrypoint] settings.json: rewrote $pwsh_count PowerShell hook(s) to bash"
                     fi
                     echo "[entrypoint] settings.json: container-optimized (sandbox=off, glob deny rules stripped)"
+
+                    # Post-transform syntax check: `bash -n -c` every .command
+                    # string in the generated file. The rewriter in
+                    # generate_container_settings() is best-effort (see
+                    # README "Container-side settings transformation"); the
+                    # check catches silent failures so the user learns about
+                    # them at container start rather than when a hook misfires.
+                    syntax_failures=0
+                    while IFS= read -r _cmd; do
+                        [ -z "$_cmd" ] && continue
+                        if ! bash -n -c "$_cmd" 2>/dev/null; then
+                            echo "[entrypoint] WARNING: transformed hook command failed bash syntax check: $_cmd" >&2
+                            syntax_failures=$((syntax_failures + 1))
+                        fi
+                    done < <(jq -r '.. | objects | .command? // empty | select(type == "string")' "$CONTAINER_SETTINGS" 2>/dev/null)
+                    if [ "$syntax_failures" -gt 0 ]; then
+                        echo "[entrypoint] WARNING: $syntax_failures hook command(s) failed syntax check — those hooks will not fire. Set CLAUDE_CONFIG_SOURCE to a Linux-native config tree to bypass the pwsh rewriter." >&2
+                    fi
                 else
                     echo "[entrypoint] ERROR: generated settings.container.json is invalid JSON, using raw host settings"
                     ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
