@@ -46,6 +46,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 . "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
 
 # --- Compose Command Builder --------------------------------------------------
 
@@ -111,19 +113,12 @@ get_num_accounts() {
     echo "${n:-2}"
 }
 
-# Convert 1-based index to Excel-style lowercase letters:
-#   1→a, 26→z, 27→aa, 52→az, 53→ba, 702→zz.
-# Values 1-26 are bit-for-bit identical to the former single-letter impl.
+# Back-compat alias: claude-docker historically exposed the underscore
+# form; keep it as a thin wrapper so any external callers (hooks, custom
+# wrappers) continue to work while the canonical implementation lives in
+# scripts/lib/index.sh.
 _index_to_letter() {
-    local n="$1"
-    local out=""
-    local rem
-    while (( n > 0 )); do
-        rem=$(( (n - 1) % 26 ))
-        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
-        n=$(( (n - 1) / 26 ))
-    done
-    printf '%s' "$out"
+    index_to_letter "$1"
 }
 
 # Return space-separated list of service names based on NUM_ACCOUNTS

@@ -73,6 +73,8 @@ log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_
 . "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
 
 prompt_select() {
     local question="$1"
@@ -537,7 +539,7 @@ collect_configuration() {
         echo -e "\n${CYAN}Enter Console API keys (from console.anthropic.com):${NC}"
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
-            letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+            letter=$(index_to_letter "$i")
             local upper
             upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
             API_KEYS+=("$(prompt_secret "API key for Account $upper (sk-ant-...)")")
@@ -605,7 +607,7 @@ generate_env() {
             echo "# ==== Path B: Console API Keys ===="
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
-                letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+                letter=$(index_to_letter "$i")
                 local upper
                 upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "CLAUDE_API_KEY_${upper}=${API_KEYS[$((i-1))]}"
@@ -618,7 +620,7 @@ generate_env() {
             echo "# (populated after worktree setup)"
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
-                letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+                letter=$(index_to_letter "$i")
                 local upper
                 upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "PROJECT_DIR_${upper}="
@@ -680,7 +682,7 @@ create_state_dirs() {
     local dirs=("$HOME/.claude")
     for i in $(seq 1 "$NUM_ACCOUNTS"); do
         local letter
-        letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+        letter=$(index_to_letter "$i")
         dirs+=("$HOME/.claude-state/account-${letter}")
     done
 
@@ -945,7 +947,7 @@ install_dependencies() {
     local n="${NUM_ACCOUNTS:-2}"
     for i in $(seq 1 "$n"); do
         local letter
-        letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+        letter=$(index_to_letter "$i")
         services+=("claude-${letter}")
     done
 

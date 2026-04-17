@@ -7,6 +7,10 @@
 # If no branch names are provided, defaults to worktree-a and worktree-b.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
+
 REPO_DIR="${1:?Usage: setup-worktrees.sh <repo-dir> [branch...]}"; shift
 
 # Default branches if none provided
@@ -22,19 +26,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     exit 1
 fi
 
-# Convert 1-based index to Excel-style lowercase letters:
-#   1→a, 26→z, 27→aa, 52→az, 702→zz.
-index_to_letter() {
-    local n="$1"
-    local out=""
-    local rem
-    while (( n > 0 )); do
-        rem=$(( (n - 1) % 26 ))
-        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
-        n=$(( (n - 1) / 26 ))
-    done
-    printf '%s' "$out"
-}
+# index_to_letter provided by scripts/lib/index.sh.
 
 cd "$REPO_DIR"
 
