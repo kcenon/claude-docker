@@ -131,6 +131,22 @@ check_command() {
     command -v "$1" &>/dev/null
 }
 
+# Keep at most $keep newest ".env.backup.*" siblings of $env_file.
+# Sort is lexicographic by epoch suffix — monotonic for the foreseeable future.
+rotate_env_backups() {
+    local env_file="$1"
+    local keep="${2:-3}"
+    local dir base
+    dir=$(dirname -- "$env_file")
+    base=$(basename -- "$env_file")
+    find "$dir" -maxdepth 1 -type f -name "${base}.backup.*" 2>/dev/null \
+        | sort -r \
+        | tail -n +$((keep + 1)) \
+        | while IFS= read -r stale; do
+            rm -f -- "$stale"
+        done
+}
+
 # Measure filesystem I/O latency with a single write+read+delete cycle.
 # Returns latency in milliseconds.
 measure_io_latency() {
@@ -541,8 +557,11 @@ generate_env() {
             log_warn "Keeping existing .env. Some settings may not match your choices."
             return 0
         fi
-        cp "$env_file" "${env_file}.backup.$(date +%s)"
-        log_info "Backed up existing .env"
+        local backup="${env_file}.backup.$(date +%s)"
+        cp "$env_file" "$backup"
+        chmod 600 "$backup"
+        rotate_env_backups "$env_file" 3
+        log_info "Backed up existing .env to ${backup##*/}"
     fi
 
     {
