@@ -256,6 +256,54 @@ sessions) remains writable and per-container. Symlinks are created when the
 target does not exist or is an empty file, so per-account overrides with
 real content are preserved.
 
+### Container-side settings transformation
+
+The entrypoint does not use your host `settings.json` verbatim. It rewrites a
+working copy at `~/.claude/settings.json` (inside the container) before Claude
+Code starts. Two of those transforms are load-bearing but easy to miss from
+the code alone:
+
+**1. `sandbox.enabled` is forced to `false`.**
+
+The host sandbox gates filesystem and network access on the host. Inside a
+container it would re-confine already-confined code and, more importantly,
+break hooks and skills that `exec` into `/usr/bin`. The entrypoint relies on
+the container itself being the isolation boundary.
+
+This assumption holds for the **default** Docker isolation (cgroups +
+namespaces + read-only bind mounts). It does **not** hold when:
+
+- the container runs with `--privileged`,
+- Docker-in-Docker is used so nested containers share the parent's kernel
+  namespace,
+- a skill uses `docker run` on the host socket to spawn a sibling container.
+
+If you run claude-docker in any of those modes you lose the host sandbox
+without warning. Either keep the outer Docker isolation strict or edit the
+entrypoint to leave `sandbox.enabled` untouched for that profile.
+
+**2. PowerShell hook commands are rewritten to bash.**
+
+Host `settings.json` entries that invoke `pwsh -NoProfile -File ...` are
+transformed so they work inside the Linux-native container image. This is
+best-effort: trivial single-call hooks are rewritten cleanly, but the
+following patterns fail **silently** (transformed command is produced but
+never fires):
+
+| Pattern | Example | Status |
+|---------|---------|--------|
+| `pwsh -NoProfile -File ./foo.ps1` | top-level script | supported |
+| Heredoc / multi-line `-Command` | `pwsh -c @"..."@` | not supported |
+| `$env:VAR` expansion | `pwsh -c '$env:FOO'` | not supported |
+| Quoted paths with spaces | `pwsh -File "C:\\Program Files\\..."` | not supported |
+| `Join-Path` outside the statusLine slot | inside a hook array | not supported |
+
+If a hook works on the host but never fires in the container, check whether
+its command matches one of the unsupported patterns above. The workaround is
+to ship a Linux-native shell alternative via `CLAUDE_CONFIG_SOURCE` (which
+bypasses the transform entirely — the container reads the config tree you
+point at without rewriting it).
+
 ### Running Commands Inside Containers
 
 ```bash
