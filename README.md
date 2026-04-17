@@ -480,9 +480,20 @@ repush of the tag is caught at build time as a digest mismatch. To bump:
 
 ## Resource Requirements
 
-Each container has a 4 GB memory limit (2 GB reserved). Docker RAM below is the
-recommended Docker Desktop memory allocation to allow all containers to run at
-peak load.
+Each container **defaults** to a 4 GB memory limit (2 GB reserved), 2 CPU limit
+(1 CPU reserved). Override per installation in `.env`:
+
+```env
+CONTAINER_CPU_LIMIT=2
+CONTAINER_CPU_RESERVATION=1
+CONTAINER_MEM_LIMIT=4G
+CONTAINER_MEM_RESERVATION=2G
+```
+
+Re-run `scripts/generate-compose.sh` (or `.ps1`) after changing these so the
+generated compose files pick up the new values. The table below assumes
+defaults. Docker RAM is the recommended Docker Desktop memory allocation to
+allow all containers to run at peak load.
 
 | Instances | Docker RAM (recommended) | Host RAM (Linux / macOS / Windows) |
 |:---------:|:------------------------:|:----------------------------------:|
