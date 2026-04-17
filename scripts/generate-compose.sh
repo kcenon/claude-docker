@@ -91,7 +91,14 @@ generate_base() {
             echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
             echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
             echo "      - NODE_OPTIONS=--max-old-space-size=4096"
-            echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}:-}"
+            # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is
+            # set at generate time. Path A (OAuth) users have no value;
+            # emitting ANTHROPIC_API_KEY= with an empty string makes the
+            # SDK prefer the empty env var over .credentials.json.
+            local key_var="CLAUDE_API_KEY_${upper}"
+            if [[ -n "${!key_var:-}" ]]; then
+                echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}}"
+            fi
             echo "      - GH_TOKEN=\${GH_TOKEN:-}"
             echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
             echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
