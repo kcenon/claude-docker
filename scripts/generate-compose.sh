@@ -16,6 +16,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
 
 # --- Read configuration -------------------------------------------------------
 
@@ -50,33 +52,7 @@ CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
 MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
 MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
 
-# Convert 1-based index to Excel-style lowercase letters:
-#   1→a, 26→z, 27→aa, 52→az, 53→ba, 702→zz.
-# Existing single-letter (1-26) callers are bit-for-bit unchanged.
-index_to_letter() {
-    local n="$1"
-    local out=""
-    local rem
-    while (( n > 0 )); do
-        rem=$(( (n - 1) % 26 ))
-        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
-        n=$(( (n - 1) / 26 ))
-    done
-    printf '%s' "$out"
-}
-
-# Convert 1-based index to Excel-style uppercase letters: A-Z, AA-AZ, ...
-index_to_upper() {
-    local n="$1"
-    local out=""
-    local rem
-    while (( n > 0 )); do
-        rem=$(( (n - 1) % 26 ))
-        out=$(printf "\\$(printf '%03o' $((65 + rem)))")$out
-        n=$(( (n - 1) / 26 ))
-    done
-    printf '%s' "$out"
-}
+# index_to_letter and index_to_upper provided by scripts/lib/index.sh.
 
 # --- Generate docker-compose.yml ---------------------------------------------
 
