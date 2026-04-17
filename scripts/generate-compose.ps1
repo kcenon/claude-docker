@@ -55,6 +55,22 @@ if ($NumAccounts -lt 1 -or $NumAccounts -gt 26) {
     exit 1
 }
 
+# Container resource envelope (override via .env or host env). Defaults
+# reproduce the historical hardcoded values so existing installs see no
+# behavior change after regenerating.
+function Resolve-EnvOrDefault([string]$Key, [string]$Default) {
+    $val = [Environment]::GetEnvironmentVariable($Key)
+    if (-not [string]::IsNullOrEmpty($val)) { return $val }
+    if ($envData.ContainsKey($Key) -and -not [string]::IsNullOrEmpty($envData[$Key])) {
+        return $envData[$Key]
+    }
+    return $Default
+}
+$CpuLimit       = Resolve-EnvOrDefault 'CONTAINER_CPU_LIMIT' '2'
+$CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
+$MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
+$MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
+
 function ConvertTo-Letter([int]$Index) {
     # 1 -> a, 2 -> b, ..., 26 -> z
     [char](96 + $Index)
@@ -128,11 +144,11 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    deploy:')
         [void]$sb.AppendLine('      resources:')
         [void]$sb.AppendLine('        limits:')
-        [void]$sb.AppendLine('          cpus: "2"')
-        [void]$sb.AppendLine('          memory: 4G')
+        [void]$sb.AppendLine("          cpus: `"$CpuLimit`"")
+        [void]$sb.AppendLine("          memory: $MemLimit")
         [void]$sb.AppendLine('        reservations:')
-        [void]$sb.AppendLine('          cpus: "1"')
-        [void]$sb.AppendLine('          memory: 2G')
+        [void]$sb.AppendLine("          cpus: `"$CpuReservation`"")
+        [void]$sb.AppendLine("          memory: $MemReservation")
         [void]$sb.AppendLine('    command: ["sleep", "infinity"]')
 
         if ($i -lt $NumAccounts) {

@@ -31,6 +31,14 @@ if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
     exit 1
 fi
 
+# Container resource envelope (override via .env or host env). Defaults
+# reproduce the historical hardcoded values so existing installs see no
+# behavior change after regenerating.
+CPU_LIMIT="${CONTAINER_CPU_LIMIT:-2}"
+CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
+MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
+MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
+
 # Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
 index_to_letter() {
     printf "\\$(printf '%03o' $((96 + $1)))"
@@ -106,11 +114,11 @@ generate_base() {
             echo "    deploy:"
             echo "      resources:"
             echo "        limits:"
-            echo "          cpus: \"2\""
-            echo "          memory: 4G"
+            echo "          cpus: \"${CPU_LIMIT}\""
+            echo "          memory: ${MEM_LIMIT}"
             echo "        reservations:"
-            echo "          cpus: \"1\""
-            echo "          memory: 2G"
+            echo "          cpus: \"${CPU_RESERVATION}\""
+            echo "          memory: ${MEM_RESERVATION}"
             echo "    command: [\"sleep\", \"infinity\"]"
 
             # Blank line between services (but not after the last one)
