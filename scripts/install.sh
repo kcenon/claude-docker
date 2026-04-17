@@ -883,18 +883,22 @@ setup_worktrees() {
 
 # --- Compose Command Builder --------------------------------------------------
 
+# Populate the global COMPOSE_CMD array with `docker compose -f ...` so
+# callers invoke it as `"${COMPOSE_CMD[@]}" up -d` instead of building and
+# eval'ing a string. Matches the pattern already used by
+# scripts/claude-docker (see build_compose_cmd there). Array form preserves
+# quoting of paths containing spaces, which was the source of issue #155.
+COMPOSE_CMD=()
 build_compose_cmd() {
-    local cmd="docker compose -f docker-compose.yml"
+    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
 
     if [[ "$PLATFORM" == "linux" ]]; then
-        cmd+=" -f docker-compose.linux.yml"
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
     fi
 
     if [[ "$TIER" == "B" ]]; then
-        cmd+=" -f docker-compose.worktree.yml"
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
     fi
-
-    echo "$cmd"
 }
 
 # --- Container Startup --------------------------------------------------------
@@ -904,8 +908,7 @@ start_containers() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
 
     if [[ "$PLATFORM" == "linux" ]]; then
         export UID GID
@@ -913,8 +916,8 @@ start_containers() {
         GID=$(id -g)
     fi
 
-    log_info "Compose command: $compose_cmd up -d"
-    eval "$compose_cmd up -d" 2>&1
+    log_info "Compose command: ${COMPOSE_CMD[*]} up -d"
+    "${COMPOSE_CMD[@]}" up -d 2>&1
 
     log_success "Containers started"
 }
@@ -934,8 +937,7 @@ install_dependencies() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
 
     local services=()
     local n="${NUM_ACCOUNTS:-2}"
@@ -947,7 +949,7 @@ install_dependencies() {
 
     for svc in "${services[@]}"; do
         log_info "Installing npm dependencies in $svc..."
-        if eval "$compose_cmd exec -T $svc npm install" 2>&1 | tail -3; then
+        if "${COMPOSE_CMD[@]}" exec -T "$svc" npm install 2>&1 | tail -3; then
             log_success "$svc: dependencies installed"
         else
             log_warn "$svc: npm install skipped or failed (project may not have package.json)"
@@ -962,28 +964,27 @@ run_verification() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
     local primary_svc="claude-a"
 
     # Check container is running
-    if eval "$compose_cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$primary_svc"; then
+    if "${COMPOSE_CMD[@]}" ps --format '{{.Name}}' 2>/dev/null | grep -q "$primary_svc"; then
         log_success "Container $primary_svc is running"
     else
         log_error "Container $primary_svc is not running"
-        log_info "Check logs: $compose_cmd logs $primary_svc"
+        log_info "Check logs: ${COMPOSE_CMD[*]} logs $primary_svc"
         return 1
     fi
 
     # Check Claude Code is available
-    if eval "$compose_cmd exec -T $primary_svc claude --version" 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude --version 2>/dev/null; then
         log_success "Claude Code is available"
     else
         log_warn "Could not verify Claude Code (container may still be starting)"
     fi
 
     # Check auth status
-    if eval "$compose_cmd exec -T $primary_svc claude auth status" 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude auth status 2>/dev/null; then
         log_success "Authentication verified"
     else
         log_warn "Authentication not verified (may need browser login or API key check)"
@@ -993,8 +994,11 @@ run_verification() {
 # --- Summary ------------------------------------------------------------------
 
 print_summary() {
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    # build_compose_cmd is called for parity with other entry points even
+    # though the summary prints only scripts/claude-docker wrapper commands.
+    # Keeping the array populated avoids confusing downstream hooks that may
+    # inspect it.
+    build_compose_cmd
 
     echo ""
     echo -e "${BOLD}${GREEN}============================================${NC}"
