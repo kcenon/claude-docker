@@ -479,8 +479,11 @@ repush of the tag is caught at build time as a digest mismatch. To bump:
    ```
 3. Update the `FROM` line in `Dockerfile` — **both** the tag and the
    `@sha256:` suffix must be updated together
-4. Update the `image:` tag in `docker-compose.yml` to today's date
-   (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
+4. Update `VERSION` at the repo root to today's date
+   (e.g. `2026.04.17`). Both `scripts/generate-compose.sh`/`.ps1` and
+   `scripts/install.sh`/`.ps1` read this file, so regenerating compose
+   or running `install` picks up the new default automatically. Do not
+   hand-edit the generated `docker-compose.yml` — its header forbids it
 5. Rebuild everything from scratch: `docker compose build --no-cache`
 6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
    and confirm it matches prior builds (unexpected changes may indicate an

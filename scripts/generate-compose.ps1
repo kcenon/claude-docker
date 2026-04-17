@@ -46,7 +46,16 @@ if ([string]::IsNullOrEmpty($ImageTag)) {
     if ($fromEnv) {
         $ImageTag = $fromEnv
     } else {
-        $ImageTag = 'latest'
+        # Fall back to the repo-root VERSION file — single source of truth
+        # shared with install.ps1 and the "Bumping the Base Image" README
+        # procedure. Final fallback is 'latest' if VERSION is absent.
+        $versionFile = Join-Path $ProjectRoot 'VERSION'
+        if (Test-Path $versionFile) {
+            $ImageTag = (Get-Content $versionFile -TotalCount 1).Trim()
+        }
+        if ([string]::IsNullOrEmpty($ImageTag)) {
+            $ImageTag = 'latest'
+        }
     }
 }
 
