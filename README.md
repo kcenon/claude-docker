@@ -445,18 +445,20 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins the Node base image to a specific patch version for
-reproducible builds. To bump:
+The `Dockerfile` pins the Node base image to a specific patch version **and
+content digest** so rebuilds are byte-for-byte reproducible and any upstream
+repush of the tag is caught at build time as a digest mismatch. To bump:
 
 1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
-2. Update the `FROM` line in `Dockerfile`
-3. Update the `image:` tag in `docker-compose.yml` to today's date
-   (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
-4. Optionally capture the digest for future verification:
+2. Capture the digest on a trusted host (**required**, not optional):
    ```bash
-   docker pull node:20.x.y-slim
-   docker inspect --format='{{index .RepoDigests 0}}' node:20.x.y-slim
+   docker pull node:<new-version>-slim
+   docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
    ```
+3. Update the `FROM` line in `Dockerfile` — **both** the tag and the
+   `@sha256:` suffix must be updated together
+4. Update the `image:` tag in `docker-compose.yml` to today's date
+   (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
 5. Rebuild everything from scratch: `docker compose build --no-cache`
 6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
    and confirm it matches prior builds (unexpected changes may indicate an

@@ -1,12 +1,14 @@
 # Base: node:20.18.1-slim (Debian/glibc)
-# Pinned to a specific patch version for reproducible builds. To bump:
+# Pinned to a specific patch version AND content digest so rebuilds are
+# byte-for-byte reproducible and any upstream repush of the tag is caught
+# at build time as a digest mismatch. To bump:
 #   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
-#   2. Update the tag below
-#   3. Optionally capture the digest:
-#      docker pull node:20.18.1-slim \
-#        && docker inspect --format='{{index .RepoDigests 0}}' node:20.18.1-slim
+#   2. Capture the digest on a trusted host (REQUIRED, not optional):
+#        docker pull node:<new-version>-slim \
+#          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
+#   3. Update BOTH the tag and the @sha256: suffix in the FROM line below
 #   4. Rebuild: docker compose build --no-cache
-FROM node:20.18.1-slim
+FROM node:20.18.1-slim@sha256:b2c8e0eb8a6aeeae33b2711f8f516003e27ee45804e270468d937b3214f2f0cc
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
