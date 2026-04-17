@@ -313,10 +313,33 @@ function Get-NumAccounts {
     return 2
 }
 
+function ConvertTo-AccountLetter {
+    <#
+    .SYNOPSIS
+    Convert a 1-based index to Excel-style lowercase letters (a, z, aa, az,
+    ba, zz). Values 1-26 are bit-identical to the previous single-letter
+    scheme.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Index)
+
+    if ($Index -lt 1) { throw "Index must be 1 or greater (got: $Index)" }
+    [int]$n = $Index
+    $builder = ''
+    while ($n -gt 0) {
+        [int]$rem = ($n - 1) % 26
+        $builder = [char]([int](97 + $rem)) + $builder
+        [int]$n = [math]::Floor(($n - 1) / 26)
+    }
+    return $builder
+}
+
 function Get-ServiceNames {
     <#
     .SYNOPSIS
-    Return an array of service names (claude-a, claude-b, ...) based on NUM_ACCOUNTS.
+    Return an array of service names (claude-a, claude-b, ...) based on
+    NUM_ACCOUNTS. Supports more than 26 via Excel-style double-letter
+    indexing (claude-aa, claude-zz, ...).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
@@ -324,8 +347,7 @@ function Get-ServiceNames {
     $n = Get-NumAccounts -ProjectRoot $ProjectRoot
     $names = @()
     for ($i = 1; $i -le $n; $i++) {
-        $letter = [char](96 + $i)
-        $names += "claude-$letter"
+        $names += "claude-$(ConvertTo-AccountLetter -Index $i)"
     }
     return $names
 }
@@ -431,7 +453,7 @@ Export-ModuleMember -Function @(
     # Utilities
     'Test-Command', 'ConvertTo-ForwardSlash',
     # Accounts
-    'Get-NumAccounts', 'Get-ServiceNames',
+    'Get-NumAccounts', 'Get-ServiceNames', 'ConvertTo-AccountLetter',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose

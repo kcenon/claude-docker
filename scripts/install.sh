@@ -521,10 +521,12 @@ collect_configuration() {
         log_info "Claude Code version: $CLAUDE_VERSION"
     fi
 
-    # Number of accounts
-    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-26)" "2")
-    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
-        log_error "Number of accounts must be between 1 and 26."
+    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
+    # enumeration; the validator catches typos like 2600 without capping
+    # legitimate multi-tenant setups at the historic 26-account ceiling.
+    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-702)" "2")
+    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
+        log_error "Number of accounts must be between 1 and 702."
         exit 1
     fi
     log_info "Accounts: $NUM_ACCOUNTS"

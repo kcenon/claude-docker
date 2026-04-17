@@ -35,9 +35,10 @@ if [[ -z "${IMAGE_TAG:-}" ]]; then
     IMAGE_TAG="${IMAGE_TAG:-latest}"
 fi
 
-# Validate
-if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
-    echo "Error: NUM_ACCOUNTS must be between 1 and 26 (got: $NUM_ACCOUNTS)" >&2
+# Validate. Practical upper bound is "zz" (702) from Excel-style letter
+# enumeration; keep the cap well below that to catch typos like 2600.
+if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
+    echo "Error: NUM_ACCOUNTS must be between 1 and 702 (got: $NUM_ACCOUNTS)" >&2
     exit 1
 fi
 
@@ -49,14 +50,32 @@ CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
 MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
 MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
 
-# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
+# Convert 1-based index to Excel-style lowercase letters:
+#   1→a, 26→z, 27→aa, 52→az, 53→ba, 702→zz.
+# Existing single-letter (1-26) callers are bit-for-bit unchanged.
 index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
+    local n="$1"
+    local out=""
+    local rem
+    while (( n > 0 )); do
+        rem=$(( (n - 1) % 26 ))
+        out=$(printf "\\$(printf '%03o' $((97 + rem)))")$out
+        n=$(( (n - 1) / 26 ))
+    done
+    printf '%s' "$out"
 }
 
-# Convert 1-based index to uppercase letter: 1→A, 2→B, ..., 26→Z
+# Convert 1-based index to Excel-style uppercase letters: A-Z, AA-AZ, ...
 index_to_upper() {
-    printf "\\$(printf '%03o' $((64 + $1)))"
+    local n="$1"
+    local out=""
+    local rem
+    while (( n > 0 )); do
+        rem=$(( (n - 1) % 26 ))
+        out=$(printf "\\$(printf '%03o' $((65 + rem)))")$out
+        n=$(( (n - 1) / 26 ))
+    done
+    printf '%s' "$out"
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------
