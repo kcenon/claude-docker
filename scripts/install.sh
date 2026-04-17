@@ -68,6 +68,10 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_STEP/$TOTAL_STEPS] $1${NC}"; }
 
+# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
+# shellcheck source=lib/tui-release.sh
+. "$SCRIPT_DIR/lib/tui-release.sh"
+
 prompt_select() {
     local question="$1"
     shift
@@ -727,7 +731,17 @@ build_tui() {
     log_step "Building TUI dashboard"
 
     if ! check_go; then
-        log_warn "Go toolchain not available — TUI dashboard will not be built."
+        log_warn "Go toolchain not available."
+        if prompt_confirm "Download prebuilt TUI binary from GitHub Releases?" "y"; then
+            if download_tui_release "$tui_dir/claude-docker-tui"; then
+                local size
+                size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
+                log_success "TUI dashboard installed: tui/claude-docker-tui ($size)"
+                log_info "Launch with: scripts/claude-docker tui"
+                return 0
+            fi
+            log_warn "Prebuilt download failed."
+        fi
         log_info "Install Go 1.21+ and re-run 'scripts/claude-docker build-tui' later."
         if prompt_confirm "Install Go automatically now?" "y"; then
             install_prerequisite go || {

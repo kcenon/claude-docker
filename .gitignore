@@ -13,7 +13,10 @@ docker-compose.linux.yml
 package-lock.json
 node_modules/
 
-# TUI dashboard build artifacts (Go binary, built by install.sh or 'build-tui')
+# TUI dashboard build artifacts (Go binary, built by install.sh or 'build-tui').
+# Prebuilt binaries are distributed via GitHub Releases, not tracked in Git.
+# See .github/workflows/release-tui.yml for the release pipeline and
+# scripts/lib/tui-release.sh for the download-fallback used when Go is missing.
 tui/claude-docker-tui
 tui/claude-docker-tui.exe
 tui/claude-docker-tui-*

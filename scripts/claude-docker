@@ -41,6 +41,10 @@ log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
+# shellcheck source=lib/tui-release.sh
+. "$SCRIPT_DIR/lib/tui-release.sh"
+
 # --- Compose Command Builder --------------------------------------------------
 
 # Populates the COMPOSE_CMD array with the full `docker compose ...` invocation.
@@ -586,8 +590,12 @@ cmd_usage() {
 cmd_tui() {
     local tui_bin="$PROJECT_ROOT/tui/claude-docker-tui"
     if [[ ! -x "$tui_bin" ]]; then
-        log_error "TUI binary not found at $tui_bin"
-        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build it."
+        log_warn "TUI binary not found at $tui_bin."
+        if download_tui_release "$tui_bin"; then
+            exec "$tui_bin" "$@"
+        fi
+        log_error "Could not install TUI binary automatically."
+        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build from source."
         echo -e "  Requires Go 1.21+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
         exit 1
     fi
@@ -600,8 +608,14 @@ cmd_build_tui() {
         log_error "TUI source not found at $tui_dir"
         exit 1
     fi
+    local tui_bin="$tui_dir/claude-docker-tui"
     if ! command -v go >/dev/null 2>&1; then
-        log_error "Go toolchain not found. Install Go 1.21+ first:"
+        log_warn "Go toolchain not found. Attempting to download prebuilt release binary..."
+        if download_tui_release "$tui_bin"; then
+            return 0
+        fi
+        log_error "Release download failed and Go toolchain is unavailable."
+        echo -e "  Install Go 1.21+ to build from source:"
         echo -e "  macOS:  ${DIM}brew install go${NC}"
         echo -e "  Linux:  ${DIM}sudo apt install golang-go${NC}"
         exit 1
