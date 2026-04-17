@@ -20,6 +20,13 @@ ACCOUNT_DIR="/home/node/.claude"
 #
 # The jq pipeline is idempotent: macOS settings pass through with only
 # sandbox/permissions changes; Windows settings get full hook rewriting.
+#
+# See the "Container-side settings transformation" section in README.md
+# for user-facing documentation of two behaviors baked in here:
+#   - step 1 (`sandbox.enabled = false`) assumes default Docker isolation
+#     and is unsafe under --privileged / docker-in-docker / docker-on-sock.
+#   - step 4's pwsh-to-bash rewrite is best-effort and has known silent
+#     failure modes (heredocs, $env:VAR, quoted paths with spaces).
 generate_container_settings() {
     local src="$1"
     local dst="$2"
