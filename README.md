@@ -89,27 +89,35 @@ PROJECT_DIR=/absolute/path/to/your/project
 
 ### 2. Authenticate
 
-Choose your authentication path:
+Choose **OAuth** (subscription) or **API key** (Anthropic Console):
 
-**Path A -- Subscription accounts (Pro / Max / Team):**
+| You have... | Host OS | Use |
+|-------------|---------|-----|
+| Claude.ai Pro / Max / Team subscription | Linux / WSL2 | **OAuth** |
+| Claude.ai Pro / Max / Team subscription | macOS | **OAuth** inside container; fall back to API key if Keychain errors appear |
+| Anthropic Console account only | any | **API key** |
+| Mix of both | any | **Per-container**: set `CLAUDE_API_KEY_<LETTER>` only for API-key slots — others fall back to OAuth |
 
-Authenticate inside each container after starting:
+**OAuth** — authenticate inside each container after starting:
+
 ```bash
 scripts/claude-docker claude claude-a
 # Inside container: claude auth login
 ```
 
-Note: Container-internal OAuth may fail on macOS due to Docker network
-boundary limitations. If it does, use Path B (API keys) below.
+Container-internal OAuth may fail on macOS due to Docker network
+boundary limitations. If it does, switch the affected account to API key.
 
-**Path B -- Console API keys:**
-
-Add to `.env`:
+**API key** — add to `.env`:
 
 ```bash
 CLAUDE_API_KEY_A=sk-ant-...
 CLAUDE_API_KEY_B=sk-ant-...
 ```
+
+Re-run `scripts/generate-compose.sh` after editing so the generator emits
+`ANTHROPIC_API_KEY` only for slots that actually have a key (see
+[Switching between OAuth and API key](#authentication) below).
 
 ### 3. Build and run
 
@@ -201,9 +209,9 @@ scripts/claude-docker exec claude-a claude auth status
 ```
 
 If container-internal OAuth fails on macOS due to Docker network boundary
-limitations, switch to Path B (API keys) in `.env`.
+limitations, switch to API keys in `.env`.
 
-> **Switching between Path A and Path B**: After editing `CLAUDE_API_KEY_*`
+> **Switching between OAuth and API key**: After editing `CLAUDE_API_KEY_*`
 > in `.env`, re-run `scripts/generate-compose.sh` (or `.ps1`) and
 > `docker compose up -d` so the generated compose files reflect the new
 > state. `ANTHROPIC_API_KEY` is only injected into a container when the

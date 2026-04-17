@@ -267,11 +267,12 @@ function Get-Configuration {
     $authChoice = Read-Selection `
         -Question 'Which authentication method will you use?' `
         -Options @(
-            'Path A: Subscription (Pro/Max/Team) - OAuth browser login',
-            'Path B: Console API key - paste key directly'
+            'OAuth - Claude.ai Pro/Max/Team subscription (browser login inside container)',
+            'API key - Anthropic Console account (paste key)'
         )
-    $Script:AuthPath = if ($authChoice -like '*Path A*') { 'A' } else { 'B' }
-    Write-LogInfo "Authentication: Path $($Script:AuthPath)"
+    $Script:AuthPath = if ($authChoice -like 'OAuth*') { 'A' } else { 'B' }
+    $label = if ($Script:AuthPath -eq 'A') { 'OAuth' } else { 'API key' }
+    Write-LogInfo "Authentication method: $label"
 
     # Sharing Tier
     $tierChoice = Read-Selection `
