@@ -61,6 +61,19 @@ jobs:
             exit 1
           }
 
+  go-test:
+    name: Go tests (TUI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Must match or exceed tui/go.mod's `go` directive (currently 1.23).
+          go-version: "1.23"
+      - name: Run Go unit tests
+        working-directory: ./tui
+        run: go test ./...
+
   compose-validate:
     name: Compose validate (${{ matrix.fixture }})
     runs-on: ubuntu-latest
