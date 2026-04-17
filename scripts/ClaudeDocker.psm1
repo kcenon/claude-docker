@@ -156,10 +156,42 @@ function ConvertTo-ForwardSlash {
 
 # --- .env File I/O -----------------------------------------------------------
 
+function ConvertFrom-EnvLine {
+    <#
+    .SYNOPSIS
+    Internal helper that parses a single KEY=VALUE line with the same
+    normalization semantics as scripts/lib/parse_env.sh: strips CR,
+    inline comments preceded by whitespace, trailing whitespace, and
+    unwraps surrounding single or double quotes.
+    Returns a two-element array @($key, $value) or $null if the line
+    is a comment, blank, or has no '='.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Line)
+
+    $trimmed = $Line -replace "`r$", ''
+    $trimmed = $trimmed -replace '^\s+', ''
+    if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { return $null }
+
+    $eqIdx = $trimmed.IndexOf('=')
+    if ($eqIdx -lt 1) { return $null }
+
+    $key = $trimmed.Substring(0, $eqIdx) -replace '\s+$', ''
+    $value = $trimmed.Substring($eqIdx + 1)
+
+    $value = $value -replace '\s+#.*$', ''
+    $value = $value -replace '\s+$', ''
+    if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'$") {
+        $value = $matches[1]
+    }
+    return @($key, $value)
+}
+
 function Read-EnvFile {
     <#
     .SYNOPSIS
     Parse a .env file into a hashtable. Skips comments and blank lines.
+    Handles CRLF, inline comments, quoted values, and trailing whitespace.
+    Later duplicate keys win, matching POSIX shell env semantics.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -168,16 +200,36 @@ function Read-EnvFile {
     if (-not (Test-Path $Path)) { return $result }
 
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
-        $trimmed = $line.Trim()
-        if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
-        $eqIdx = $trimmed.IndexOf('=')
-        if ($eqIdx -gt 0) {
-            $key = $trimmed.Substring(0, $eqIdx)
-            $val = $trimmed.Substring($eqIdx + 1)
-            $result[$key] = $val
+        $parsed = ConvertFrom-EnvLine -Line $line
+        if ($null -ne $parsed) {
+            $result[$parsed[0]] = $parsed[1]
         }
     }
     return $result
+}
+
+function Get-EnvValue {
+    <#
+    .SYNOPSIS
+    Read a single key from a .env file, returning $null when the file is
+    missing or the key is absent. Uses the same normalization rules as
+    Read-EnvFile.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    if (-not (Test-Path $Path)) { return $null }
+    $last = $null
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $parsed = ConvertFrom-EnvLine -Line $line
+        if ($null -ne $parsed -and $parsed[0] -eq $Key) {
+            $last = $parsed[1]
+        }
+    }
+    return $last
 }
 
 function Write-EnvContent {
@@ -197,7 +249,9 @@ function Write-EnvContent {
 function Set-EnvValue {
     <#
     .SYNOPSIS
-    Update or append a key=value pair in a .env file.
+    Update or append a key=value pair in a .env file. Values containing
+    whitespace or '#' are wrapped in double quotes so a round-trip through
+    Get-EnvValue is lossless.
     #>
     [CmdletBinding()]
     param(
@@ -206,22 +260,38 @@ function Set-EnvValue {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Value
     )
 
+    # Quote values that contain whitespace, '#', or look pre-quoted so the
+    # value round-trips through Read-EnvFile / Get-EnvValue unchanged.
+    $formatted = $Value
+    if ($Value -match '[\s#]' -or $Value -match '^[''"]') {
+        $escaped = $Value -replace '"', '\"'
+        $formatted = '"{0}"' -f $escaped
+    }
+
+    $line = "$Key=$formatted"
+
     if (-not (Test-Path $Path)) {
-        Write-EnvContent -Path $Path -Content "$Key=$Value`n"
+        Write-EnvContent -Path $Path -Content "$line`n"
         return
     }
 
-    $content = [System.IO.File]::ReadAllText($Path)
-    $pattern = "(?m)^${Key}=.*$"
-
-    if ($content -match $pattern) {
-        $content = $content -replace $pattern, "$Key=$Value"
+    # Scan-and-replace the first matching KEY= line; leave others intact so
+    # values containing regex metacharacters or '$n' backreferences are
+    # handled literally.
+    $keyPattern = "^\s*$([regex]::Escape($Key))="
+    $lines = [System.IO.File]::ReadAllLines($Path)
+    $replaced = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if (-not $replaced -and $lines[$i] -match $keyPattern) {
+            $lines[$i] = $line
+            $replaced = $true
+        }
     }
-    else {
-        $content = $content.TrimEnd() + "`n$Key=$Value`n"
+    if (-not $replaced) {
+        $lines += $line
     }
 
-    Write-EnvContent -Path $Path -Content $content
+    Write-EnvContent -Path $Path -Content (($lines -join "`n") + "`n")
 }
 
 # --- Account Helpers ---------------------------------------------------------
@@ -363,7 +433,7 @@ Export-ModuleMember -Function @(
     # Accounts
     'Get-NumAccounts', 'Get-ServiceNames',
     # .env
-    'Read-EnvFile', 'Write-EnvContent', 'Set-EnvValue',
+    'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose
     'Get-ComposeArgs', 'Invoke-Compose', 'Get-ContainerId',
     # Directory

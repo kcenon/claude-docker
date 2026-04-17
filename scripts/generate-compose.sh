@@ -14,19 +14,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+
 # --- Read configuration -------------------------------------------------------
 
-# Source .env if present (values already in env take precedence)
-if [[ -f "$PROJECT_ROOT/.env" ]]; then
-    while IFS='=' read -r key value; do
-        key=$(echo "$key" | xargs)  # trim whitespace
-        [[ -z "$key" || "$key" == \#* ]] && continue
-        # Only set if not already in environment
-        if [[ -z "${!key:-}" ]]; then
-            export "$key=$value"
-        fi
-    done < "$PROJECT_ROOT/.env"
-fi
+# Values already in the caller's environment win over .env entries.
+load_env_file "$PROJECT_ROOT/.env"
 
 NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"

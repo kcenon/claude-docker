@@ -44,6 +44,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
 # shellcheck source=lib/tui-release.sh
 . "$SCRIPT_DIR/lib/tui-release.sh"
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
 
 # --- Compose Command Builder --------------------------------------------------
 
@@ -72,7 +74,7 @@ build_compose_cmd() {
     # Worktree override: check if PROJECT_DIR_A is set in .env
     if [[ -f "${PROJECT_ROOT}/.env" ]]; then
         local pdir_a
-        pdir_a=$(grep -E '^PROJECT_DIR_A=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+        pdir_a=$(parse_env_value "${PROJECT_ROOT}/.env" "PROJECT_DIR_A")
         if [[ -n "$pdir_a" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
             COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
         fi
@@ -105,7 +107,7 @@ get_primary_service() {
 # Read NUM_ACCOUNTS from .env (default: 2)
 get_num_accounts() {
     local n
-    n=$(grep -E '^NUM_ACCOUNTS=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+    n=$(parse_env_value "${PROJECT_ROOT}/.env" "NUM_ACCOUNTS")
     echo "${n:-2}"
 }
 
@@ -277,7 +279,7 @@ refresh_gh_token() {
     # Compare with current .env value
     local current_token=""
     if [[ -f "$env_file" ]]; then
-        current_token=$(grep -E '^GH_TOKEN=' "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
+        current_token=$(parse_env_value "$env_file" "GH_TOKEN")
     fi
 
     if [[ "$fresh_token" == "$current_token" ]]; then
@@ -285,15 +287,12 @@ refresh_gh_token() {
         return 0
     fi
 
-    # Update or append GH_TOKEN
-    if [[ -f "$env_file" ]] && grep -q '^GH_TOKEN=' "$env_file" 2>/dev/null; then
-        perl -i -pe "s|^GH_TOKEN=.*|GH_TOKEN=${fresh_token}|" "$env_file"
-    elif [[ -f "$env_file" ]]; then
-        echo "GH_TOKEN=${fresh_token}" >> "$env_file"
-    else
+    if [[ ! -f "$env_file" ]]; then
         log_warn ".env not found — cannot save GH_TOKEN."
         return 1
     fi
+
+    set_env_value "$env_file" "GH_TOKEN" "$fresh_token"
     chmod 600 "$env_file"
 
     if [[ -z "$current_token" ]]; then

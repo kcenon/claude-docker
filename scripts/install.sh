@@ -71,6 +71,8 @@ log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_
 # Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
 # shellcheck source=lib/tui-release.sh
 . "$SCRIPT_DIR/lib/tui-release.sh"
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
 
 prompt_select() {
     local question="$1"
@@ -846,7 +848,7 @@ setup_worktrees() {
         # Update PROJECT_DIR in .env
         local env_file="$PROJECT_ROOT/.env"
         if [[ -f "$env_file" ]]; then
-            perl -i -pe "s|^PROJECT_DIR=.*|PROJECT_DIR=$new_dir|" "$env_file"
+            set_env_value "$env_file" "PROJECT_DIR" "$new_dir"
         fi
         log_info "Project directory updated: $new_dir"
     done
@@ -864,8 +866,8 @@ setup_worktrees() {
 
     # Update .env with worktree paths
     local env_file="$PROJECT_ROOT/.env"
-    perl -i -pe "s|^PROJECT_DIR_A=.*|PROJECT_DIR_A=$worktree_a|" "$env_file"
-    perl -i -pe "s|^PROJECT_DIR_B=.*|PROJECT_DIR_B=$worktree_b|" "$env_file"
+    set_env_value "$env_file" "PROJECT_DIR_A" "$worktree_a"
+    set_env_value "$env_file" "PROJECT_DIR_B" "$worktree_b"
 
     log_success "Worktrees created:"
     log_info "  A: $worktree_a (branch: $branch_a)"

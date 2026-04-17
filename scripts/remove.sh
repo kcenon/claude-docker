@@ -9,6 +9,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -132,7 +135,7 @@ remove_worktrees() {
     # Read PROJECT_DIR from .env if it exists
     local project_dir=""
     if [[ -f "$PROJECT_ROOT/.env" ]]; then
-        project_dir=$(grep -E '^PROJECT_DIR=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d'=' -f2- || true)
+        project_dir=$(parse_env_value "$PROJECT_ROOT/.env" "PROJECT_DIR")
     fi
 
     if [[ -z "$project_dir" ]]; then
