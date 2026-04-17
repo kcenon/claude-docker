@@ -423,6 +423,18 @@ platform `perl -i -pe`. If you still see stale `.env.tmp` files from a
 pre-fix install, delete them manually — they are not consumed by the
 current installer.
 
+**Stray `.env.backup.*` files from pre-rotation installs:**
+
+Current `install.sh` / `install.ps1` keep at most three `.env.backup.*`
+files and set them to `chmod 600` (owner-only) immediately after creation.
+If your working tree has leftover backups from before this change — often
+world-readable because they inherited umask — review and delete them:
+
+```bash
+ls -la .env.backup.*
+rm .env.backup.*   # or keep the newest by hand
+```
+
 **Container memory limit vs reservation:**
 
 `docker-compose.yml` sets `limits.memory: 4G` (hard cap — Docker will refuse

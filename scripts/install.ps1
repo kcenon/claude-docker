@@ -345,6 +345,19 @@ function Get-Configuration {
 
 # --- .env Generation ----------------------------------------------------------
 
+function Remove-StaleEnvBackups {
+    param(
+        [Parameter(Mandatory)][string]$EnvFile,
+        [int]$Keep = 3
+    )
+    $dir = Split-Path -Parent $EnvFile
+    $pattern = (Split-Path -Leaf $EnvFile) + '.backup.*'
+    Get-ChildItem -Path $dir -Filter $pattern -File -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Select-Object -Skip $Keep |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 function New-EnvFile {
     Write-LogStep 'Generating .env configuration'
 
@@ -356,8 +369,11 @@ function New-EnvFile {
             return
         }
         $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-        Copy-Item $envFile "${envFile}.backup.${timestamp}"
-        Write-LogInfo 'Backed up existing .env'
+        $backup = "${envFile}.backup.${timestamp}"
+        Copy-Item $envFile $backup
+        & icacls $backup /inheritance:r /grant:r "${env:USERNAME}:(R,W)" 2>$null | Out-Null
+        Remove-StaleEnvBackups -EnvFile $envFile -Keep 3
+        Write-LogInfo "Backed up existing .env to $(Split-Path -Leaf $backup)"
     }
 
     $projectDir = ConvertTo-ForwardSlash -Path $Script:SourceDir
