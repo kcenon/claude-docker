@@ -8,11 +8,25 @@
     removes state directories.
 .PARAMETER RepoDir
     Git repository path for worktree cleanup (Tier B). Optional.
+.PARAMETER Force
+    Remove state directories without prompting. Without -Force, an
+    interactive console prompts y/N; a non-interactive host (CI, piped
+    stdin) aborts instead of hanging.
+.PARAMETER SkipState
+    Decline state-directory removal non-interactively. Useful in automation
+    that only wants container/volume/worktree cleanup.
 #>
 [CmdletBinding()]
 param(
-    [string]$RepoDir
+    [string]$RepoDir,
+    [Alias('Yes')][switch]$Force,
+    [Alias('No')][switch]$SkipState
 )
+
+if ($Force -and $SkipState) {
+    Write-Error '-Force and -SkipState are mutually exclusive.'
+    exit 2
+}
 
 $ErrorActionPreference = 'Stop'
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
@@ -50,7 +64,24 @@ try {
     }
 
     Write-Host '=== Removing state directories ===' -ForegroundColor Cyan
-    if (Read-Confirmation -Question 'Remove ~/.claude-state/*?') {
+    $shouldRemove = $false
+    if ($Force) {
+        $shouldRemove = $true
+    } elseif ($SkipState) {
+        $shouldRemove = $false
+    } else {
+        # Interactive-only path: detect a real host that can accept input.
+        # Read-Confirmation throws on non-interactive hosts (ServerRemoteHost,
+        # redirected stdin) which prevents CI hangs.
+        $interactive = ($Host.Name -ne 'ServerRemoteHost') -and (-not [Console]::IsInputRedirected)
+        if (-not $interactive) {
+            Write-Error '  stdin is not interactive. Pass -Force to remove state non-interactively, or -SkipState to skip.'
+            exit 1
+        }
+        $shouldRemove = Read-Confirmation -Question 'Remove ~/.claude-state/*?'
+    }
+
+    if ($shouldRemove) {
         $statePath = Join-Path $env:USERPROFILE '.claude-state'
         if (Test-Path $statePath) {
             Remove-Item $statePath -Recurse -Force
