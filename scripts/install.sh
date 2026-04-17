@@ -578,7 +578,14 @@ generate_env() {
         echo "HOME=$HOME"
         echo "PROJECT_DIR=$SOURCE_DIR"
         echo "CONTAINER_PROJECT_DIR=/project"
-        echo "IMAGE_TAG=$(date '+%Y.%m.%d')"
+        # Seed IMAGE_TAG from VERSION so a freshly installed .env matches
+        # the repo's declared default; falls back to today's date if the
+        # VERSION file is missing for some reason.
+        local default_tag=""
+        if [[ -f "$PROJECT_ROOT/VERSION" ]]; then
+            default_tag="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
+        fi
+        echo "IMAGE_TAG=${default_tag:-$(date '+%Y.%m.%d')}"
         echo ""
         echo "# ==== Claude Config Source (optional) ===="
         echo "# Set to a path inside the container to source config directly from a repo."

@@ -23,7 +23,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 load_env_file "$PROJECT_ROOT/.env"
 
 NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+# IMAGE_TAG defaults come from the repo-root VERSION file — single source of
+# truth shared with install.sh and the "Bumping the Base Image" README
+# procedure. Falls back to "latest" if VERSION is missing (e.g. the user is
+# running the script from an older clone or a sparse checkout).
+if [[ -z "${IMAGE_TAG:-}" ]]; then
+    if [[ -f "$PROJECT_ROOT/VERSION" ]]; then
+        IMAGE_TAG="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
+    fi
+    IMAGE_TAG="${IMAGE_TAG:-latest}"
+fi
 
 # Validate
 if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
