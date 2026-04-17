@@ -470,10 +470,10 @@ collect_configuration() {
     local auth_choice
     auth_choice=$(prompt_select \
         "Which authentication method will you use?" \
-        "Path A: Subscription (Pro/Max/Team) — OAuth browser login" \
-        "Path B: Console API key — paste key directly")
-    [[ "$auth_choice" == *"Path A"* ]] && AUTH_PATH="A" || AUTH_PATH="B"
-    log_info "Authentication: Path $AUTH_PATH"
+        "OAuth — Claude.ai Pro/Max/Team subscription (browser login inside container)" \
+        "API key — Anthropic Console account (paste key)")
+    [[ "$auth_choice" == OAuth* ]] && AUTH_PATH="A" || AUTH_PATH="B"
+    log_info "Authentication method: $([[ "$AUTH_PATH" == "A" ]] && echo OAuth || echo 'API key')"
 
     # Sharing Tier
     local tier_choice
