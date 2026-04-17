@@ -111,6 +111,7 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - TERM=xterm-256color')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
+        [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
         [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
         # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is set at
         # generate time. Path A (OAuth) users have no value; emitting

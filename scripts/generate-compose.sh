@@ -90,6 +90,7 @@ generate_base() {
             echo "      - TERM=xterm-256color"
             echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
             echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
+            echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
             echo "      - NODE_OPTIONS=--max-old-space-size=4096"
             # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is
             # set at generate time. Path A (OAuth) users have no value;
