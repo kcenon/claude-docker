@@ -413,10 +413,16 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **CRLF errors in container (`$'\r': command not found`):**
 
 This happens when a Windows editor saved a `.sh` file with CRLF line endings,
-overriding the `.gitattributes eol=lf` rule. The container entrypoint now
-normalizes CRLF under `/project` at startup, so this should auto-heal on
-container restart. If it persists, run `dos2unix` on the offending file or
-configure your editor to use LF for `.sh` files.
+overriding the `.gitattributes eol=lf` rule. Fix the underlying cause first
+(`git config core.autocrlf input`, add/fix `.gitattributes`, or have your
+editor save as LF for `.sh` files).
+
+If you cannot fix the host setup and need the container to auto-patch bind-
+mounted scripts, set `CLAUDE_NORMALIZE_CRLF=1` in `.env` and restart. This
+reinstates the former entrypoint sweep under `/project` with a bounded depth.
+**Warning**: this modifies host files via the bind mount, which can appear
+as unexpected `git status` diffs and conflict with host-side editors. It's
+off by default for that reason.
 
 **`${HOME}` not expanding in docker-compose.yml (Windows):**
 
