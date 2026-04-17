@@ -181,22 +181,66 @@ function Remove-StateDirectories {
     }
 }
 
+function Remove-FileWithAclFallback {
+    <#
+    .SYNOPSIS
+    Delete a file, resetting its ACL first if the initial attempt is blocked.
+    Legacy installers granted "(R,W)" which omits the DELETE bit, so a plain
+    Remove-Item fails with "Access is denied" on .env and rotated backups.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    try {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return $true
+    }
+    catch [System.UnauthorizedAccessException] {
+        Write-LogWarn "Access denied on $(Split-Path -Leaf $Path) — resetting ACL and retrying."
+        # Restore inheritance so the parent ACL (which usually grants delete) applies.
+        & icacls $Path /reset 2>$null | Out-Null
+        & icacls $Path /grant:r "${env:USERNAME}:(M)" 2>$null | Out-Null
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        return $true
+    }
+}
+
 function Remove-EnvFile {
     Write-LogStep 'Removing .env configuration'
 
     $envFile = Join-Path $ProjectRoot '.env'
 
-    if (Test-Path $envFile) {
-        if (Read-Confirmation -Question 'Remove .env file (contains API keys and paths)?') {
-            Remove-Item $envFile -Force
-            Write-LogSuccess '.env removed'
-        }
-        else {
-            Write-LogInfo '.env kept'
-        }
-    }
-    else {
+    if (-not (Test-Path $envFile)) {
         Write-LogInfo 'No .env file found'
+        return
+    }
+
+    if (-not (Read-Confirmation -Question 'Remove .env file (contains API keys and paths)?')) {
+        Write-LogInfo '.env kept'
+        return
+    }
+
+    try {
+        Remove-FileWithAclFallback -Path $envFile | Out-Null
+        Write-LogSuccess '.env removed'
+    }
+    catch {
+        Write-LogError ".env could not be removed: $($_.Exception.Message)"
+        Write-Host '  Fix manually: ' -ForegroundColor DarkGray -NoNewline
+        Write-Host "icacls `"$envFile`" /reset && del `"$envFile`"" -ForegroundColor DarkGray
+        return
+    }
+
+    # Also sweep rotated backups that inherit the same legacy (R,W) ACL.
+    $backupPattern = '.env.backup.*'
+    $backups = Get-ChildItem -Path $ProjectRoot -Filter $backupPattern -File -ErrorAction SilentlyContinue
+    foreach ($bk in $backups) {
+        try {
+            Remove-FileWithAclFallback -Path $bk.FullName | Out-Null
+            Write-LogInfo "Removed backup: $($bk.Name)"
+        }
+        catch {
+            Write-LogWarn "Could not remove backup $($bk.Name): $($_.Exception.Message)"
+        }
     }
 }
 

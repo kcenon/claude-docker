@@ -195,12 +195,14 @@ function Invoke-GhAuth {
 
 # --- GitHub Auth Helpers ------------------------------------------------------
 
-function Refresh-GhToken {
+function Update-GhToken {
     <#
     .SYNOPSIS
     Refresh GH_TOKEN in .env from the host's gh CLI.
     Returns $true if token was verified/refreshed, $false if gh is unavailable.
     Non-blocking: callers should treat $false as a warning, not an error.
+    Named with the approved PowerShell verb "Update" (was "Refresh" which is
+    not in Get-Verb and would trigger unapproved-verb warnings if exported).
     #>
     $envFile = Join-Path $ProjectRoot '.env'
 
@@ -287,7 +289,7 @@ function Invoke-Update {
 
     # Pre-check and refresh GitHub auth token from host
     Write-Host '[1/5] Checking GitHub auth on host...' -ForegroundColor Cyan
-    $ghOk = Refresh-GhToken
+    $ghOk = Update-GhToken
     Write-Host ''
 
     if (-not $ghOk) {

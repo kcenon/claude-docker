@@ -45,7 +45,7 @@ try {
     Pop-Location
 
     Write-Host '=== Creating worktrees ==='
-    & "$ScriptDir\setup-worktrees.ps1" -RepoDir $RepoDir -BranchA 'test-branch-a' -BranchB 'test-branch-b'
+    & "$ScriptDir\setup-worktrees.ps1" -RepoDir $RepoDir -Branches @('test-branch-a', 'test-branch-b')
 
     $WorktreeA = "${RepoDir}-a"
     $WorktreeB = "${RepoDir}-b"

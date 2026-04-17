@@ -372,7 +372,9 @@ function New-EnvFile {
         $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
         $backup = "${envFile}.backup.${timestamp}"
         Copy-Item $envFile $backup
-        & icacls $backup /inheritance:r /grant:r "${env:USERNAME}:(R,W)" 2>$null | Out-Null
+        # Grant Modify (R,W,D) so Remove-StaleEnvBackups and remove.ps1 can
+        # delete rotated backups. Full (F) would allow ACL changes — unneeded.
+        & icacls $backup /inheritance:r /grant:r "${env:USERNAME}:(M)" 2>$null | Out-Null
         Remove-StaleEnvBackups -EnvFile $envFile -Keep 3
         Write-LogInfo "Backed up existing .env to $(Split-Path -Leaf $backup)"
     }
@@ -469,8 +471,10 @@ function New-EnvFile {
     $content = ($lines -join "`n") + "`n"
     Write-EnvContent -Path $envFile -Content $content
 
-    # Restrict file permissions (Windows ACL equivalent of chmod 600)
-    & icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" 2>$null | Out-Null
+    # Restrict file permissions (Windows ACL equivalent of chmod 600).
+    # Modify (M) = R,W,D — needed so remove.ps1 can delete the .env later.
+    # R,W alone blocks deletion because DELETE is a separate Windows ACL bit.
+    & icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(M)" 2>$null | Out-Null
 
     Write-LogSuccess ".env generated at $envFile"
 
@@ -667,7 +671,7 @@ function Invoke-WorktreeSetup {
     $branchB = Read-Input -Question 'Branch name for Container B' -Default 'worktree-b'
 
     Write-LogInfo 'Creating worktrees...'
-    & "$PSScriptRoot\setup-worktrees.ps1" -RepoDir $Script:SourceDir -BranchA $branchA -BranchB $branchB
+    & "$PSScriptRoot\setup-worktrees.ps1" -RepoDir $Script:SourceDir -Branches @($branchA, $branchB)
 
     $worktreeA = "$($Script:SourceDir.TrimEnd('\', '/'))-a"
     $worktreeB = "$($Script:SourceDir.TrimEnd('\', '/'))-b"
