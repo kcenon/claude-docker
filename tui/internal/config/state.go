@@ -10,8 +10,22 @@ import (
 
 // StateDir represents a single account's state directory.
 type StateDir struct {
-	Letter string // e.g., "a"
-	Path   string // e.g., ~/.claude-state/account-a
+	Letter string // e.g., "a" or "aa"
+	Path   string // e.g., ~/.claude-state/account-a or -account-aa
+}
+
+// isValidAccountLetter reports whether s is a non-empty lowercase letter
+// sequence that round-trips through LetterToIndex / IndexToLetter.
+func isValidAccountLetter(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'a' || s[i] > 'z' {
+			return false
+		}
+	}
+	return LetterToIndex(s) > 0 && LetterToIndex(s) <= 702
 }
 
 // CredentialsPath returns the path to .credentials.json in this state dir.
@@ -70,7 +84,9 @@ func DiscoverStateDirsAt(basePath string) ([]StateDir, error) {
 			continue
 		}
 		letter := strings.TrimPrefix(name, "account-")
-		if len(letter) != 1 || letter[0] < 'a' || letter[0] > 'z' {
+		// Accept Excel-style letters (a-z, aa-zz) so state directories for
+		// NUM_ACCOUNTS > 26 are discovered.
+		if !isValidAccountLetter(letter) {
 			continue
 		}
 		dirs = append(dirs, StateDir{
@@ -79,8 +95,11 @@ func DiscoverStateDirsAt(basePath string) ([]StateDir, error) {
 		})
 	}
 
+	// Sort by the 1-based account index so the caller sees a, b, ..., z,
+	// aa, ab, ..., rather than the lexical order which would interleave
+	// "aa" between "a" and "b".
 	sort.Slice(dirs, func(i, j int) bool {
-		return dirs[i].Letter < dirs[j].Letter
+		return LetterToIndex(dirs[i].Letter) < LetterToIndex(dirs[j].Letter)
 	})
 
 	return dirs, nil
