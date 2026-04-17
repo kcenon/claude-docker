@@ -15,7 +15,11 @@ ARG CLAUDE_CODE_VERSION
 
 WORKDIR /workspace
 
-# Dev tools — single layer, cache cleaned
+# Dev tools — single layer, cache cleaned.
+# python3 is included so hook test harnesses (e.g. claude-config
+# tests/hooks/test-*.sh) that validate JSON via `python3 -m json.tool`
+# fall back correctly when jq is unavailable; the image stays slim
+# because this is the interpreter only, no pip or venv.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -26,6 +30,7 @@ RUN apt-get update \
        zsh \
        sudo \
        procps \
+       python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
