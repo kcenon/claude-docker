@@ -56,21 +56,30 @@ detect_platform() {
     esac
 }
 
-# --- Compose Command Discovery ------------------------------------------------
+# --- Compose Command Builder --------------------------------------------------
 
-# Build the widest compose command covering all possible overlays.
-# This ensures we catch containers/volumes from any configuration.
-build_full_compose_cmd() {
-    local cmd="docker compose -f docker-compose.yml"
+# Populate the global COMPOSE_CMD array with `docker compose -f ...` so
+# callers invoke it as `"${COMPOSE_CMD[@]}" down ...` instead of building and
+# eval'ing a string. Mirrors the pattern in scripts/install.sh (see
+# build_compose_cmd there, introduced in #201). Array form preserves quoting
+# of paths containing spaces, which was the source of issue #155.
+#
+# remove.sh must catch containers/volumes from any configuration, so the
+# widest overlay set is included whenever the override files exist on disk.
+COMPOSE_CMD=()
+build_compose_cmd() {
+    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
+
     local platform
     platform=$(detect_platform)
 
-    [[ "$platform" == "linux" ]] && [[ -f "$PROJECT_ROOT/docker-compose.linux.yml" ]] && \
-        cmd+=" -f docker-compose.linux.yml"
-    [[ -f "$PROJECT_ROOT/docker-compose.worktree.yml" ]] && \
-        cmd+=" -f docker-compose.worktree.yml"
+    if [[ "$platform" == "linux" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.linux.yml" ]]; then
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
+    fi
 
-    echo "$cmd"
+    if [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
+    fi
 }
 
 # --- Main Removal Steps -------------------------------------------------------
@@ -80,12 +89,11 @@ remove_containers_and_volumes() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_full_compose_cmd)
+    build_compose_cmd
 
     # Stop all running containers from any compose config
     log_info "Stopping containers..."
-    eval "$compose_cmd down --remove-orphans -v" 2>/dev/null || true
+    "${COMPOSE_CMD[@]}" down --remove-orphans -v 2>/dev/null || true
 
     # Also try base compose alone (in case overlay files were deleted)
     docker compose down --remove-orphans -v 2>/dev/null || true
