@@ -23,6 +23,7 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = Split-Path -Parent $ScriptDir
 
 Import-Module (Join-Path $ScriptDir 'ClaudeDocker.psm1') -Force
+. (Join-Path $ScriptDir 'lib' 'index.ps1')
 
 # --- Read configuration -------------------------------------------------------
 
@@ -80,31 +81,15 @@ $CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
 $MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
 $MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
 
+# Thin wrappers around the shared helpers in lib/index.ps1 so legacy call
+# sites below keep working without rewriting each loop. Both helpers accept
+# indices 1..702 and throw out-of-range otherwise.
 function ConvertTo-Letter([int]$Index) {
-    # Excel-style: 1 -> a, 26 -> z, 27 -> aa, 52 -> az, 702 -> zz.
-    # 1-26 identical to the former single-letter mapping.
-    # Casts to [int] are required because [math]::Floor and `%` can
-    # return Double/Decimal, which will not implicit-cast to [char].
-    [int]$n = $Index
-    $builder = ''
-    while ($n -gt 0) {
-        [int]$rem = ($n - 1) % 26
-        $builder = [char]([int](97 + $rem)) + $builder
-        [int]$n = [math]::Floor(($n - 1) / 26)
-    }
-    return $builder
+    return Get-AccountLetter -Index $Index
 }
 
 function ConvertTo-UpperLetter([int]$Index) {
-    # Same scheme, uppercase.
-    [int]$n = $Index
-    $builder = ''
-    while ($n -gt 0) {
-        [int]$rem = ($n - 1) % 26
-        $builder = [char]([int](65 + $rem)) + $builder
-        [int]$n = [math]::Floor(($n - 1) / 26)
-    }
-    return $builder
+    return Get-AccountLetterUpper -Index $Index
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------

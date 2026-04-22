@@ -40,6 +40,7 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 # from inside WSL2 instead, so UID/GID is correctly populated.
 
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
+. (Join-Path $PSScriptRoot 'lib' 'index.ps1')
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
@@ -317,11 +318,13 @@ function Get-Configuration {
         Write-LogInfo "Claude Code version: $($Script:ClaudeVersion)"
     }
 
-    # Number of accounts
-    $numInput = Read-Input -Question 'Number of accounts to configure (1-26)' -Default '2'
+    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
+    # enumeration; the validator catches typos like 2600 without capping
+    # legitimate multi-tenant setups at the historic 26-account ceiling.
+    $numInput = Read-Input -Question 'Number of accounts to configure (1-702)' -Default '2'
     $Script:NumAccounts = [int]$numInput
-    if ($Script:NumAccounts -lt 1 -or $Script:NumAccounts -gt 26) {
-        Write-LogError 'Number of accounts must be between 1 and 26.'
+    if ($Script:NumAccounts -lt 1 -or $Script:NumAccounts -gt 702) {
+        Write-LogError 'Number of accounts must be between 1 and 702.'
         exit 1
     }
     Write-LogInfo "Accounts: $($Script:NumAccounts)"
@@ -332,7 +335,7 @@ function Get-Configuration {
         Write-Host ''
         Write-Host 'Enter Console API keys (from console.anthropic.com):' -ForegroundColor Cyan
         for ($i = 1; $i -le $Script:NumAccounts; $i++) {
-            $letter = [char](64 + $i)  # A, B, C, ...
+            $letter = Get-AccountLetterUpper -Index $i  # A, B, ..., Z, AA, ZZ
             $Script:ApiKeys += Read-Secret -Question "API key for Account $letter (sk-ant-...)"
         }
 
@@ -419,7 +422,7 @@ function New-EnvFile {
     if ($Script:AuthPath -eq 'B') {
         $lines += '# ==== Path B: Console API Keys ===='
         for ($i = 1; $i -le $Script:NumAccounts; $i++) {
-            $letter = [char](64 + $i)  # A, B, C, ...
+            $letter = Get-AccountLetterUpper -Index $i  # A, B, ..., Z, AA, ZZ
             $lines += "CLAUDE_API_KEY_${letter}=$($Script:ApiKeys[$i - 1])"
         }
         $lines += ''
@@ -429,8 +432,8 @@ function New-EnvFile {
         $lines += '# ==== Tier B: Git Worktree Paths ===='
         $lines += '# (populated after worktree setup)'
         for ($i = 1; $i -le $Script:NumAccounts; $i++) {
-            $upper = [char](64 + $i)
-            $lower = [char](96 + $i)
+            $upper = Get-AccountLetterUpper -Index $i
+            $lower = Get-AccountLetter -Index $i
             $lines += "PROJECT_DIR_${upper}="
             $lines += "CONTAINER_PROJECT_DIR_${upper}=/project-${lower}"
         }
@@ -490,7 +493,7 @@ function New-StateDirs {
 
     $dirs = @((Join-Path $env:USERPROFILE '.claude'))
     for ($i = 1; $i -le $Script:NumAccounts; $i++) {
-        $letter = [char](96 + $i)
+        $letter = Get-AccountLetter -Index $i
         $dirs += (Join-Path $env:USERPROFILE ".claude-state\account-$letter")
     }
 
