@@ -14,38 +14,45 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
+
 # --- Read configuration -------------------------------------------------------
 
-# Source .env if present (values already in env take precedence)
-if [[ -f "$PROJECT_ROOT/.env" ]]; then
-    while IFS='=' read -r key value; do
-        key=$(echo "$key" | xargs)  # trim whitespace
-        [[ -z "$key" || "$key" == \#* ]] && continue
-        # Only set if not already in environment
-        if [[ -z "${!key:-}" ]]; then
-            export "$key=$value"
-        fi
-    done < "$PROJECT_ROOT/.env"
-fi
+# Values already in the caller's environment win over .env entries.
+load_env_file "$PROJECT_ROOT/.env"
 
 NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
 
-# Validate
-if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
-    echo "Error: NUM_ACCOUNTS must be between 1 and 26 (got: $NUM_ACCOUNTS)" >&2
+# IMAGE_TAG defaults come from the repo-root VERSION file — single source of
+# truth shared with install.sh and the "Bumping the Base Image" README
+# procedure. Falls back to "latest" if VERSION is missing (e.g. the user is
+# running the script from an older clone or a sparse checkout).
+if [[ -z "${IMAGE_TAG:-}" ]]; then
+    if [[ -f "$PROJECT_ROOT/VERSION" ]]; then
+        IMAGE_TAG="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
+    fi
+    IMAGE_TAG="${IMAGE_TAG:-latest}"
+fi
+
+# Validate. Practical upper bound is "zz" (702) from Excel-style letter
+# enumeration; keep the cap well below that to catch typos like 2600.
+if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
+    echo "Error: NUM_ACCOUNTS must be between 1 and 702 (got: $NUM_ACCOUNTS)" >&2
     exit 1
 fi
 
-# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
-index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
-}
+# Container resource envelope (override via .env or host env). Defaults
+# reproduce the historical hardcoded values so existing installs see no
+# behavior change after regenerating.
+CPU_LIMIT="${CONTAINER_CPU_LIMIT:-2}"
+CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
+MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
+MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
 
-# Convert 1-based index to uppercase letter: 1→A, 2→B, ..., 26→Z
-index_to_upper() {
-    printf "\\$(printf '%03o' $((64 + $1)))"
-}
+# index_to_letter and index_to_upper provided by scripts/lib/index.sh.
 
 # --- Generate docker-compose.yml ---------------------------------------------
 
@@ -96,19 +103,27 @@ generate_base() {
             echo "      - TERM=xterm-256color"
             echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
             echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
+            echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
             echo "      - NODE_OPTIONS=--max-old-space-size=4096"
-            echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}:-}"
+            # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is
+            # set at generate time. Path A (OAuth) users have no value;
+            # emitting ANTHROPIC_API_KEY= with an empty string makes the
+            # SDK prefer the empty env var over .credentials.json.
+            local key_var="CLAUDE_API_KEY_${upper}"
+            if [[ -n "${!key_var:-}" ]]; then
+                echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}}"
+            fi
             echo "      - GH_TOKEN=\${GH_TOKEN:-}"
             echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
             echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
             echo "    deploy:"
             echo "      resources:"
             echo "        limits:"
-            echo "          cpus: \"2\""
-            echo "          memory: 4G"
+            echo "          cpus: \"${CPU_LIMIT}\""
+            echo "          memory: ${MEM_LIMIT}"
             echo "        reservations:"
-            echo "          cpus: \"1\""
-            echo "          memory: 2G"
+            echo "          cpus: \"${CPU_RESERVATION}\""
+            echo "          memory: ${MEM_RESERVATION}"
             echo "    command: [\"sleep\", \"infinity\"]"
 
             # Blank line between services (but not after the last one)

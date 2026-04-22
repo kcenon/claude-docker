@@ -26,7 +26,7 @@ type App struct {
 }
 
 // NewApp creates the application model.
-func NewApp(version, projectRoot string, env *config.Env, client *docker.Client) App {
+func NewApp(version, projectRoot string, env *config.Env, client *docker.Client, skipPermissions bool) App {
 	mgr := account.NewManager(env, client)
 	return App{
 		version:     version,
@@ -34,7 +34,7 @@ func NewApp(version, projectRoot string, env *config.Env, client *docker.Client)
 		env:         env,
 		client:      client,
 		manager:     mgr,
-		dashboard:   dashboard.New(mgr, client),
+		dashboard:   dashboard.New(mgr, client, env, skipPermissions),
 	}
 }
 

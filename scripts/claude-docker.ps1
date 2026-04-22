@@ -125,62 +125,23 @@ function Invoke-Exec {
 }
 
 function Invoke-Claude {
-    $service = if ($Arguments.Count -gt 0) { $Arguments[0] } else { 'claude-a' }
+    $skipPerms = $false
+    $service = ''
+    foreach ($arg in $Arguments) {
+        if ($arg -eq '--dangerously-skip-permissions') {
+            $skipPerms = $true
+        } elseif (-not $service) {
+            $service = $arg
+        }
+    }
+    if (-not $service) { $service = 'claude-a' }
     Write-Host "Starting Claude Code in " -ForegroundColor Cyan -NoNewline
     Write-Host $service -ForegroundColor White -NoNewline
     Write-Host '...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
-}
-
-function Invoke-Auth {
-    $service = if ($Arguments.Count -gt 0) { $Arguments[0] } else { '' }
-
-    # On Windows, look for file-based credentials from host Claude installation
-    $credFile = Join-Path $env:USERPROFILE '.claude\.credentials.json'
-    $creds = ''
-
-    if (Test-Path $credFile) {
-        $creds = Get-Content $credFile -Raw
-    }
-
-    if (-not $creds) {
-        Write-LogWarn 'No credentials found at ~/.claude/.credentials.json'
-        Write-Host 'Authenticate on the host first, then re-run this command:'
-        Write-Host '  claude auth login' -ForegroundColor DarkGray
-        Write-Host ''
-        Write-Host 'Or set API keys in .env (Path B):'
-        Write-Host '  CLAUDE_API_KEY_A=sk-ant-...' -ForegroundColor DarkGray
-        exit 1
-    }
-
-    # Determine which services to authenticate
-    $services = if ($service) { @($service) } else { @(Get-ServiceNames -ProjectRoot $ProjectRoot) }
-
-    Write-Host 'Injecting credentials from host' -ForegroundColor White
-
-    foreach ($svc in $services) {
-        $suffix = $svc -replace '^claude-', ''
-        $stateDir = Join-Path $env:USERPROFILE ".claude-state\account-$suffix"
-
-        if (-not (Test-Path $stateDir)) {
-            New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-        }
-
-        $destCred = Join-Path $stateDir '.credentials.json'
-        [System.IO.File]::WriteAllText($destCred, $creds, [System.Text.UTF8Encoding]::new($false))
-        Write-Host "  * $svc - credentials written" -ForegroundColor Green
-    }
-
-    Write-Host ''
-
-    # Verify in first running container
-    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $services[0]
-    if ($cid) {
-        Write-Host "Verifying ($($services[0])):" -ForegroundColor DarkGray
-        & docker exec $cid claude auth status 2>&1
-    }
-    else {
-        Write-LogInfo 'Containers not running. Credentials will be available on next start.'
+    if ($skipPerms) {
+        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude --dangerously-skip-permissions
+    } else {
+        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
     }
 }
 
@@ -234,12 +195,14 @@ function Invoke-GhAuth {
 
 # --- GitHub Auth Helpers ------------------------------------------------------
 
-function Refresh-GhToken {
+function Update-GhToken {
     <#
     .SYNOPSIS
     Refresh GH_TOKEN in .env from the host's gh CLI.
     Returns $true if token was verified/refreshed, $false if gh is unavailable.
     Non-blocking: callers should treat $false as a warning, not an error.
+    Named with the approved PowerShell verb "Update" (was "Refresh" which is
+    not in Get-Verb and would trigger unapproved-verb warnings if exported).
     #>
     $envFile = Join-Path $ProjectRoot '.env'
 
@@ -326,7 +289,7 @@ function Invoke-Update {
 
     # Pre-check and refresh GitHub auth token from host
     Write-Host '[1/5] Checking GitHub auth on host...' -ForegroundColor Cyan
-    $ghOk = Refresh-GhToken
+    $ghOk = Update-GhToken
     Write-Host ''
 
     if (-not $ghOk) {
@@ -529,7 +492,6 @@ function Show-Help {
     Write-Host ''
     Write-Host 'INTERACTIVE' -ForegroundColor White
     Write-Host '  claude [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Claude Code (default: claude-a)'
-    Write-Host '  auth [service]        ' -ForegroundColor Green -NoNewline; Write-Host 'Inject Claude credentials from host'
     Write-Host '  gh-auth               ' -ForegroundColor Green -NoNewline; Write-Host 'Inject GitHub token from host gh CLI'
     Write-Host '  exec <service>        ' -ForegroundColor Green -NoNewline; Write-Host 'Open shell in a service'
     Write-Host ''
@@ -624,7 +586,6 @@ switch ($Command) {
     'claude'     { Invoke-Claude }
     'tui'        { Invoke-Tui }
     'dashboard'  { Invoke-Tui }
-    'auth'       { Invoke-Auth }
     'gh-auth'    { Invoke-GhAuth }
     'usage'      { Invoke-Usage }
     'build'      { Invoke-Build }

@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@master
+        env:
+          # SC1091: sourced files are resolved at runtime, not checkable in lint
+          SHELLCHECK_OPTS: -e SC1091
+        with:
+          scandir: "./scripts"
+          # MVP baseline: only actual errors fail CI. Pre-existing warnings
+          # are tracked for cleanup in a follow-up issue before tightening
+          # this threshold back to `warning`.
+          severity: error
+
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # MVP baseline: only errors fail CI. Pre-existing DL3008 /
+          # DL3016 / DL4006 warnings on apt-get / npm version pinning
+          # are legitimate trade-offs for this image; revisit when
+          # pinning policy changes.
+          failure-threshold: error
+
+  psanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+      - name: Run analyzer
+        shell: pwsh
+        run: |
+          # MVP baseline: Error severity only. Our CLI scripts intentionally
+          # use Write-Host for colored terminal output (PSAvoidUsingWriteHost
+          # is a Warning) and that pattern is load-bearing — revisiting
+          # requires a broader refactor to a formatter function.
+          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
+          if ($results) {
+            $results | Format-Table -AutoSize
+            exit 1
+          }
+
+  go-test:
+    name: Go tests (TUI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Must match or exceed tui/go.mod's `go` directive (currently 1.23).
+          go-version: "1.23"
+      - name: Run Go unit tests
+        working-directory: ./tui
+        run: go test ./...
+
+  compose-validate:
+    name: Compose validate (${{ matrix.fixture }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [minimal, tier-b, n5, n30, with-special-chars]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage fixture
+        run: cp tests/env_fixtures/${{ matrix.fixture }}.env .env
+      - name: Generate compose
+        run: bash scripts/generate-compose.sh
+      - name: Validate compose
+        run: docker compose config > /dev/null

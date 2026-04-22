@@ -15,12 +15,23 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+	skipPermissions := false
+	var filteredArgs []string
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--dangerously-skip-permissions":
+			skipPermissions = true
+		default:
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	if len(filteredArgs) > 0 && (filteredArgs[0] == "--version" || filteredArgs[0] == "-v") {
 		fmt.Printf("claude-docker-tui %s\n", version)
 		os.Exit(0)
 	}
 
-	if len(os.Args) > 1 && os.Args[1] == "--json" {
+	if len(filteredArgs) > 0 && filteredArgs[0] == "--json" {
 		if err := runJSON(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -34,15 +45,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	env, err := config.LoadEnv(filepath.Join(projectRoot, ".env"))
+	envPath := filepath.Join(projectRoot, ".env")
+	env, err := config.LoadEnv(envPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: cannot load .env: %v\n", err)
-		env = config.NewEmptyEnv(projectRoot)
+		env = config.NewEmptyEnv(envPath)
 	}
 
 	composeClient := docker.NewClient(projectRoot, env)
 
-	app := ui.NewApp(version, projectRoot, env, composeClient)
+	app := ui.NewApp(version, projectRoot, env, composeClient, skipPermissions)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

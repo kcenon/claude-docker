@@ -89,38 +89,35 @@ PROJECT_DIR=/absolute/path/to/your/project
 
 ### 2. Authenticate
 
-Choose your authentication path:
+Choose **OAuth** (subscription) or **API key** (Anthropic Console):
 
-**Path A -- Subscription accounts (Pro / Max / Team):**
+| You have... | Host OS | Use |
+|-------------|---------|-----|
+| Claude.ai Pro / Max / Team subscription | Linux / WSL2 | **OAuth** |
+| Claude.ai Pro / Max / Team subscription | macOS | **OAuth** inside container; fall back to API key if Keychain errors appear |
+| Anthropic Console account only | any | **API key** |
+| Mix of both | any | **Per-container**: set `CLAUDE_API_KEY_<LETTER>` only for API-key slots — others fall back to OAuth |
 
-macOS:
+**OAuth** — authenticate inside each container after starting:
+
 ```bash
-# 1. Authenticate on host (one-time, opens browser)
-claude auth login
-
-# 2. Inject credentials into all containers
-scripts/claude-docker auth
-```
-
-Linux / WSL2:
-```bash
-# Authenticate inside each container after starting
 scripts/claude-docker claude claude-a
 # Inside container: claude auth login
 ```
 
-Note: On macOS, container-internal OAuth fails due to Docker network
-boundary limitations. The `auth` command extracts tokens from macOS
-Keychain instead.
+Container-internal OAuth may fail on macOS due to Docker network
+boundary limitations. If it does, switch the affected account to API key.
 
-**Path B -- Console API keys:**
-
-Add to `.env`:
+**API key** — add to `.env`:
 
 ```bash
 CLAUDE_API_KEY_A=sk-ant-...
 CLAUDE_API_KEY_B=sk-ant-...
 ```
+
+Re-run `scripts/generate-compose.sh` after editing so the generator emits
+`ANTHROPIC_API_KEY` only for slots that actually have a key (see
+[Switching between OAuth and API key](#authentication) below).
 
 ### 3. Build and run
 
@@ -159,7 +156,6 @@ scripts/claude-docker help       # Show all available commands
 | | `ps` | Show container status |
 | | `logs` | Follow container logs |
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
-| | `auth [service]` | Inject OAuth credentials from macOS Keychain |
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Advanced** | `config` | Show resolved compose configuration |
@@ -200,29 +196,28 @@ history, settings, memory, and credentials.
 
 ### Authentication
 
-On macOS, `scripts/claude-docker auth` extracts OAuth credentials from the
-host's macOS Keychain and injects them into each container's state directory.
-Host-side authentication (`claude auth login`) must be completed first.
-
-On Windows (native), `.\scripts\claude-docker.ps1 auth` copies credentials
-from the host's `~/.claude/.credentials.json` into each container's state
-directory. Authenticate on the host first with `claude auth login`.
-
-On Linux/WSL2, authenticate directly inside containers.
+Authenticate directly inside each container. Each container keeps its own
+credentials in its bind-mounted state directory, so you run this once per
+account.
 
 ```bash
-# macOS: extract from Keychain -> inject to all containers
-scripts/claude-docker auth
-
-# macOS: inject to specific container only
-scripts/claude-docker auth claude-a
-
-# Linux/WSL2: authenticate inside container
+# Authenticate inside a specific container
 scripts/claude-docker exec claude-a claude auth login
 
 # Check status in any container
 scripts/claude-docker exec claude-a claude auth status
 ```
+
+If container-internal OAuth fails on macOS due to Docker network boundary
+limitations, switch to API keys in `.env`.
+
+> **Switching between OAuth and API key**: After editing `CLAUDE_API_KEY_*`
+> in `.env`, re-run `scripts/generate-compose.sh` (or `.ps1`) and
+> `docker compose up -d` so the generated compose files reflect the new
+> state. `ANTHROPIC_API_KEY` is only injected into a container when the
+> matching `CLAUDE_API_KEY_<LETTER>` is set at generate time — emitting
+> it with an empty string would otherwise make the SDK ignore the
+> `.credentials.json` from OAuth.
 
 **GitHub CLI (`gh`)** is automatically available inside containers. The host's
 `~/.config/gh/` is bind-mounted read-only, so `gh` commands use the host's
@@ -260,6 +255,54 @@ The host config is read-only. Account-specific state (credentials, memory,
 sessions) remains writable and per-container. Symlinks are created when the
 target does not exist or is an empty file, so per-account overrides with
 real content are preserved.
+
+### Container-side settings transformation
+
+The entrypoint does not use your host `settings.json` verbatim. It rewrites a
+working copy at `~/.claude/settings.json` (inside the container) before Claude
+Code starts. Two of those transforms are load-bearing but easy to miss from
+the code alone:
+
+**1. `sandbox.enabled` is forced to `false`.**
+
+The host sandbox gates filesystem and network access on the host. Inside a
+container it would re-confine already-confined code and, more importantly,
+break hooks and skills that `exec` into `/usr/bin`. The entrypoint relies on
+the container itself being the isolation boundary.
+
+This assumption holds for the **default** Docker isolation (cgroups +
+namespaces + read-only bind mounts). It does **not** hold when:
+
+- the container runs with `--privileged`,
+- Docker-in-Docker is used so nested containers share the parent's kernel
+  namespace,
+- a skill uses `docker run` on the host socket to spawn a sibling container.
+
+If you run claude-docker in any of those modes you lose the host sandbox
+without warning. Either keep the outer Docker isolation strict or edit the
+entrypoint to leave `sandbox.enabled` untouched for that profile.
+
+**2. PowerShell hook commands are rewritten to bash.**
+
+Host `settings.json` entries that invoke `pwsh -NoProfile -File ...` are
+transformed so they work inside the Linux-native container image. This is
+best-effort: trivial single-call hooks are rewritten cleanly, but the
+following patterns fail **silently** (transformed command is produced but
+never fires):
+
+| Pattern | Example | Status |
+|---------|---------|--------|
+| `pwsh -NoProfile -File ./foo.ps1` | top-level script | supported |
+| Heredoc / multi-line `-Command` | `pwsh -c @"..."@` | not supported |
+| `$env:VAR` expansion | `pwsh -c '$env:FOO'` | not supported |
+| Quoted paths with spaces | `pwsh -File "C:\\Program Files\\..."` | not supported |
+| `Join-Path` outside the statusLine slot | inside a hook array | not supported |
+
+If a hook works on the host but never fires in the container, check whether
+its command matches one of the unsupported patterns above. The workaround is
+to ship a Linux-native shell alternative via `CLAUDE_CONFIG_SOURCE` (which
+bypasses the transform entirely — the container reads the config tree you
+point at without rewriting it).
 
 ### Running Commands Inside Containers
 
@@ -360,6 +403,10 @@ The `scale` command automatically:
 
 Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
 
+Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
+53→`ba`, ..., 702→`zz`. You can set `NUM_ACCOUNTS` up to 702, though host
+memory is usually the binding constraint well before then.
+
 On Windows (PowerShell):
 ```powershell
 .\scripts\claude-docker.ps1 scale 4
@@ -401,13 +448,6 @@ The `scripts/claude-docker` CLI auto-detects which overlays to apply.
 
 **"Authentication expired" inside container:**
 
-macOS:
-```bash
-claude auth login              # Re-authenticate on host
-scripts/claude-docker auth     # Re-inject to containers
-```
-
-Linux/WSL2:
 ```bash
 scripts/claude-docker exec claude-a claude auth login
 ```
@@ -433,10 +473,16 @@ Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **CRLF errors in container (`$'\r': command not found`):**
 
 This happens when a Windows editor saved a `.sh` file with CRLF line endings,
-overriding the `.gitattributes eol=lf` rule. The container entrypoint now
-normalizes CRLF under `/project` at startup, so this should auto-heal on
-container restart. If it persists, run `dos2unix` on the offending file or
-configure your editor to use LF for `.sh` files.
+overriding the `.gitattributes eol=lf` rule. Fix the underlying cause first
+(`git config core.autocrlf input`, add/fix `.gitattributes`, or have your
+editor save as LF for `.sh` files).
+
+If you cannot fix the host setup and need the container to auto-patch bind-
+mounted scripts, set `CLAUDE_NORMALIZE_CRLF=1` in `.env` and restart. This
+reinstates the former entrypoint sweep under `/project` with a bounded depth.
+**Warning**: this modifies host files via the bind mount, which can appear
+as unexpected `git status` diffs and conflict with host-side editors. It's
+off by default for that reason.
 
 **`${HOME}` not expanding in docker-compose.yml (Windows):**
 
@@ -451,6 +497,18 @@ platform `perl -i -pe`. If you still see stale `.env.tmp` files from a
 pre-fix install, delete them manually — they are not consumed by the
 current installer.
 
+**Stray `.env.backup.*` files from pre-rotation installs:**
+
+Current `install.sh` / `install.ps1` keep at most three `.env.backup.*`
+files and set them to `chmod 600` (owner-only) immediately after creation.
+If your working tree has leftover backups from before this change — often
+world-readable because they inherited umask — review and delete them:
+
+```bash
+ls -la .env.backup.*
+rm .env.backup.*   # or keep the newest by hand
+```
+
 **Container memory limit vs reservation:**
 
 `docker-compose.yml` sets `limits.memory: 4G` (hard cap — Docker will refuse
@@ -461,18 +519,23 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins the Node base image to a specific patch version for
-reproducible builds. To bump:
+The `Dockerfile` pins the Node base image to a specific patch version **and
+content digest** so rebuilds are byte-for-byte reproducible and any upstream
+repush of the tag is caught at build time as a digest mismatch. To bump:
 
 1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
-2. Update the `FROM` line in `Dockerfile`
-3. Update the `image:` tag in `docker-compose.yml` to today's date
-   (`claude-code-base:YYYY.MM.DD`) so old containers cannot reference the new build
-4. Optionally capture the digest for future verification:
+2. Capture the digest on a trusted host (**required**, not optional):
    ```bash
-   docker pull node:20.x.y-slim
-   docker inspect --format='{{index .RepoDigests 0}}' node:20.x.y-slim
+   docker pull node:<new-version>-slim
+   docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
    ```
+3. Update the `FROM` line in `Dockerfile` — **both** the tag and the
+   `@sha256:` suffix must be updated together
+4. Update `VERSION` at the repo root to today's date
+   (e.g. `2026.04.17`). Both `scripts/generate-compose.sh`/`.ps1` and
+   `scripts/install.sh`/`.ps1` read this file, so regenerating compose
+   or running `install` picks up the new default automatically. Do not
+   hand-edit the generated `docker-compose.yml` — its header forbids it
 5. Rebuild everything from scratch: `docker compose build --no-cache`
 6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
    and confirm it matches prior builds (unexpected changes may indicate an
@@ -480,9 +543,20 @@ reproducible builds. To bump:
 
 ## Resource Requirements
 
-Each container has a 4 GB memory limit (2 GB reserved). Docker RAM below is the
-recommended Docker Desktop memory allocation to allow all containers to run at
-peak load.
+Each container **defaults** to a 4 GB memory limit (2 GB reserved), 2 CPU limit
+(1 CPU reserved). Override per installation in `.env`:
+
+```env
+CONTAINER_CPU_LIMIT=2
+CONTAINER_CPU_RESERVATION=1
+CONTAINER_MEM_LIMIT=4G
+CONTAINER_MEM_RESERVATION=2G
+```
+
+Re-run `scripts/generate-compose.sh` (or `.ps1`) after changing these so the
+generated compose files pick up the new values. The table below assumes
+defaults. Docker RAM is the recommended Docker Desktop memory allocation to
+allow all containers to run at peak load.
 
 | Instances | Docker RAM (recommended) | Host RAM (Linux / macOS / Windows) |
 |:---------:|:------------------------:|:----------------------------------:|

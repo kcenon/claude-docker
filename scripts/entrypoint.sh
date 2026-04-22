@@ -20,6 +20,13 @@ ACCOUNT_DIR="/home/node/.claude"
 #
 # The jq pipeline is idempotent: macOS settings pass through with only
 # sandbox/permissions changes; Windows settings get full hook rewriting.
+#
+# See the "Container-side settings transformation" section in README.md
+# for user-facing documentation of two behaviors baked in here:
+#   - step 1 (`sandbox.enabled = false`) assumes default Docker isolation
+#     and is unsafe under --privileged / docker-in-docker / docker-on-sock.
+#   - step 4's pwsh-to-bash rewrite is best-effort and has known silent
+#     failure modes (heredocs, $env:VAR, quoted paths with spaces).
 generate_container_settings() {
     local src="$1"
     local dst="$2"
@@ -143,6 +150,24 @@ if [ -d "$CONFIG_SOURCE" ]; then
                         echo "[entrypoint] settings.json: rewrote $pwsh_count PowerShell hook(s) to bash"
                     fi
                     echo "[entrypoint] settings.json: container-optimized (sandbox=off, glob deny rules stripped)"
+
+                    # Post-transform syntax check: `bash -n -c` every .command
+                    # string in the generated file. The rewriter in
+                    # generate_container_settings() is best-effort (see
+                    # README "Container-side settings transformation"); the
+                    # check catches silent failures so the user learns about
+                    # them at container start rather than when a hook misfires.
+                    syntax_failures=0
+                    while IFS= read -r _cmd; do
+                        [ -z "$_cmd" ] && continue
+                        if ! bash -n -c "$_cmd" 2>/dev/null; then
+                            echo "[entrypoint] WARNING: transformed hook command failed bash syntax check: $_cmd" >&2
+                            syntax_failures=$((syntax_failures + 1))
+                        fi
+                    done < <(jq -r '.. | objects | .command? // empty | select(type == "string")' "$CONTAINER_SETTINGS" 2>/dev/null)
+                    if [ "$syntax_failures" -gt 0 ]; then
+                        echo "[entrypoint] WARNING: $syntax_failures hook command(s) failed syntax check — those hooks will not fire. Set CLAUDE_CONFIG_SOURCE to a Linux-native config tree to bypass the pwsh rewriter." >&2
+                    fi
                 else
                     echo "[entrypoint] ERROR: generated settings.container.json is invalid JSON, using raw host settings"
                     ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
@@ -204,19 +229,22 @@ if [ -n "${GIT_USER_EMAIL:-}" ] && [ -z "$(git config --global user.email 2>/dev
     git config --global user.email "$GIT_USER_EMAIL"
 fi
 
-# --- Bind-mounted project script CRLF normalization ---------------------------
-# Windows hosts (or editors with CRLF defaults) may introduce \r\n into shell
-# scripts bind-mounted under /project, even when .gitattributes enforces LF.
-# Strip CR characters in-place so bash does not trip over '\r: command not found'
-# when executing project-local scripts inside the container.
-# Best-effort: bounded depth to avoid scanning huge monorepos, errors suppressed
-# so the entrypoint never fails on read-only mounts or missing directories.
-if [ -d /project ]; then
+# --- Bind-mounted project script CRLF normalization (opt-in) -----------------
+# /project is a bind mount from the host. Rewriting files here mutates host
+# files, which can trigger editor "file changed" dialogs, show up as
+# unexpected diffs in `git status`, or race with concurrent host writes.
+# The sweep therefore runs only when the user explicitly opts in via
+# CLAUDE_NORMALIZE_CRLF=1 in .env (typical case: Windows hosts with
+# CRLF-default editors and no enforcing .gitattributes in the project repo).
+# Best-effort: bounded depth to avoid scanning huge monorepos, errors
+# suppressed so the entrypoint never fails on read-only mounts or missing
+# directories.
+if [ -d /project ] && [ "${CLAUDE_NORMALIZE_CRLF:-0}" = "1" ]; then
     sh_count=$(find /project -maxdepth 3 -name '*.sh' -type f 2>/dev/null | wc -l | tr -d ' ')
     if [ "${sh_count:-0}" -gt 0 ]; then
         find /project -maxdepth 3 -name '*.sh' -type f \
             -exec sed -i 's/\r$//' {} + 2>/dev/null || true
-        echo "[entrypoint] CRLF normalized in ${sh_count} shell script(s) under /project"
+        echo "[entrypoint] CRLF normalized in ${sh_count} shell script(s) under /project (opt-in)"
     fi
 fi
 

@@ -68,6 +68,14 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_STEP/$TOTAL_STEPS] $1${NC}"; }
 
+# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
+# shellcheck source=lib/tui-release.sh
+. "$SCRIPT_DIR/lib/tui-release.sh"
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
+
 prompt_select() {
     local question="$1"
     shift
@@ -129,6 +137,22 @@ prompt_confirm() {
 
 check_command() {
     command -v "$1" &>/dev/null
+}
+
+# Keep at most $keep newest ".env.backup.*" siblings of $env_file.
+# Sort is lexicographic by epoch suffix — monotonic for the foreseeable future.
+rotate_env_backups() {
+    local env_file="$1"
+    local keep="${2:-3}"
+    local dir base
+    dir=$(dirname -- "$env_file")
+    base=$(basename -- "$env_file")
+    find "$dir" -maxdepth 1 -type f -name "${base}.backup.*" 2>/dev/null \
+        | sort -r \
+        | tail -n +$((keep + 1)) \
+        | while IFS= read -r stale; do
+            rm -f -- "$stale"
+        done
 }
 
 # Measure filesystem I/O latency with a single write+read+delete cycle.
@@ -448,10 +472,10 @@ collect_configuration() {
     local auth_choice
     auth_choice=$(prompt_select \
         "Which authentication method will you use?" \
-        "Path A: Subscription (Pro/Max/Team) — OAuth browser login" \
-        "Path B: Console API key — paste key directly")
-    [[ "$auth_choice" == *"Path A"* ]] && AUTH_PATH="A" || AUTH_PATH="B"
-    log_info "Authentication: Path $AUTH_PATH"
+        "OAuth — Claude.ai Pro/Max/Team subscription (browser login inside container)" \
+        "API key — Anthropic Console account (paste key)")
+    [[ "$auth_choice" == OAuth* ]] && AUTH_PATH="A" || AUTH_PATH="B"
+    log_info "Authentication method: $([[ "$AUTH_PATH" == "A" ]] && echo OAuth || echo 'API key')"
 
     # Sharing Tier
     local tier_choice
@@ -499,10 +523,12 @@ collect_configuration() {
         log_info "Claude Code version: $CLAUDE_VERSION"
     fi
 
-    # Number of accounts
-    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-26)" "2")
-    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 26 ]]; then
-        log_error "Number of accounts must be between 1 and 26."
+    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
+    # enumeration; the validator catches typos like 2600 without capping
+    # legitimate multi-tenant setups at the historic 26-account ceiling.
+    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-702)" "2")
+    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
+        log_error "Number of accounts must be between 1 and 702."
         exit 1
     fi
     log_info "Accounts: $NUM_ACCOUNTS"
@@ -513,8 +539,9 @@ collect_configuration() {
         echo -e "\n${CYAN}Enter Console API keys (from console.anthropic.com):${NC}"
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
-            letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-            local upper="${letter^^}"
+            letter=$(index_to_letter "$i")
+            local upper
+            upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
             API_KEYS+=("$(prompt_secret "API key for Account $upper (sk-ant-...)")")
         done
 
@@ -540,8 +567,11 @@ generate_env() {
             log_warn "Keeping existing .env. Some settings may not match your choices."
             return 0
         fi
-        cp "$env_file" "${env_file}.backup.$(date +%s)"
-        log_info "Backed up existing .env"
+        local backup="${env_file}.backup.$(date +%s)"
+        cp "$env_file" "$backup"
+        chmod 600 "$backup"
+        rotate_env_backups "$env_file" 3
+        log_info "Backed up existing .env to ${backup##*/}"
     fi
 
     {
@@ -552,7 +582,14 @@ generate_env() {
         echo "HOME=$HOME"
         echo "PROJECT_DIR=$SOURCE_DIR"
         echo "CONTAINER_PROJECT_DIR=/project"
-        echo "IMAGE_TAG=$(date '+%Y.%m.%d')"
+        # Seed IMAGE_TAG from VERSION so a freshly installed .env matches
+        # the repo's declared default; falls back to today's date if the
+        # VERSION file is missing for some reason.
+        local default_tag=""
+        if [[ -f "$PROJECT_ROOT/VERSION" ]]; then
+            default_tag="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
+        fi
+        echo "IMAGE_TAG=${default_tag:-$(date '+%Y.%m.%d')}"
         echo ""
         echo "# ==== Claude Config Source (optional) ===="
         echo "# Set to a path inside the container to source config directly from a repo."
@@ -570,8 +607,9 @@ generate_env() {
             echo "# ==== Path B: Console API Keys ===="
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
-                letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-                local upper="${letter^^}"
+                letter=$(index_to_letter "$i")
+                local upper
+                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "CLAUDE_API_KEY_${upper}=${API_KEYS[$((i-1))]}"
             done
             echo ""
@@ -582,8 +620,9 @@ generate_env() {
             echo "# (populated after worktree setup)"
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
-                letter=$(printf "\\$(printf '%03o' $((96 + i)))")
-                local upper="${letter^^}"
+                letter=$(index_to_letter "$i")
+                local upper
+                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
                 echo "PROJECT_DIR_${upper}="
                 echo "CONTAINER_PROJECT_DIR_${upper}=/project-${letter}"
             done
@@ -643,7 +682,7 @@ create_state_dirs() {
     local dirs=("$HOME/.claude")
     for i in $(seq 1 "$NUM_ACCOUNTS"); do
         local letter
-        letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+        letter=$(index_to_letter "$i")
         dirs+=("$HOME/.claude-state/account-${letter}")
     done
 
@@ -705,7 +744,17 @@ build_tui() {
     log_step "Building TUI dashboard"
 
     if ! check_go; then
-        log_warn "Go toolchain not available — TUI dashboard will not be built."
+        log_warn "Go toolchain not available."
+        if prompt_confirm "Download prebuilt TUI binary from GitHub Releases?" "y"; then
+            if download_tui_release "$tui_dir/claude-docker-tui"; then
+                local size
+                size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
+                log_success "TUI dashboard installed: tui/claude-docker-tui ($size)"
+                log_info "Launch with: scripts/claude-docker tui"
+                return 0
+            fi
+            log_warn "Prebuilt download failed."
+        fi
         log_info "Install Go 1.21+ and re-run 'scripts/claude-docker build-tui' later."
         if prompt_confirm "Install Go automatically now?" "y"; then
             install_prerequisite go || {
@@ -810,7 +859,7 @@ setup_worktrees() {
         # Update PROJECT_DIR in .env
         local env_file="$PROJECT_ROOT/.env"
         if [[ -f "$env_file" ]]; then
-            perl -i -pe "s|^PROJECT_DIR=.*|PROJECT_DIR=$new_dir|" "$env_file"
+            set_env_value "$env_file" "PROJECT_DIR" "$new_dir"
         fi
         log_info "Project directory updated: $new_dir"
     done
@@ -828,8 +877,8 @@ setup_worktrees() {
 
     # Update .env with worktree paths
     local env_file="$PROJECT_ROOT/.env"
-    perl -i -pe "s|^PROJECT_DIR_A=.*|PROJECT_DIR_A=$worktree_a|" "$env_file"
-    perl -i -pe "s|^PROJECT_DIR_B=.*|PROJECT_DIR_B=$worktree_b|" "$env_file"
+    set_env_value "$env_file" "PROJECT_DIR_A" "$worktree_a"
+    set_env_value "$env_file" "PROJECT_DIR_B" "$worktree_b"
 
     log_success "Worktrees created:"
     log_info "  A: $worktree_a (branch: $branch_a)"
@@ -838,18 +887,22 @@ setup_worktrees() {
 
 # --- Compose Command Builder --------------------------------------------------
 
+# Populate the global COMPOSE_CMD array with `docker compose -f ...` so
+# callers invoke it as `"${COMPOSE_CMD[@]}" up -d` instead of building and
+# eval'ing a string. Matches the pattern already used by
+# scripts/claude-docker (see build_compose_cmd there). Array form preserves
+# quoting of paths containing spaces, which was the source of issue #155.
+COMPOSE_CMD=()
 build_compose_cmd() {
-    local cmd="docker compose -f docker-compose.yml"
+    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
 
     if [[ "$PLATFORM" == "linux" ]]; then
-        cmd+=" -f docker-compose.linux.yml"
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
     fi
 
     if [[ "$TIER" == "B" ]]; then
-        cmd+=" -f docker-compose.worktree.yml"
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
     fi
-
-    echo "$cmd"
 }
 
 # --- Container Startup --------------------------------------------------------
@@ -859,8 +912,7 @@ start_containers() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
 
     if [[ "$PLATFORM" == "linux" ]]; then
         export UID GID
@@ -868,8 +920,8 @@ start_containers() {
         GID=$(id -g)
     fi
 
-    log_info "Compose command: $compose_cmd up -d"
-    eval "$compose_cmd up -d" 2>&1
+    log_info "Compose command: ${COMPOSE_CMD[*]} up -d"
+    "${COMPOSE_CMD[@]}" up -d 2>&1
 
     log_success "Containers started"
 }
@@ -879,22 +931,29 @@ start_containers() {
 install_dependencies() {
     log_step "Installing project dependencies in containers"
 
+    # Skip entirely for non-Node projects so Python/Go/Rust/etc. users do
+    # not see a misleading "npm install skipped or failed" warning on every
+    # container and do not pay the npm registry round-trip for nothing.
+    if [[ ! -f "$SOURCE_DIR/package.json" ]]; then
+        log_info "No package.json at $SOURCE_DIR — skipping npm install."
+        return 0
+    fi
+
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
 
     local services=()
     local n="${NUM_ACCOUNTS:-2}"
     for i in $(seq 1 "$n"); do
         local letter
-        letter=$(printf "\\$(printf '%03o' $((96 + i)))")
+        letter=$(index_to_letter "$i")
         services+=("claude-${letter}")
     done
 
     for svc in "${services[@]}"; do
         log_info "Installing npm dependencies in $svc..."
-        if eval "$compose_cmd exec -T $svc npm install" 2>&1 | tail -3; then
+        if "${COMPOSE_CMD[@]}" exec -T "$svc" npm install 2>&1 | tail -3; then
             log_success "$svc: dependencies installed"
         else
             log_warn "$svc: npm install skipped or failed (project may not have package.json)"
@@ -909,28 +968,27 @@ run_verification() {
 
     cd "$PROJECT_ROOT"
 
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    build_compose_cmd
     local primary_svc="claude-a"
 
     # Check container is running
-    if eval "$compose_cmd ps --format '{{.Name}}' 2>/dev/null" | grep -q "$primary_svc"; then
+    if "${COMPOSE_CMD[@]}" ps --format '{{.Name}}' 2>/dev/null | grep -q "$primary_svc"; then
         log_success "Container $primary_svc is running"
     else
         log_error "Container $primary_svc is not running"
-        log_info "Check logs: $compose_cmd logs $primary_svc"
+        log_info "Check logs: ${COMPOSE_CMD[*]} logs $primary_svc"
         return 1
     fi
 
     # Check Claude Code is available
-    if eval "$compose_cmd exec -T $primary_svc claude --version" 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude --version 2>/dev/null; then
         log_success "Claude Code is available"
     else
         log_warn "Could not verify Claude Code (container may still be starting)"
     fi
 
     # Check auth status
-    if eval "$compose_cmd exec -T $primary_svc claude auth status" 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude auth status 2>/dev/null; then
         log_success "Authentication verified"
     else
         log_warn "Authentication not verified (may need browser login or API key check)"
@@ -940,8 +998,11 @@ run_verification() {
 # --- Summary ------------------------------------------------------------------
 
 print_summary() {
-    local compose_cmd
-    compose_cmd=$(build_compose_cmd)
+    # build_compose_cmd is called for parity with other entry points even
+    # though the summary prints only scripts/claude-docker wrapper commands.
+    # Keeping the array populated avoids confusing downstream hooks that may
+    # inspect it.
+    build_compose_cmd
 
     echo ""
     echo -e "${BOLD}${GREEN}============================================${NC}"

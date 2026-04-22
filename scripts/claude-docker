@@ -7,7 +7,6 @@
 # Commands:
 #   up/down/restart   Manage containers
 #   claude [svc]      Start Claude Code (default: claude-a)
-#   auth [svc]        Inject OAuth credentials from macOS Keychain
 #   exec <svc>        Open shell in a service
 #   usage [type]      Token usage report
 #   build             Build/rebuild Docker image
@@ -42,6 +41,14 @@ log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
+# shellcheck source=lib/tui-release.sh
+. "$SCRIPT_DIR/lib/tui-release.sh"
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
+
 # --- Compose Command Builder --------------------------------------------------
 
 # Populates the COMPOSE_CMD array with the full `docker compose ...` invocation.
@@ -69,7 +76,7 @@ build_compose_cmd() {
     # Worktree override: check if PROJECT_DIR_A is set in .env
     if [[ -f "${PROJECT_ROOT}/.env" ]]; then
         local pdir_a
-        pdir_a=$(grep -E '^PROJECT_DIR_A=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+        pdir_a=$(parse_env_value "${PROJECT_ROOT}/.env" "PROJECT_DIR_A")
         if [[ -n "$pdir_a" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
             COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
         fi
@@ -102,13 +109,16 @@ get_primary_service() {
 # Read NUM_ACCOUNTS from .env (default: 2)
 get_num_accounts() {
     local n
-    n=$(grep -E '^NUM_ACCOUNTS=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2- || true)
+    n=$(parse_env_value "${PROJECT_ROOT}/.env" "NUM_ACCOUNTS")
     echo "${n:-2}"
 }
 
-# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
+# Back-compat alias: claude-docker historically exposed the underscore
+# form; keep it as a thin wrapper so any external callers (hooks, custom
+# wrappers) continue to work while the canonical implementation lives in
+# scripts/lib/index.sh.
 _index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
+    index_to_letter "$1"
 }
 
 # Return space-separated list of service names based on NUM_ACCOUNTS
@@ -219,10 +229,22 @@ cmd_exec() {
 }
 
 cmd_claude() {
-    local service="${1:-$(get_primary_service)}"
+    local skip_perms=false
+    local service=""
+    for arg in "$@"; do
+        case "$arg" in
+            --dangerously-skip-permissions) skip_perms=true ;;
+            *) [[ -z "$service" ]] && service="$arg" ;;
+        esac
+    done
+    service="${service:-$(get_primary_service)}"
     ensure_compose_cmd
     echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
-    "${COMPOSE_CMD[@]}" exec "$service" claude
+    if [[ "$skip_perms" == true ]]; then
+        "${COMPOSE_CMD[@]}" exec "$service" claude --dangerously-skip-permissions
+    else
+        "${COMPOSE_CMD[@]}" exec "$service" claude
+    fi
 }
 
 # Resolve a compose service name to its running Docker container ID.
@@ -262,7 +284,7 @@ refresh_gh_token() {
     # Compare with current .env value
     local current_token=""
     if [[ -f "$env_file" ]]; then
-        current_token=$(grep -E '^GH_TOKEN=' "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
+        current_token=$(parse_env_value "$env_file" "GH_TOKEN")
     fi
 
     if [[ "$fresh_token" == "$current_token" ]]; then
@@ -270,15 +292,12 @@ refresh_gh_token() {
         return 0
     fi
 
-    # Update or append GH_TOKEN
-    if [[ -f "$env_file" ]] && grep -q '^GH_TOKEN=' "$env_file" 2>/dev/null; then
-        perl -i -pe "s|^GH_TOKEN=.*|GH_TOKEN=${fresh_token}|" "$env_file"
-    elif [[ -f "$env_file" ]]; then
-        echo "GH_TOKEN=${fresh_token}" >> "$env_file"
-    else
+    if [[ ! -f "$env_file" ]]; then
         log_warn ".env not found — cannot save GH_TOKEN."
         return 1
     fi
+
+    set_env_value "$env_file" "GH_TOKEN" "$fresh_token"
     chmod 600 "$env_file"
 
     if [[ -z "$current_token" ]]; then
@@ -307,82 +326,6 @@ verify_container_gh_auth() {
         echo -e "    ${DIM}git push/pull and gh commands may fail.${NC}"
         echo -e "    Fix: ${DIM}scripts/claude-docker gh-auth${NC}"
         return 1
-    fi
-}
-
-# Extract OAuth credentials from macOS Keychain (host-side).
-# Returns JSON string or empty on failure.
-get_keychain_credentials() {
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        return 1
-    fi
-    security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null
-}
-
-# Inject credentials JSON into a container's state directory on the host.
-inject_credentials() {
-    local svc="$1"
-    local creds="$2"
-
-    # Map service name to host state directory (claude-X -> account-X)
-    local suffix="${svc#claude-}"
-    local state_dir="$HOME/.claude-state/account-${suffix}"
-
-    if [[ ! -d "$state_dir" ]]; then
-        mkdir -p "$state_dir"
-        chmod 700 "$state_dir"
-    fi
-
-    echo "$creds" > "$state_dir/.credentials.json"
-    chmod 600 "$state_dir/.credentials.json"
-}
-
-cmd_auth() {
-    local service="${1:-}"
-    ensure_compose_cmd
-
-    # On macOS, extract credentials from Keychain (host-side auth)
-    local creds=""
-    creds=$(get_keychain_credentials) || true
-
-    if [[ -z "$creds" ]]; then
-        # Not macOS or no credentials in Keychain
-        echo -e "${YELLOW}No credentials found in macOS Keychain.${NC}"
-        echo -e "Authenticate on the host first, then re-run this command:"
-        echo -e "  ${DIM}claude auth login${NC}"
-        echo -e ""
-        echo -e "Or set API keys in .env (Path B):"
-        echo -e "  ${DIM}CLAUDE_API_KEY_A=sk-ant-...${NC}"
-        exit 1
-    fi
-
-    # Determine which services to authenticate
-    local services=()
-    if [[ -n "$service" ]]; then
-        services=("$service")
-    else
-        read -ra services <<< "$(get_service_names)"
-    fi
-
-    echo -e "${BOLD}Injecting credentials from macOS Keychain${NC}"
-    echo ""
-
-    for svc in "${services[@]}"; do
-        inject_credentials "$svc" "$creds"
-        echo -e "  ${GREEN}*${NC} $svc — credentials written"
-    done
-
-    echo ""
-
-    # Verify: check auth status in first running container
-    local first_svc="${services[0]}"
-    local cid
-    cid=$(get_container_id "$first_svc")
-    if [[ -n "$cid" ]]; then
-        echo -e "${DIM}Verifying ($first_svc):${NC}"
-        docker exec "$cid" claude auth status 2>&1 || true
-    else
-        log_info "Containers not running. Credentials will be available on next start."
     fi
 }
 
@@ -651,8 +594,12 @@ cmd_usage() {
 cmd_tui() {
     local tui_bin="$PROJECT_ROOT/tui/claude-docker-tui"
     if [[ ! -x "$tui_bin" ]]; then
-        log_error "TUI binary not found at $tui_bin"
-        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build it."
+        log_warn "TUI binary not found at $tui_bin."
+        if download_tui_release "$tui_bin"; then
+            exec "$tui_bin" "$@"
+        fi
+        log_error "Could not install TUI binary automatically."
+        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build from source."
         echo -e "  Requires Go 1.21+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
         exit 1
     fi
@@ -665,8 +612,14 @@ cmd_build_tui() {
         log_error "TUI source not found at $tui_dir"
         exit 1
     fi
+    local tui_bin="$tui_dir/claude-docker-tui"
     if ! command -v go >/dev/null 2>&1; then
-        log_error "Go toolchain not found. Install Go 1.21+ first:"
+        log_warn "Go toolchain not found. Attempting to download prebuilt release binary..."
+        if download_tui_release "$tui_bin"; then
+            return 0
+        fi
+        log_error "Release download failed and Go toolchain is unavailable."
+        echo -e "  Install Go 1.21+ to build from source:"
         echo -e "  macOS:  ${DIM}brew install go${NC}"
         echo -e "  Linux:  ${DIM}sudo apt install golang-go${NC}"
         exit 1
@@ -719,7 +672,6 @@ ${BOLD}LIFECYCLE${NC}
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
   ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
-  ${GREEN}auth${NC} [service]        Inject Claude OAuth credentials from macOS Keychain
   ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
   ${GREEN}exec${NC} <service>        Open shell in a service
 
@@ -744,7 +696,7 @@ HELP
     for idx in "${!svc_names[@]}"; do
         local svc="${svc_names[$idx]}"
         local suffix="${svc#claude-}"
-        local label="Account ${suffix^^}"
+        local label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
         if [[ "$idx" -eq 0 ]]; then
             label="$label (default)"
         fi
@@ -773,7 +725,6 @@ main() {
         ps)        cmd_ps "$@" ;;
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
-        auth)      cmd_auth "$@" ;;
         gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;

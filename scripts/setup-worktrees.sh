@@ -7,6 +7,10 @@
 # If no branch names are provided, defaults to worktree-a and worktree-b.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/index.sh
+. "$SCRIPT_DIR/lib/index.sh"
+
 REPO_DIR="${1:?Usage: setup-worktrees.sh <repo-dir> [branch...]}"; shift
 
 # Default branches if none provided
@@ -22,10 +26,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     exit 1
 fi
 
-# Convert 1-based index to lowercase letter: 1→a, 2→b, ..., 26→z
-index_to_letter() {
-    printf "\\$(printf '%03o' $((96 + $1)))"
-}
+# index_to_letter provided by scripts/lib/index.sh.
 
 cd "$REPO_DIR"
 
@@ -39,7 +40,7 @@ for i in "${!BRANCHES[@]}"; do
 
     git branch "$branch" 2>/dev/null || true
     git worktree add "$worktree" "$branch"
-    echo "  ${letter^^}: $worktree (branch: $branch)"
+    echo "  $(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]'): $worktree (branch: $branch)"
 done
 
 echo ""
@@ -47,6 +48,6 @@ echo "Add to .env:"
 for i in "${!BRANCHES[@]}"; do
     idx=$((i + 1))
     letter=$(index_to_letter "$idx")
-    upper="${letter^^}"
+    upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
     echo "  PROJECT_DIR_${upper}=${REPO_DIR%/}-${letter}"
 done

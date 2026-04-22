@@ -1,0 +1,227 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestIndexToLetter(t *testing.T) {
+	cases := []struct {
+		in   int
+		want string
+	}{
+		{1, "a"},
+		{2, "b"},
+		{26, "z"},
+		{27, "aa"},
+		{28, "ab"},
+		{52, "az"},
+		{53, "ba"},
+		{702, "zz"},
+		{0, ""},
+		{-1, ""},
+		{703, ""},
+	}
+	for _, c := range cases {
+		if got := IndexToLetter(c.in); got != c.want {
+			t.Errorf("IndexToLetter(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestLetterToIndex(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"a", 1},
+		{"b", 2},
+		{"z", 26},
+		{"aa", 27},
+		{"ab", 28},
+		{"az", 52},
+		{"ba", 53},
+		{"zz", 702},
+		{"", 0},
+		{"A", 0},
+		{"a1", 0},
+		{"_", 0},
+	}
+	for _, c := range cases {
+		if got := LetterToIndex(c.in); got != c.want {
+			t.Errorf("LetterToIndex(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIndexLetterRoundTrip(t *testing.T) {
+	// Verify IndexToLetter and LetterToIndex are mutual inverses across
+	// the full supported range. Prevents drift if either is changed.
+	for i := 1; i <= 702; i++ {
+		letter := IndexToLetter(i)
+		back := LetterToIndex(letter)
+		if back != i {
+			t.Fatalf("round-trip failed at %d: letter=%q back=%d", i, letter, back)
+		}
+	}
+}
+
+// writeTempEnv creates a temp file with the given content and returns its
+// absolute path. Files are removed by t.TempDir at the end of the test.
+func writeTempEnv(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write temp env: %v", err)
+	}
+	return path
+}
+
+func TestLoadEnv_Basic(t *testing.T) {
+	path := writeTempEnv(t, "NUM_ACCOUNTS=2\nIMAGE_TAG=latest\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if v := e.Get("NUM_ACCOUNTS"); v != "2" {
+		t.Errorf("NUM_ACCOUNTS = %q, want %q", v, "2")
+	}
+	if v := e.Get("IMAGE_TAG"); v != "latest" {
+		t.Errorf("IMAGE_TAG = %q, want %q", v, "latest")
+	}
+	if n := e.NumAccounts(); n != 2 {
+		t.Errorf("NumAccounts() = %d, want 2", n)
+	}
+}
+
+func TestLoadEnv_CommentsAndBlanks(t *testing.T) {
+	path := writeTempEnv(t,
+		"# comment\n"+
+			"\n"+
+			"NUM_ACCOUNTS=5\n"+
+			"# another\n"+
+			"GH_TOKEN=abc\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if v := e.Get("NUM_ACCOUNTS"); v != "5" {
+		t.Errorf("NUM_ACCOUNTS = %q", v)
+	}
+	if v := e.Get("GH_TOKEN"); v != "abc" {
+		t.Errorf("GH_TOKEN = %q", v)
+	}
+}
+
+func TestLoadEnv_QuotedValues(t *testing.T) {
+	path := writeTempEnv(t,
+		"DOUBLE=\"hello world\"\n"+
+			"SINGLE='single quoted'\n"+
+			"PLAIN=no-quotes\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if v := e.Get("DOUBLE"); v != "hello world" {
+		t.Errorf("DOUBLE = %q", v)
+	}
+	if v := e.Get("SINGLE"); v != "single quoted" {
+		t.Errorf("SINGLE = %q", v)
+	}
+	if v := e.Get("PLAIN"); v != "no-quotes" {
+		t.Errorf("PLAIN = %q", v)
+	}
+}
+
+func TestLoadEnv_MissingFile(t *testing.T) {
+	_, err := LoadEnv(filepath.Join(t.TempDir(), "does-not-exist.env"))
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadEnv_ValuesWithEquals(t *testing.T) {
+	// strings.Index on the first "=" is what LoadEnv uses; values containing
+	// additional "=" characters must survive.
+	path := writeTempEnv(t, "TOKEN=foo=bar=baz\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if v := e.Get("TOKEN"); v != "foo=bar=baz" {
+		t.Errorf("TOKEN = %q, want %q", v, "foo=bar=baz")
+	}
+}
+
+func TestNewEmptyEnv_SetGetSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	e := NewEmptyEnv(path)
+
+	e.Set("NUM_ACCOUNTS", "4")
+	e.Set("IMAGE_TAG", "test")
+	e.Set("NUM_ACCOUNTS", "7") // update existing
+
+	if v := e.Get("NUM_ACCOUNTS"); v != "7" {
+		t.Errorf("after update, NUM_ACCOUNTS = %q, want %q", v, "7")
+	}
+
+	if err := e.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Re-load and verify persistence.
+	loaded, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv after Save: %v", err)
+	}
+	if v := loaded.Get("NUM_ACCOUNTS"); v != "7" {
+		t.Errorf("persisted NUM_ACCOUNTS = %q, want 7", v)
+	}
+	if v := loaded.Get("IMAGE_TAG"); v != "test" {
+		t.Errorf("persisted IMAGE_TAG = %q, want test", v)
+	}
+}
+
+func TestNumAccounts_Fallback(t *testing.T) {
+	// Missing key, non-numeric, and negative all fall back to the
+	// documented default (1).
+	cases := []struct {
+		content string
+		want    int
+	}{
+		{"", 1},
+		{"NUM_ACCOUNTS=abc\n", 1},
+		{"NUM_ACCOUNTS=-3\n", 1},
+		{"NUM_ACCOUNTS=4\n", 4},
+	}
+	for _, c := range cases {
+		path := writeTempEnv(t, c.content)
+		e, err := LoadEnv(path)
+		if err != nil {
+			t.Fatalf("LoadEnv(%q): %v", c.content, err)
+		}
+		if got := e.NumAccounts(); got != c.want {
+			t.Errorf("content=%q: NumAccounts() = %d, want %d", c.content, got, c.want)
+		}
+	}
+}
+
+func TestAPIKey_CaseInsensitiveLetter(t *testing.T) {
+	path := writeTempEnv(t, "CLAUDE_API_KEY_A=sk-a\nCLAUDE_API_KEY_AA=sk-aa\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if v := e.APIKey("a"); v != "sk-a" {
+		t.Errorf("APIKey(a) = %q", v)
+	}
+	if v := e.APIKey("aa"); v != "sk-aa" {
+		t.Errorf("APIKey(aa) = %q", v)
+	}
+	// Missing letter returns empty.
+	if v := e.APIKey("z"); v != "" {
+		t.Errorf("APIKey(z) missing should be empty, got %q", v)
+	}
+}

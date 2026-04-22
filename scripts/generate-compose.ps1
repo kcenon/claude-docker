@@ -46,23 +46,65 @@ if ([string]::IsNullOrEmpty($ImageTag)) {
     if ($fromEnv) {
         $ImageTag = $fromEnv
     } else {
-        $ImageTag = 'latest'
+        # Fall back to the repo-root VERSION file — single source of truth
+        # shared with install.ps1 and the "Bumping the Base Image" README
+        # procedure. Final fallback is 'latest' if VERSION is absent.
+        $versionFile = Join-Path $ProjectRoot 'VERSION'
+        if (Test-Path $versionFile) {
+            $ImageTag = (Get-Content $versionFile -TotalCount 1).Trim()
+        }
+        if ([string]::IsNullOrEmpty($ImageTag)) {
+            $ImageTag = 'latest'
+        }
     }
 }
 
-if ($NumAccounts -lt 1 -or $NumAccounts -gt 26) {
-    Write-Error "NUM_ACCOUNTS must be between 1 and 26 (got: $NumAccounts)"
+if ($NumAccounts -lt 1 -or $NumAccounts -gt 702) {
+    Write-Error "NUM_ACCOUNTS must be between 1 and 702 (got: $NumAccounts)"
     exit 1
 }
 
+# Container resource envelope (override via .env or host env). Defaults
+# reproduce the historical hardcoded values so existing installs see no
+# behavior change after regenerating.
+function Resolve-EnvOrDefault([string]$Key, [string]$Default) {
+    $val = [Environment]::GetEnvironmentVariable($Key)
+    if (-not [string]::IsNullOrEmpty($val)) { return $val }
+    if ($envData.ContainsKey($Key) -and -not [string]::IsNullOrEmpty($envData[$Key])) {
+        return $envData[$Key]
+    }
+    return $Default
+}
+$CpuLimit       = Resolve-EnvOrDefault 'CONTAINER_CPU_LIMIT' '2'
+$CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
+$MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
+$MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
+
 function ConvertTo-Letter([int]$Index) {
-    # 1 -> a, 2 -> b, ..., 26 -> z
-    [char](96 + $Index)
+    # Excel-style: 1 -> a, 26 -> z, 27 -> aa, 52 -> az, 702 -> zz.
+    # 1-26 identical to the former single-letter mapping.
+    # Casts to [int] are required because [math]::Floor and `%` can
+    # return Double/Decimal, which will not implicit-cast to [char].
+    [int]$n = $Index
+    $builder = ''
+    while ($n -gt 0) {
+        [int]$rem = ($n - 1) % 26
+        $builder = [char]([int](97 + $rem)) + $builder
+        [int]$n = [math]::Floor(($n - 1) / 26)
+    }
+    return $builder
 }
 
 function ConvertTo-UpperLetter([int]$Index) {
-    # 1 -> A, 2 -> B, ..., 26 -> Z
-    [char](64 + $Index)
+    # Same scheme, uppercase.
+    [int]$n = $Index
+    $builder = ''
+    while ($n -gt 0) {
+        [int]$rem = ($n - 1) % 26
+        $builder = [char]([int](65 + $rem)) + $builder
+        [int]$n = [math]::Floor(($n - 1) / 26)
+    }
+    return $builder
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------
@@ -111,19 +153,28 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - TERM=xterm-256color')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
+        [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
         [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
-        [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}:-}")
+        # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is set at
+        # generate time. Path A (OAuth) users have no value; emitting
+        # ANTHROPIC_API_KEY= with an empty string makes the SDK prefer the
+        # empty env var over .credentials.json in the mounted state dir.
+        $keyVarName = "CLAUDE_API_KEY_${upper}"
+        $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
+        if (-not [string]::IsNullOrEmpty($keyValue)) {
+            [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}}")
+        }
         [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
         [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
         [void]$sb.AppendLine('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
         [void]$sb.AppendLine('    deploy:')
         [void]$sb.AppendLine('      resources:')
         [void]$sb.AppendLine('        limits:')
-        [void]$sb.AppendLine('          cpus: "2"')
-        [void]$sb.AppendLine('          memory: 4G')
+        [void]$sb.AppendLine("          cpus: `"$CpuLimit`"")
+        [void]$sb.AppendLine("          memory: $MemLimit")
         [void]$sb.AppendLine('        reservations:')
-        [void]$sb.AppendLine('          cpus: "1"')
-        [void]$sb.AppendLine('          memory: 2G')
+        [void]$sb.AppendLine("          cpus: `"$CpuReservation`"")
+        [void]$sb.AppendLine("          memory: $MemReservation")
         [void]$sb.AppendLine('    command: ["sleep", "infinity"]')
 
         if ($i -lt $NumAccounts) {
