@@ -101,6 +101,7 @@ generate_base() {
             echo "      - node_modules_${letter}:\${CONTAINER_PROJECT_DIR:-/project}/node_modules"
             echo "    environment:"
             echo "      - TERM=xterm-256color"
+            echo "      - TZ=\${TZ:-UTC}"
             echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
             echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
             echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"

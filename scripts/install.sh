@@ -640,6 +640,22 @@ generate_env() {
             echo ""
         fi
 
+        # Host timezone (auto-detect IANA name so container date/time matches host)
+        # Resolution order: explicit $TZ > /etc/localtime symlink > /etc/timezone file.
+        # Silent fallback to unset — compose generator defaults TZ to UTC.
+        local host_tz="${TZ:-}"
+        if [[ -z "$host_tz" ]] && [[ -L /etc/localtime ]]; then
+            host_tz=$(readlink /etc/localtime 2>/dev/null | sed -E 's|.*/zoneinfo/||')
+        fi
+        if [[ -z "$host_tz" ]] && [[ -f /etc/timezone ]]; then
+            host_tz=$(tr -d '[:space:]' < /etc/timezone 2>/dev/null || true)
+        fi
+        if [[ -n "$host_tz" ]]; then
+            echo "# ==== Timezone ===="
+            echo "TZ=$host_tz"
+            echo ""
+        fi
+
         # GitHub CLI token (auto-detect from host)
         if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
             local gh_token

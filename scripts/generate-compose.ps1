@@ -151,6 +151,7 @@ function New-BaseCompose {
         [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
         [void]$sb.AppendLine('    environment:')
         [void]$sb.AppendLine('      - TERM=xterm-256color')
+        [void]$sb.AppendLine('      - TZ=${TZ:-UTC}')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
         [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
