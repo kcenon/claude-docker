@@ -57,8 +57,6 @@ AUTH_PATH=""
 TIER=""
 SOURCE_DIR=""
 CLAUDE_VERSION=""
-API_KEY_A=""
-API_KEY_B=""
 
 # --- Utility Functions --------------------------------------------------------
 
@@ -567,7 +565,8 @@ generate_env() {
             log_warn "Keeping existing .env. Some settings may not match your choices."
             return 0
         fi
-        local backup="${env_file}.backup.$(date +%s)"
+        local backup
+        backup="${env_file}.backup.$(date +%s)"
         cp "$env_file" "$backup"
         chmod 600 "$backup"
         rotate_env_backups "$env_file" 3
@@ -1067,7 +1066,7 @@ print_summary() {
 
     echo ""
     echo -e "${BOLD}Compose command for this setup:${NC}"
-    echo -e "  ${GREEN}$compose_cmd up -d${NC}"
+    echo -e "  ${GREEN}${COMPOSE_CMD[*]} up -d${NC}"
     echo ""
 }
 

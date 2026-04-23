@@ -10,6 +10,11 @@
 #   4. Rebuild: docker compose build --no-cache
 FROM node:20.18.1-slim@sha256:b2c8e0eb8a6aeeae33b2711f8f516003e27ee45804e270468d937b3214f2f0cc
 
+# Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
+# aborts the build instead of masking the error behind a downstream success.
+# hadolint rule DL4006 requires this for any RUN that uses `|`.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
 
@@ -20,6 +25,11 @@ WORKDIR /workspace
 # tests/hooks/test-*.sh) that validate JSON via `python3 -m json.tool`
 # fall back correctly when jq is unavailable; the image stays slim
 # because this is the interpreter only, no pip or venv.
+#
+# DL3008 waived: rolling Debian base tracks security updates via the
+# digest-pinned node:20.18.1-slim; per-package apt pins would be churn
+# without a meaningful security benefit. Pinning policy tracked in #171.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -40,6 +50,9 @@ RUN apt-get update \
 # and `gpg --show-keys` logs the fingerprint for post-build audit. Reviewers
 # can cross-check the fingerprint against the value published by GitHub at
 # build time to detect an upstream keyring swap.
+#
+# DL3008 waived: same rolling-base rationale as the dev-tools layer above; see #171.
+# hadolint ignore=DL3008
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends gnupg; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/gh.gpg; \
@@ -76,6 +89,11 @@ RUN HOME=/home/node curl -fsSL https://claude.ai/install.sh \
 ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Install statusline tools globally (still npm packages)
+#
+# DL3016 waived: ccstatusline and claude-limitline are latest-tracking
+# helper packages; pinning them would block bug fixes without a security
+# benefit. The base npm version is pinned via the node:20.18.1-slim digest.
+# hadolint ignore=DL3016
 RUN npm install -g ccstatusline claude-limitline \
     && npm cache clean --force
 
