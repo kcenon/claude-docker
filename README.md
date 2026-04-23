@@ -444,6 +444,23 @@ scripts/generate-compose.sh
 
 The `scripts/claude-docker` CLI auto-detects which overlays to apply.
 
+## Timezone
+
+Containers match the host's IANA timezone so `date`, Node.js `Date` objects,
+and hook timestamps render the same wall-clock time the host shows.
+
+`scripts/install.sh` / `install.ps1` auto-detect the host zone and write
+`TZ=<IANA>` to `.env`. Compose files forward the value as `TZ=${TZ:-UTC}`,
+so leaving `TZ` unset keeps containers on UTC.
+
+To change zones on an existing install, append or edit the line in `.env`
+and restart:
+
+```bash
+echo 'TZ=Asia/Seoul' >> .env
+scripts/claude-docker down && scripts/claude-docker up
+```
+
 ## Troubleshooting
 
 **"Authentication expired" inside container:**
