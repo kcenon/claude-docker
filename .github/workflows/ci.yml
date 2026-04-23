@@ -21,10 +21,7 @@ jobs:
           SHELLCHECK_OPTS: -e SC1091
         with:
           scandir: "./scripts"
-          # MVP baseline: only actual errors fail CI. Pre-existing warnings
-          # are tracked for cleanup in a follow-up issue before tightening
-          # this threshold back to `warning`.
-          severity: error
+          severity: warning
 
   hadolint:
     name: Hadolint
@@ -34,11 +31,7 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
-          # MVP baseline: only errors fail CI. Pre-existing DL3008 /
-          # DL3016 / DL4006 warnings on apt-get / npm version pinning
-          # are legitimate trade-offs for this image; revisit when
-          # pinning policy changes.
-          failure-threshold: error
+          failure-threshold: warning
 
   psanalyzer:
     name: PSScriptAnalyzer
@@ -51,11 +44,42 @@ jobs:
       - name: Run analyzer
         shell: pwsh
         run: |
-          # MVP baseline: Error severity only. Our CLI scripts intentionally
-          # use Write-Host for colored terminal output (PSAvoidUsingWriteHost
-          # is a Warning) and that pattern is load-bearing — revisiting
-          # requires a broader refactor to a formatter function.
-          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
+          # PSSA rules waived for this repository, each for a specific reason:
+          #
+          # - PSAvoidUsingWriteHost: user-facing CLI scripts (claude-docker.ps1,
+          #   install.ps1, remove.ps1, cleanup.ps1) rely on Write-Host for
+          #   colored terminal output. Refactoring to a logging helper is a
+          #   large behavior change outside the scope of restoring the gate.
+          # - PSUseSingularNouns: several function names (e.g. Install-Worktrees,
+          #   Remove-Accounts) are intentionally plural because they operate on
+          #   the whole set. Renaming is a breaking change for anyone sourcing
+          #   the module.
+          # - PSUseShouldProcessForStateChangingFunctions: these are top-level
+          #   CLI entry points, not library cmdlets; users invoke them
+          #   imperatively and -WhatIf / -Confirm would add friction without
+          #   a pipeline caller that passes them through.
+          # - PSUseBOMForUnicodeEncodedFile: files are ASCII-safe / UTF-8
+          #   without BOM, matching the rest of the repo and modern tooling.
+          # - PSAvoidGlobalVars: index.ps1 uses $Global: to register the module
+          #   at load time; that is the documented PowerShell pattern.
+          # - PSReviewUnusedParameter: parameters exist for pass-through to
+          #   wrapped cmdlets; removing them would break the contract.
+          # - PSUseDeclaredVarsMoreThanAssignments: some assignments seed
+          #   module-scope state consumed by callers outside the static
+          #   analysis window.
+          # - PSUseUsingScopeModifierInNewRunspaces: only test-concurrent-git.ps1
+          #   spawns runspaces for concurrency stress, and the captured
+          #   variables are intentional via closure.
+          # - PSAvoidUsingEmptyCatchBlock: best-effort cleanup blocks
+          #   deliberately swallow non-fatal errors to keep the CLI usable
+          #   when optional steps fail.
+          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Warning `
+            -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
+              PSUseShouldProcessForStateChangingFunctions, `
+              PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
+              PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
+              PSUseUsingScopeModifierInNewRunspaces, `
+              PSAvoidUsingEmptyCatchBlock
           if ($results) {
             $results | Format-Table -AutoSize
             exit 1

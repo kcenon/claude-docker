@@ -98,6 +98,7 @@ else
 
     # statusLine uses .sh
     sl=$(jq -r '.statusLine.command' "$OUT")
+    # shellcheck disable=SC2088 # reason: literal ~/.claude string compared against JSON value; no tilde expansion desired
     assert_eq "statusLine uses .sh script" "~/.claude/scripts/statusline-command.sh" "$sl"
 
     # conflict-guard.sh present (macOS-only hook)
@@ -144,6 +145,7 @@ else
 
     # statusLine uses .sh
     sl=$(jq -r '.statusLine.command' "$OUT")
+    # shellcheck disable=SC2088 # reason: literal ~/.claude string compared against JSON value; no tilde expansion desired
     assert_eq "statusLine uses .sh script" "~/.claude/scripts/statusline-command.sh" "$sl"
 
     # conflict-guard absent (excluded in Windows source)
@@ -152,6 +154,7 @@ else
 
     # SessionEnd compound command correctly converted
     se=$(jq -r '.hooks.SessionEnd[0].hooks[0].command' "$OUT")
+    # shellcheck disable=SC2088 # reason: literal ~/.claude strings compared against JSON value; no tilde expansion desired
     assert_eq "SessionEnd compound command" "~/.claude/hooks/session-logger.sh end && ~/.claude/hooks/cleanup.sh" "$se"
 
     # valid JSON
