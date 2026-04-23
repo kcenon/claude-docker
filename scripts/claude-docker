@@ -556,6 +556,7 @@ cmd_usage() {
     # Build merged config directory with symlinks from all sources
     local merged_dir
     merged_dir=$(build_merged_config_dir)
+    # shellcheck disable=SC2064 # reason: expand $merged_dir now; the local goes out of scope before EXIT fires
     trap "rm -rf '$merged_dir'" EXIT
 
     # Check if any project data was found
@@ -696,7 +697,8 @@ HELP
     for idx in "${!svc_names[@]}"; do
         local svc="${svc_names[$idx]}"
         local suffix="${svc#claude-}"
-        local label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
+        local label
+        label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
         if [[ "$idx" -eq 0 ]]; then
             label="$label (default)"
         fi
