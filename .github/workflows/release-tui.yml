@@ -29,7 +29,7 @@ jobs:
           - { os: windows, goarch: amd64, runner: windows-latest, ext: '.exe' }
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -64,7 +64,7 @@ jobs:
           cat "$ASSET.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tui-${{ matrix.target.os }}-${{ matrix.target.goarch }}
           path: |

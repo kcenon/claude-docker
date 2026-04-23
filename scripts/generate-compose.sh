@@ -91,6 +91,11 @@ generate_base() {
             fi
 
             echo "    working_dir: \${CONTAINER_PROJECT_DIR:-/project}"
+            echo "    # Match the host user's UID/GID so bind-mounted paths"
+            echo "    # (\${HOME}/.claude-state/account-*) stay writable from"
+            echo "    # inside the container. Falls back to 1000:1000 (the"
+            echo "    # upstream node:20-slim default) when UID/GID are unset."
+            echo "    user: \"\${UID:-1000}:\${GID:-1000}\""
             echo "    stdin_open: true"
             echo "    tty: true"
             echo "    volumes:"
@@ -101,6 +106,11 @@ generate_base() {
             echo "      - node_modules_${letter}:\${CONTAINER_PROJECT_DIR:-/project}/node_modules"
             echo "    environment:"
             echo "      - TERM=xterm-256color"
+            echo "      - TZ=\${TZ:-UTC}"
+            # When the container runs as the host UID instead of node(1000),
+            # the passwd entry for that UID is missing, so \$HOME defaults
+            # to /. Pinning HOME keeps ~/.claude, ~/.config, etc. resolvable.
+            echo "      - HOME=/home/node"
             echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
             echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
             echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"

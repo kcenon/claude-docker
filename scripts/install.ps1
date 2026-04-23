@@ -450,6 +450,28 @@ function New-EnvFile {
         $lines += ''
     }
 
+    # Host timezone (auto-detect IANA name so container date/time matches host).
+    # Windows reports zones as Windows IDs (e.g. "Korea Standard Time"); map to
+    # IANA via .NET 6+ TimeZoneInfo. Older runtimes lacking the helper fall
+    # through silently — compose generator defaults TZ to UTC.
+    $hostTz = $env:TZ
+    if (-not $hostTz) {
+        try {
+            $winTz = (Get-TimeZone).Id
+            $ianaId = $null
+            if ([System.TimeZoneInfo]::TryConvertWindowsIdToIanaId($winTz, [ref]$ianaId)) {
+                $hostTz = $ianaId
+            }
+        } catch {
+            $hostTz = $null
+        }
+    }
+    if ($hostTz) {
+        $lines += '# ==== Timezone ===='
+        $lines += "TZ=$hostTz"
+        $lines += ''
+    }
+
     # GitHub CLI token and config directory (auto-detect from host)
     if (Test-Command 'gh') {
         $null = & gh auth status 2>&1

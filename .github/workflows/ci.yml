@@ -14,7 +14,7 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ludeeus/action-shellcheck@master
         env:
           # SC1091: sourced files are resolved at runtime, not checkable in lint
@@ -30,7 +30,7 @@ jobs:
     name: Hadolint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
@@ -44,7 +44,7 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
@@ -65,7 +65,7 @@ jobs:
     name: Go tests (TUI)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           # Must match or exceed tui/go.mod's `go` directive (currently 1.23).
@@ -82,7 +82,7 @@ jobs:
       matrix:
         fixture: [minimal, tier-b, n5, n30, with-special-chars]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Stage fixture
         run: cp tests/env_fixtures/${{ matrix.fixture }}.env .env
       - name: Generate compose

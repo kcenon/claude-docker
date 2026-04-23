@@ -31,6 +31,7 @@ RUN apt-get update \
        sudo \
        procps \
        python3 \
+       tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
