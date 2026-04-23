@@ -433,9 +433,17 @@ based on `NUM_ACCOUNTS` in `.env`. Do not edit them manually.
 
 | File | Purpose | When active |
 |------|---------|-------------|
-| `docker-compose.yml` | Base config (Tier A) | Always |
-| `docker-compose.linux.yml` | UID/GID + HOME override | Linux only |
+| `docker-compose.yml` | Base config (Tier A), incl. `user: ${UID:-1000}:${GID:-1000}` and `HOME=/home/node` | Always |
+| `docker-compose.linux.yml` | Legacy UID/GID + HOME override (kept for backward compat; base already carries it) | Optional |
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
+
+Set `UID` / `GID` in `.env` (or export them in the shell before running
+`docker compose up`) to match the host user that owns `~/.claude-state/`.
+Without these, bind-mounted paths such as `~/.claude-state/account-a/` are
+not writable from inside the container, producing errors like
+`hook: /home/node/.claude/hooks/<name>.sh: not found` (failure to stat
+under non-matching UID) and Bash tool failures caused by the harness
+being unable to create `session-env/` subdirectories.
 
 To regenerate after editing `.env`:
 ```bash
@@ -469,7 +477,21 @@ scripts/claude-docker down && scripts/claude-docker up
 scripts/claude-docker exec claude-a claude auth login
 ```
 
-**Permission denied on bind mount (Linux):**
+**Permission denied on bind mount (or `hook: ... not found`, `session-env` write failures):**
+
+Host UID/GID must match what owns `~/.claude-state/`. Add them to `.env`
+and restart — the base compose now reads these directly, so no extra
+overlay is required.
+
+```bash
+cat >> .env <<EOF
+UID=$(id -u)
+GID=$(id -g)
+EOF
+scripts/claude-docker down && scripts/claude-docker up
+```
+
+On Linux the legacy overlay still works and is equivalent:
 
 ```bash
 export UID=$(id -u) GID=$(id -g)

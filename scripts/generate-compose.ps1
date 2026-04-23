@@ -141,6 +141,11 @@ function New-BaseCompose {
         }
 
         [void]$sb.AppendLine('    working_dir: ${CONTAINER_PROJECT_DIR:-/project}')
+        # Match the host user's UID/GID so bind-mounted paths
+        # (${HOME}/.claude-state/account-*) stay writable from inside
+        # the container. Falls back to 1000:1000 (the upstream
+        # node:20-slim default) when UID/GID are unset.
+        [void]$sb.AppendLine('    user: "${UID:-1000}:${GID:-1000}"')
         [void]$sb.AppendLine('    stdin_open: true')
         [void]$sb.AppendLine('    tty: true')
         [void]$sb.AppendLine('    volumes:')
@@ -152,6 +157,10 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    environment:')
         [void]$sb.AppendLine('      - TERM=xterm-256color')
         [void]$sb.AppendLine('      - TZ=${TZ:-UTC}')
+        # When the container runs as the host UID instead of node(1000),
+        # the passwd entry for that UID is missing, so $HOME defaults to
+        # /. Pinning HOME keeps ~/.claude, ~/.config, etc. resolvable.
+        [void]$sb.AppendLine('      - HOME=/home/node')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
         [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
         [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
