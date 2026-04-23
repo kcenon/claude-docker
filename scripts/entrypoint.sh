@@ -187,6 +187,15 @@ if [ -d "$CONFIG_SOURCE" ]; then
     # Ensure logs directory exists (hooks write to ~/.claude/logs/)
     mkdir -p "$ACCOUNT_DIR/logs" 2>/dev/null
 
+    # Ensure session-env exists so the Claude Code harness can write per-turn
+    # environment snapshots on the first session. The harness creates
+    # subdirectories under session-env/ each turn; if the parent directory is
+    # missing or not writable, every Bash tool call fails before the hook
+    # chain even runs. Pre-creating it with 700 (owner rwx) matches the
+    # harness's own default and is a no-op when the directory already exists.
+    mkdir -p "$ACCOUNT_DIR/session-env" 2>/dev/null
+    chmod 700 "$ACCOUNT_DIR/session-env" 2>/dev/null || true
+
     # Warn about hook scripts referenced in settings but missing on disk
     if [ -f "$ACCOUNT_DIR/settings.json" ] && command -v jq >/dev/null 2>&1; then
         jq -r '.. | objects | .command? // empty' "$ACCOUNT_DIR/settings.json" 2>/dev/null \

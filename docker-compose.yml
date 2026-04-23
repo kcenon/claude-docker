@@ -10,6 +10,11 @@ services:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
     image: claude-code-base:${IMAGE_TAG:-2026.04.17}
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}
+    # Match the host user's UID/GID so bind-mounted paths
+    # (${HOME}/.claude-state/account-*) stay writable from
+    # inside the container. Falls back to 1000:1000 (the
+    # upstream node:20-slim default) when UID/GID are unset.
+    user: "${UID:-1000}:${GID:-1000}"
     stdin_open: true
     tty: true
     volumes:
@@ -21,6 +26,7 @@ services:
     environment:
       - TERM=xterm-256color
       - TZ=${TZ:-UTC}
+      - HOME=/home/node
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
@@ -43,6 +49,11 @@ services:
     depends_on:
       - claude-a
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}
+    # Match the host user's UID/GID so bind-mounted paths
+    # (${HOME}/.claude-state/account-*) stay writable from
+    # inside the container. Falls back to 1000:1000 (the
+    # upstream node:20-slim default) when UID/GID are unset.
+    user: "${UID:-1000}:${GID:-1000}"
     stdin_open: true
     tty: true
     volumes:
@@ -54,6 +65,7 @@ services:
     environment:
       - TERM=xterm-256color
       - TZ=${TZ:-UTC}
+      - HOME=/home/node
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
