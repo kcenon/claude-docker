@@ -21,10 +21,7 @@ jobs:
           SHELLCHECK_OPTS: -e SC1091
         with:
           scandir: "./scripts"
-          # MVP baseline: only actual errors fail CI. Pre-existing warnings
-          # are tracked for cleanup in a follow-up issue before tightening
-          # this threshold back to `warning`.
-          severity: error
+          severity: warning
 
   hadolint:
     name: Hadolint
@@ -34,11 +31,7 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
-          # MVP baseline: only errors fail CI. Pre-existing DL3008 /
-          # DL3016 / DL4006 warnings on apt-get / npm version pinning
-          # are legitimate trade-offs for this image; revisit when
-          # pinning policy changes.
-          failure-threshold: error
+          failure-threshold: warning
 
   psanalyzer:
     name: PSScriptAnalyzer
@@ -51,11 +44,13 @@ jobs:
       - name: Run analyzer
         shell: pwsh
         run: |
-          # MVP baseline: Error severity only. Our CLI scripts intentionally
-          # use Write-Host for colored terminal output (PSAvoidUsingWriteHost
-          # is a Warning) and that pattern is load-bearing — revisiting
-          # requires a broader refactor to a formatter function.
-          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
+          # PSAvoidUsingWriteHost is waived globally: user-facing CLI scripts
+          # (claude-docker.ps1, install.ps1, remove.ps1, cleanup.ps1, etc.) use
+          # Write-Host for colored terminal output, which is load-bearing for
+          # the CLI UX. Refactoring to a logging helper is out of scope for
+          # the warning-threshold restoration.
+          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Warning `
+            -ExcludeRule PSAvoidUsingWriteHost
           if ($results) {
             $results | Format-Table -AutoSize
             exit 1
