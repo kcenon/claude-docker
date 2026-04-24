@@ -216,15 +216,61 @@ if [ -d "$CONFIG_SOURCE" ]; then
         fi
     done
 
-    # Symlink ccstatusline config to XDG path (~/.config/ccstatusline/)
-    # ccstatusline reads from ~/.config/ccstatusline/settings.json, not ~/.claude/ccstatusline/
+    # Symlink ccstatusline config to XDG path (~/.config/ccstatusline/).
+    #
+    # ccstatusline resolves its settings path from os.homedir() + ".config/
+    # ccstatusline/settings.json"; it does not honor XDG_CONFIG_HOME or any
+    # override env. If the file is absent it attempts to *write* a default
+    # there — when that write fails (EACCES), ccstatusline silently falls
+    # back to a hardcoded single-line layout and the user's multi-line
+    # config in $CONFIG_SOURCE/ccstatusline/ is never applied.
+    #
+    # Two things must hold for this block to succeed:
+    #   1. $XDG_CCSL must be writable by the current UID. Dockerfile handles
+    #      this with `chmod -R a+rwX /home/node/.config` — if you see the
+    #      "could not create XDG symlink" warning below, that chmod was lost
+    #      (e.g. stale base image) or overridden by a volume mount.
+    #   2. A source settings.json must exist. $ACCOUNT_DIR points to the
+    #      bind-mounted account state; $CONFIG_SOURCE points to the read-only
+    #      host config mount (or CLAUDE_CONFIG_SOURCE override).
     XDG_CCSL="/home/node/.config/ccstatusline"
-    mkdir -p "$XDG_CCSL" 2>/dev/null
-    if [ -d "$XDG_CCSL" ] && [ ! -e "$XDG_CCSL/settings.json" ]; then
+    mkdir -p "$XDG_CCSL" 2>/dev/null || true
+    if [ -d "$XDG_CCSL" ]; then
+        # Pick the source, preferring account state (host-synced via earlier
+        # symlink) over raw config source.
+        ccsl_src=""
         if [ -f "$ACCOUNT_DIR/ccstatusline/settings.json" ]; then
-            ln -sf "$ACCOUNT_DIR/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
+            ccsl_src="$ACCOUNT_DIR/ccstatusline/settings.json"
         elif [ -f "$CONFIG_SOURCE/ccstatusline/settings.json" ]; then
-            ln -sf "$CONFIG_SOURCE/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
+            ccsl_src="$CONFIG_SOURCE/ccstatusline/settings.json"
+        fi
+
+        if [ -n "$ccsl_src" ]; then
+            # Replace any stale symlink or pre-existing file so a new
+            # ACCOUNT_DIR / CONFIG_SOURCE binding is picked up on restart.
+            # `ln -sf` without this would leave a broken symlink dangling
+            # when the previous target has moved.
+            current_target=""
+            if [ -L "$XDG_CCSL/settings.json" ]; then
+                current_target=$(readlink "$XDG_CCSL/settings.json" 2>/dev/null || true)
+            fi
+            if [ "$current_target" != "$ccsl_src" ]; then
+                rm -f "$XDG_CCSL/settings.json" 2>/dev/null || true
+                if ln -s "$ccsl_src" "$XDG_CCSL/settings.json" 2>/dev/null; then
+                    echo "[entrypoint] ccstatusline: linked XDG settings.json -> $ccsl_src"
+                else
+                    # Most common cause: $XDG_CCSL owned by a different UID
+                    # (Dockerfile chown'd to node:node but container runs
+                    # as host UID). Warn loudly so the user sees the single-
+                    # line fallback is a config plumbing issue, not a
+                    # ccstatusline bug.
+                    xdg_owner=$(stat -c '%u:%g' "$XDG_CCSL" 2>/dev/null || echo "?")
+                    echo "[entrypoint] WARNING: could not create XDG symlink at $XDG_CCSL/settings.json" >&2
+                    echo "[entrypoint]   $XDG_CCSL owned by $xdg_owner, running as $(id -u):$(id -g)" >&2
+                    echo "[entrypoint]   ccstatusline will show its hardcoded default layout" >&2
+                    echo "[entrypoint]   Fix: rebuild base image so Dockerfile's chmod -R a+rwX takes effect" >&2
+                fi
+            fi
         fi
     fi
 fi

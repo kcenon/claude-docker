@@ -100,10 +100,22 @@ RUN npm install -g ccstatusline claude-limitline \
 # Memory heap limit
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
-# Pre-create .config directories with node ownership
-# (prevents root-owned dir when Docker bind-mounts ~/.config/gh)
+# Pre-create ccstatusline XDG config dir world-writable.
+#
+# ccstatusline reads (and on first run writes defaults to) ~/.config/
+# ccstatusline/settings.json — path derived from os.homedir(), not XDG_
+# CONFIG_HOME. When docker-compose runs the container as the host UID/GID
+# (see user: "${UID:-1000}:${GID:-1000}" in docker-compose.yml, added by
+# commit a09f997), chown'ing this dir to node:node leaves the running
+# process unable to write, and ccstatusline silently falls back to its
+# hardcoded single-line default instead of the user's multi-line layout.
+#
+# Using chmod -R a+rwX (capital X grants execute on dirs/already-executables
+# only, never on plain files) keeps the tree writable regardless of which
+# UID the compose file chooses. gh mounts its own subdir read-only at
+# runtime, so loosening the parent does not affect gh's token security.
 RUN mkdir -p /home/node/.config/ccstatusline \
-    && chown -R node:node /home/node/.config
+    && chmod -R a+rwX /home/node/.config
 
 # Copy entrypoint script (symlinks host config into account state dir).
 # Explicit chmod ensures the executable bit is set regardless of the host
