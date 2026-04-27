@@ -236,6 +236,20 @@ scripts/claude-docker exec claude-a gh pr list
 If you use [claude-config](https://github.com/kcenon/claude-config) to manage global
 Claude Code settings, containers automatically inherit your host configuration.
 
+> **Prerequisite**: Run claude-config's installer (`scripts/install.sh` /
+> `install.ps1`, or `bootstrap.sh`) on the host **before** starting any
+> claude-docker container. Containers are pure consumers — they do not run
+> the installer. Without a populated `~/.claude/` tree on the host, the
+> entrypoint symlinks below resolve to missing targets and Claude Code
+> falls back to its built-in defaults.
+>
+> **Compatibility**: Tested against claude-config v1.10+. The contract
+> claude-docker relies on (directory layout, hook command grammar,
+> dual-variant pairing, full-suite probe, CRLF normalization) is documented
+> in [`docs/CLAUDE_DOCKER_CONTRACT.md`](https://github.com/kcenon/claude-config/blob/develop/docs/CLAUDE_DOCKER_CONTRACT.md)
+> in the claude-config repo. Older claude-config installs may work but are
+> not gate-tested.
+
 The host's `~/.claude/` is mounted read-only at `/home/node/.claude-host/` inside
 each container. On startup, the entrypoint script creates symlinks from the
 account state directory to the shared config:
@@ -250,6 +264,7 @@ account state directory to the shared config:
 | Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` -> `.claude-host/CLAUDE.md` |
 | Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` -> `.claude-host/commit-settings.md` |
 | Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` -> `.claude-host/settings.json` |
+| Full-suite probe | `~/.claude/.full-suite-active` (optional) | `/home/node/.claude/.full-suite-active` -> `.claude-host/.full-suite-active` |
 
 The host config is read-only. Account-specific state (credentials, memory,
 sessions) remains writable and per-container. Symlinks are created when the

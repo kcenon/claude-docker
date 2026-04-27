@@ -207,8 +207,15 @@ if [ -d "$CONFIG_SOURCE" ]; then
         done
     fi
 
-    # Symlink other shared config files
-    for item in CLAUDE.md commit-settings.md .claudeignore; do
+    # Symlink other shared config files.
+    #
+    # `.full-suite-active` is the probe file written by claude-config's
+    # full-install path (issue #423 contract). Plugin and global hooks read
+    # it from $HOME/.claude/.full-suite-active to gate on whether the host
+    # ran the full installer or only the lite/plugin install. Without
+    # forwarding, container-side hooks would treat every host as lite.
+    # See claude-config docs/CLAUDE_DOCKER_CONTRACT.md for the contract.
+    for item in CLAUDE.md commit-settings.md .claudeignore .full-suite-active; do
         if [ -f "$CONFIG_SOURCE/$item" ]; then
             if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
                 ln -sf "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
