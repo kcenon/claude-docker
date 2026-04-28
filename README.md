@@ -12,7 +12,8 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - **Shared source code** -- Bind mount (Tier A) or git worktree (Tier B) for concurrent editing
 - **Cross-platform** -- Linux, macOS, Windows (WSL2 or native PowerShell)
 - **Flexible authentication** -- OAuth for Pro/Max/Team subscriptions, or API key for Console
-- **Scalable to N instances** -- Add accounts by copying a compose service block
+- **Scalable to N instances** -- Add accounts by copying a compose service block (up to 702 via Excel-style suffixes)
+- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; auto-downloads a signed prebuilt binary from GitHub Releases or builds from source when Go 1.21+ is available
 
 ## Prerequisites
 
@@ -158,6 +159,8 @@ scripts/claude-docker help       # Show all available commands
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
+| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; auto-downloads a prebuilt binary if missing |
+| | `build-tui` | Rebuild the TUI dashboard binary from source (requires Go 1.21+) |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
 
@@ -361,6 +364,25 @@ scripts/claude-docker usage                                  # Daily (default)
 scripts/claude-docker usage monthly                          # Monthly
 scripts/claude-docker usage daily --since 20260301 --json    # Date filter + JSON
 ```
+
+### Multi-account dashboard (TUI)
+
+A Bubble Tea-based terminal dashboard surfaces per-account container state,
+authentication status, recent activity, and live token usage in one view.
+
+```bash
+scripts/claude-docker tui            # Launch dashboard (auto-fetches binary if missing)
+scripts/claude-docker dashboard      # Alias of tui
+scripts/claude-docker build-tui      # Rebuild from source (Go 1.21+)
+```
+
+`tui` first looks for `tui/claude-docker-tui` in the project tree. If it is
+missing, the wrapper calls `download_tui_release` (`scripts/lib/tui-release.sh`)
+to fetch the matching `claude-docker-tui-<os>-<arch>` asset from the latest
+GitHub Release, verifies its `.sha256`, and installs it in place. If neither
+the binary nor `curl` is available, the command falls back to a clear error
+that points operators to `build-tui`. PowerShell users can run
+`.\scripts\claude-docker.ps1 tui` for the same flow.
 
 ### Rebuilding the Image
 
@@ -575,7 +597,13 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 
 The `Dockerfile` pins the Node base image to a specific patch version **and
 content digest** so rebuilds are byte-for-byte reproducible and any upstream
-repush of the tag is caught at build time as a digest mismatch. To bump:
+repush of the tag is caught at build time as a digest mismatch. Inside the
+image, **Claude Code is installed via Anthropic's official native installer**
+(`https://claude.ai/install.sh`), not via npm. The installer places `claude`
+at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
+"leftover npm global install". Pin a specific Claude Code release with the
+`CLAUDE_CODE_VERSION` build arg (read from `.env`); leave it empty for
+`latest`. To bump:
 
 1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
 2. Capture the digest on a trusted host (**required**, not optional):
@@ -625,7 +653,8 @@ allow all containers to run at peak load.
 ```
 claude-docker/
 +-- .dockerignore                      Docker build context exclusions
-+-- Dockerfile                         Base image
++-- Dockerfile                         Base image (Claude Code installed via Anthropic native installer)
++-- VERSION                            Release tag consumed by docker-compose IMAGE_TAG
 +-- docker-compose.yml                 Generated: base config (Tier A)
 +-- docker-compose.linux.yml           Generated: Linux override
 +-- docker-compose.worktree.yml        Generated: Tier B override
@@ -635,23 +664,36 @@ claude-docker/
 +-- LICENSE                            BSD 3-Clause
 +-- README.md                          This file
 +-- scripts/
-    +-- claude-docker                  CLI wrapper (bash)
-    +-- claude-docker.ps1              CLI wrapper (PowerShell)
-    +-- claude-docker.cmd              CLI wrapper (cmd.exe batch)
-    +-- ClaudeDocker.psm1              Shared PowerShell module
-    +-- generate-compose.sh            Compose file generator (bash)
-    +-- generate-compose.ps1           Compose file generator (PowerShell)
-    +-- entrypoint.sh                 Container init (config symlinks)
-    +-- install.sh                     Interactive setup (bash)
-    +-- install.ps1                    Interactive setup (PowerShell)
-    +-- remove.sh                      Complete removal (bash)
-    +-- remove.ps1                     Complete removal (PowerShell)
-    +-- cleanup.sh                     Quick cleanup (bash)
-    +-- cleanup.ps1                    Quick cleanup (PowerShell)
-    +-- setup-worktrees.sh             Tier B worktree setup (bash)
-    +-- setup-worktrees.ps1            Tier B worktree setup (PowerShell)
-    +-- test-concurrent-git.sh         E2E test (bash)
-    +-- test-concurrent-git.ps1        E2E test (PowerShell)
+|   +-- claude-docker                  CLI wrapper (bash)
+|   +-- claude-docker.ps1              CLI wrapper (PowerShell)
+|   +-- claude-docker.cmd              CLI wrapper (cmd.exe batch)
+|   +-- ClaudeDocker.psm1              Shared PowerShell module
+|   +-- generate-compose.sh            Compose file generator (bash)
+|   +-- generate-compose.ps1           Compose file generator (PowerShell)
+|   +-- entrypoint.sh                  Container init (config symlinks, full-suite probe forwarding)
+|   +-- install.sh                     Interactive setup (bash)
+|   +-- install.ps1                    Interactive setup (PowerShell)
+|   +-- remove.sh                      Complete removal (bash)
+|   +-- remove.ps1                     Complete removal (PowerShell)
+|   +-- cleanup.sh                     Quick cleanup (bash)
+|   +-- cleanup.ps1                    Quick cleanup (PowerShell)
+|   +-- setup-worktrees.sh             Tier B worktree setup (bash)
+|   +-- setup-worktrees.ps1            Tier B worktree setup (PowerShell)
+|   +-- test-concurrent-git.sh         E2E test (bash)
+|   +-- test-concurrent-git.ps1        E2E test (PowerShell)
+|   +-- test-entrypoint-settings.sh    Entrypoint settings normalization test (bash)
+|   +-- lib/
+|       +-- tui-release.sh             Download + SHA256-verify prebuilt TUI binary (bash)
+|       +-- tui-release.ps1            Same, PowerShell port
+|       +-- parse_env.sh               Shared .env parser (bash)
+|       +-- index.sh / index.ps1       Excel-style account index helpers
++-- tui/                               Bubble Tea multi-account dashboard (Go module)
+|   +-- main.go
+|   +-- Makefile
+|   +-- go.mod / go.sum
+|   +-- internal/                      account, auth, config, docker, ui, usage subpackages
++-- tests/                             Hadolint, parse_env, ccstatusline regression tests
+    +-- env_fixtures/
 ```
 
 ## License
