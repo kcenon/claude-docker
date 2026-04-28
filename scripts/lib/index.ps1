@@ -13,8 +13,11 @@
 # implementation that used to live in each consumer. The upper bound 702
 # matches scripts/install.ps1's NUM_ACCOUNTS validator.
 
-if ($Global:_CLAUDE_DOCKER_INDEX_PS1_SOURCED) { return }
-$Global:_CLAUDE_DOCKER_INDEX_PS1_SOURCED = $true
+# No re-source guard: PowerShell's `& file.ps1` runs each script in its own
+# script scope (sibling, not child, of the caller — the common parent is
+# global). A $Global guard set by install.ps1 would make generate-compose.ps1
+# skip function definition entirely, leaving Get-AccountLetter unresolved.
+# Function definitions are idempotent, so re-sourcing is a no-op anyway.
 
 function Get-AccountLetter {
     <#

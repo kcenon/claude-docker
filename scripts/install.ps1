@@ -41,6 +41,7 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 . (Join-Path $PSScriptRoot 'lib' 'index.ps1')
+. (Join-Path $PSScriptRoot 'lib' 'tui-release.ps1')
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
@@ -75,10 +76,6 @@ function Measure-IoLatency {
 }
 
 # --- Prerequisite Checks -----------------------------------------------------
-
-function Test-DockerDesktopRunning {
-    $null -ne (Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue)
-}
 
 function Start-DockerDesktop {
     $exePaths = @(
@@ -322,6 +319,10 @@ function Get-Configuration {
     # enumeration; the validator catches typos like 2600 without capping
     # legitimate multi-tenant setups at the historic 26-account ceiling.
     $numInput = Read-Input -Question 'Number of accounts to configure (1-702)' -Default '2'
+    if ($numInput -notmatch '^\d+$') {
+        Write-LogError 'Number of accounts must be a positive integer.'
+        exit 1
+    }
     $Script:NumAccounts = [int]$numInput
     if ($Script:NumAccounts -lt 1 -or $Script:NumAccounts -gt 702) {
         Write-LogError 'Number of accounts must be between 1 and 702.'
@@ -573,10 +574,19 @@ function Invoke-TUIBuild {
     Write-LogStep 'Building TUI dashboard'
 
     if (-not (Test-GoInstalled)) {
-        Write-LogWarn 'Go toolchain not available — TUI dashboard will not be built.'
+        Write-LogWarn 'Go toolchain not available.'
+        if (Read-Confirmation -Question 'Download prebuilt TUI binary from GitHub Releases?' -Default 'y') {
+            $binary = Join-Path $tuiDir 'claude-docker-tui.exe'
+            if (Install-TuiRelease -Destination $binary) {
+                $size = [math]::Round((Get-Item $binary).Length / 1MB, 1)
+                Write-LogSuccess "TUI dashboard installed: tui\claude-docker-tui.exe (${size}MB)"
+                Write-LogInfo 'Launch with: scripts\claude-docker.ps1 tui'
+                return
+            }
+            Write-LogWarn 'Prebuilt download failed.'
+        }
         Write-LogInfo "Install Go 1.21+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
-        $answer = Read-Host 'Install Go automatically now? [Y/n]'
-        if ($answer -eq '' -or $answer -match '^[Yy]') {
+        if (Read-Confirmation -Question 'Install Go automatically now?' -Default 'y') {
             if (-not (Install-Prerequisite -Tool 'go')) {
                 Write-LogWarn 'Failed to install Go. Skipping TUI build.'
                 return
@@ -790,6 +800,15 @@ function Invoke-Verification {
     else {
         Write-LogWarn 'Could not verify Claude Code (container may still be starting)'
     }
+
+    # Check auth status (Path A: OAuth login required; Path B: API key validates)
+    $null = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc claude auth status 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-LogSuccess 'Authentication verified'
+    }
+    else {
+        Write-LogWarn 'Authentication not verified (may need browser login or API key check)'
+    }
 }
 
 # --- Summary ------------------------------------------------------------------
@@ -808,6 +827,16 @@ function Show-Summary {
     Write-Host ''
     Write-Host 'Quick Commands (via CLI wrapper):' -ForegroundColor White
     Write-Host ''
+
+    # Advertise TUI dashboard when the binary is present (built locally or
+    # downloaded as a prebuilt release).
+    $tuiBinary = Join-Path $ProjectRoot 'tui\claude-docker-tui.exe'
+    if (Test-Path $tuiBinary) {
+        Write-Host '  # Interactive multi-account dashboard (recommended)' -ForegroundColor Cyan
+        Write-Host '  .\scripts\claude-docker.ps1 tui'
+        Write-Host ''
+    }
+
     Write-Host '  # Start Claude Code' -ForegroundColor Cyan
     Write-Host '  .\scripts\claude-docker.ps1 claude'
     Write-Host ''
@@ -830,6 +859,14 @@ function Show-Summary {
         Write-Host '  (Follow the OAuth prompt - credentials persist in bind-mounted state dir)' -ForegroundColor DarkGray
         Write-Host ''
     }
+
+    # Echo the exact compose invocation so users can reproduce it manually
+    # without re-deriving the -f file list.
+    $composeArgs = Get-ComposeArgs -ProjectRoot $ProjectRoot
+    $composeCmd = 'docker compose ' + ($composeArgs -join ' ') + ' up -d'
+    Write-Host 'Compose command for this setup:' -ForegroundColor White
+    Write-Host "  $composeCmd" -ForegroundColor Green
+    Write-Host ''
 }
 
 # --- Main ---------------------------------------------------------------------
