@@ -4,7 +4,7 @@
 # Run:  bash tests/test_parse_env.sh
 # Exits non-zero on any failure; prints a summary at the end.
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
