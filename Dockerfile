@@ -79,8 +79,16 @@ RUN set -eux; \
 #      intact without manual rewiring.
 #   3. On Linux overrides with a custom UID/GID, world-readable permissions
 #      on the versioned tree let any user exec it.
-RUN HOME=/home/node curl -fsSL https://claude.ai/install.sh \
-      | HOME=/home/node bash -s -- ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+# Pin claude.ai installer to a known SHA256 to fail the image build
+# if the upstream installer is unexpectedly modified. Refresh by
+# computing the hash of the latest installer and bumping the ARG
+# default below; CI will fail loudly when this drift occurs.
+ARG CLAUDE_INSTALLER_SHA256=b315b46925a9bfb9422f2503dd5aa649f680832f4c076b22d87c39d578c3d830
+
+RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+    && echo "${CLAUDE_INSTALLER_SHA256}  /tmp/claude-install.sh" | sha256sum -c - \
+    && HOME=/home/node bash /tmp/claude-install.sh ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+    && rm -f /tmp/claude-install.sh \
     && chown -R node:node /home/node/.local /home/node/.claude 2>/dev/null || true \
     && chmod -R a+rX /home/node/.local \
     && rm -rf /root/.claude
