@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -9,25 +10,42 @@ import (
 	"github.com/kcenon/claude-docker/tui/internal/config"
 )
 
+// containsArg returns true if want appears anywhere in args.
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// writeFile creates an empty file at path so the file-existence check passes.
+func writeFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
 // TestBuildComposeArgs verifies the base compose file is always present and
 // that the Linux overlay and worktree overlay are added under the right
-// conditions. CI runs on Linux so the Linux branch always fires there;
-// we still assert the OS-conditional logic explicitly so the test passes
-// on macOS/Windows local runs too.
+// conditions when the corresponding files exist on disk. CI runs on Linux so
+// the Linux branch always fires there; we still assert the OS-conditional
+// logic explicitly so the test passes on macOS/Windows local runs too.
 func TestBuildComposeArgs(t *testing.T) {
-	root := "/tmp/proj"
+	root := t.TempDir()
 	baseFile := filepath.Join(root, "docker-compose.yml")
 	linuxFile := filepath.Join(root, "docker-compose.linux.yml")
 	worktreeFile := filepath.Join(root, "docker-compose.worktree.yml")
 
-	containsArg := func(args []string, want string) bool {
-		for _, a := range args {
-			if a == want {
-				return true
-			}
-		}
-		return false
-	}
+	// Pre-create the overlay files so the file-existence checks pass for the
+	// scenarios that exercise the "overlay should be added" path. The base
+	// compose path itself is not stat'd by BuildComposeArgs; it is always
+	// included regardless of whether the file exists on disk, matching the
+	// canonical bash implementation.
+	writeFile(t, linuxFile)
+	writeFile(t, worktreeFile)
 
 	t.Run("base only nil env", func(t *testing.T) {
 		args := BuildComposeArgs(root, nil)
@@ -59,6 +77,41 @@ func TestBuildComposeArgs(t *testing.T) {
 		args := BuildComposeArgs(root, env)
 		if !containsArg(args, worktreeFile) {
 			t.Errorf("worktree file %q missing in %v", worktreeFile, args)
+		}
+	})
+}
+
+// TestBuildComposeArgs_FileMissing verifies the file-existence check: when
+// an overlay file is not present on disk, BuildComposeArgs must omit the
+// corresponding `-f` argument even if the host conditions (Linux / worktree
+// env) would otherwise select it. This matches the canonical bash logic
+// in scripts/lib/build-compose-cmd.sh.
+func TestBuildComposeArgs_FileMissing(t *testing.T) {
+	root := t.TempDir()
+	baseFile := filepath.Join(root, "docker-compose.yml")
+	linuxFile := filepath.Join(root, "docker-compose.linux.yml")
+	worktreeFile := filepath.Join(root, "docker-compose.worktree.yml")
+	// Deliberately do NOT create linuxFile or worktreeFile — only the empty
+	// temp dir exists. The base file is also absent; the bash canonical
+	// version does not stat the base file either, so neither does the Go
+	// port: the base path is unconditionally included.
+
+	t.Run("linux overlay omitted when file missing", func(t *testing.T) {
+		args := BuildComposeArgs(root, nil)
+		if !containsArg(args, baseFile) {
+			t.Errorf("base file %q should always be present in %v", baseFile, args)
+		}
+		if containsArg(args, linuxFile) {
+			t.Errorf("linux overlay %q must be omitted when file does not exist (args=%v)", linuxFile, args)
+		}
+	})
+
+	t.Run("worktree overlay omitted when file missing even with PROJECT_DIR_A", func(t *testing.T) {
+		env := config.NewEmptyEnv(filepath.Join(root, ".env"))
+		env.Set("PROJECT_DIR_A", "/some/path")
+		args := BuildComposeArgs(root, env)
+		if containsArg(args, worktreeFile) {
+			t.Errorf("worktree overlay %q must be omitted when file does not exist (args=%v)", worktreeFile, args)
 		}
 	})
 }
