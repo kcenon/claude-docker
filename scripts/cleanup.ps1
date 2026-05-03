@@ -15,12 +15,20 @@
 .PARAMETER SkipState
     Decline state-directory removal non-interactively. Useful in automation
     that only wants container/volume/worktree cleanup.
+.PARAMETER Backups
+    Remove stale .env.backup.* and .env.bak files older than -BackupAgeDays
+    days from the project root. Preserves .env, .env.example, and fresh
+    backups.
+.PARAMETER BackupAgeDays
+    Age threshold in days for -Backups removal. Default: 7.
 #>
 [CmdletBinding()]
 param(
     [string]$RepoDir,
     [Alias('Yes')][switch]$Force,
-    [Alias('No')][switch]$SkipState
+    [Alias('No')][switch]$SkipState,
+    [Alias('B')][switch]$Backups,
+    [int]$BackupAgeDays = 7
 )
 
 if ($Force -and $SkipState) {
@@ -35,6 +43,17 @@ $ProjectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $ProjectRoot
 
 try {
+    if ($Backups) {
+        Write-Host "=== Removing stale .env backup files (>$BackupAgeDays days) ===" -ForegroundColor Cyan
+        $cutoff = (Get-Date).AddDays(-$BackupAgeDays)
+        Get-ChildItem -Path $ProjectRoot -Filter '.env.backup.*' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $cutoff } |
+            Remove-Item -Force
+        Get-ChildItem -Path $ProjectRoot -Filter '.env.bak' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $cutoff } |
+            Remove-Item -Force
+    }
+
     Write-Host '=== Stopping containers ===' -ForegroundColor Cyan
     & docker compose down --remove-orphans 2>$null
     # Ignore errors if no containers running
