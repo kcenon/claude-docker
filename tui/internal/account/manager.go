@@ -2,20 +2,16 @@ package account
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
-	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
 
 // Manager provides CRUD operations on accounts.
@@ -30,146 +26,18 @@ func NewManager(env *config.Env, client *docker.Client) *Manager {
 }
 
 // ListAccounts returns all configured accounts with enriched runtime status.
+//
+// The method is a thin orchestrator over five focused helpers (defined in
+// manager_helpers.go); each helper owns one phase of the listing workflow.
+// Side-effects (cache writes, cooldown writes) and error policy match the
+// previous monolithic impl: non-fatal phases swallow their errors and
+// degrade gracefully.
 func (m *Manager) ListAccounts() ([]Account, error) {
-	n := m.env.NumAccounts()
-
-	// Get state dirs
-	stateDirs, _ := config.DiscoverStateDirs()
-	stateDirMap := make(map[string]config.StateDir)
-	for _, sd := range stateDirs {
-		stateDirMap[sd.Letter] = sd
-		// Auto-detect accounts: extend n to cover discovered state dirs
-		if idx := config.LetterToIndex(sd.Letter); idx > n {
-			n = idx
-		}
-	}
-
-	// Get container status
-	containers, _ := m.client.PS()
-	containerMap := make(map[string]docker.ContainerInfo)
-	for _, c := range containers {
-		containerMap[c.Service] = c
-	}
-
-	accounts := make([]Account, n)
-	for i := 1; i <= n; i++ {
-		letter := config.IndexToLetter(i)
-		svcName := "claude-" + letter
-
-		acct := Account{
-			Letter:      letter,
-			ServiceName: svcName,
-		}
-
-		// Resolve state directory
-		if sd, ok := stateDirMap[letter]; ok {
-			acct.StateDirPath = sd.Path
-			acct.AuthType = detectAuthType(sd, m.env, letter)
-
-			// Parse limitline cache for usage data (only from this account's own cache)
-			if sd.HasLimitlineCache() {
-				acct.FiveHourUsage, acct.SevenDayUsage = parseLimitlineCache(sd.LimitlineCachePath())
-			}
-
-			// JSONL token summary (always populated when data exists)
-			if sessions, err := usage.ScanAccountSessions(sd.ProjectsDir()); err == nil && len(sessions) > 0 {
-				opts := usage.AllTimeOptions()
-				tokens := usage.AggregateSessions(sessions, opts)
-				count := usage.CountFilteredSessions(sessions, opts)
-				acct.Tokens = &TokenSummary{
-					InputTokens:  tokens.InputTokens,
-					OutputTokens: tokens.OutputTokens,
-					CacheTokens:  tokens.CacheCreationInputTokens + tokens.CacheReadInputTokens,
-					SessionCount: count,
-				}
-			}
-		}
-
-		// Resolve container status
-		if ci, ok := containerMap[svcName]; ok {
-			acct.ContainerID = ci.ID
-			switch strings.ToLower(ci.State) {
-			case "running":
-				acct.ContainerStatus = ContainerRunning
-			default:
-				acct.ContainerStatus = ContainerStopped
-			}
-		}
-
-		accounts[i-1] = acct
-	}
-
-	// Parallel enrichment: GH auth check + API usage fetch for accounts missing limitline
-	var wg sync.WaitGroup
-	for i := range accounts {
-		acct := &accounts[i]
-
-		// GH auth check (running containers only)
-		if acct.ContainerStatus == ContainerRunning && acct.ContainerID != "" {
-			wg.Add(1)
-			go func(a *Account) {
-				defer wg.Done()
-				cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "auth", "status")
-				out, _ := cmd.CombinedOutput()
-				if strings.Contains(string(out), "Logged in") {
-					a.GHAuthOK = true
-				}
-			}(acct)
-		}
-
-		// Fetch usage from API when limitline cache is missing but credentials exist.
-		// Skip if API was recently rate-limited (short cooldown per account).
-		if acct.AuthType == AuthOAuth && acct.StateDirPath != "" {
-			if acct.FiveHourUsage != nil {
-				acct.LastAPIStatus = "cached (fresh)"
-			} else if isAPICooldownActive(acct.StateDirPath) {
-				acct.APIRateLimited = true
-				acct.LastAPIStatus = "skipped (cooldown active)"
-			} else {
-				wg.Add(1)
-				go func(a *Account) {
-					defer wg.Done()
-					sd := config.StateDir{Letter: a.Letter, Path: a.StateDirPath}
-					token, err := auth.ReadOAuthToken(sd.CredentialsPath())
-					if err != nil {
-						a.LastAPIStatus = fmt.Sprintf("token err: %v", err)
-						return
-					}
-					apiResp, err := auth.FetchUsage(token)
-					if err != nil {
-						var rlErr *auth.RateLimitError
-						if errors.As(err, &rlErr) {
-							writeAPICooldown(a.StateDirPath)
-							a.APIRateLimited = true
-							a.LastAPIStatus = "HTTP 429 (rate limited)"
-						} else {
-							a.LastAPIStatus = fmt.Sprintf("err: %v", err)
-						}
-						return
-					}
-					a.LastAPIStatus = "HTTP 200 (fresh)"
-					if apiResp.FiveHour != nil {
-						a.FiveHourUsage = &UsageBucket{
-							PercentUsed: int(apiResp.FiveHour.Utilization),
-							IsOverLimit: apiResp.FiveHour.Utilization >= 100,
-							ResetAt:     apiResp.FiveHour.ResetsAt,
-						}
-					}
-					if apiResp.SevenDay != nil {
-						a.SevenDayUsage = &UsageBucket{
-							PercentUsed: int(apiResp.SevenDay.Utilization),
-							IsOverLimit: apiResp.SevenDay.Utilization >= 100,
-							ResetAt:     apiResp.SevenDay.ResetsAt,
-						}
-					}
-					// Cache to disk so future loads don't need API
-					writeLimitlineCache(sd.LimitlineCachePath(), apiResp)
-				}(acct)
-			}
-		}
-	}
-	wg.Wait()
-
+	stateDirs, n := m.discoverStateDirs()
+	containerMap := m.fetchContainerStatus()
+	accounts := m.buildAccounts(n, stateDirs, containerMap)
+	apiResults := m.enrichAccounts(accounts)
+	m.writeCacheUpdates(accounts, apiResults)
 	return accounts, nil
 }
 
