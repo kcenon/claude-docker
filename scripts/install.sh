@@ -363,7 +363,17 @@ install_prerequisite() {
                         log_warn "Added $USER to docker group. You may need to log out and back in."
                         ;;
                     node)
-                        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+                        # NodeSource keyring + signed apt source (replaces 'curl | sudo bash').
+                        # NodeSource GPG fingerprint: 9FD3B784BC1C6FC31A8A0A1C1655A0AB68576280
+                        # Verify periodically against https://github.com/nodesource/distributions
+                        local keyring="/etc/apt/keyrings/nodesource.gpg"
+                        sudo install -m 0755 -d /etc/apt/keyrings
+                        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                            | sudo gpg --dearmor -o "$keyring"
+                        sudo chmod a+r "$keyring"
+                        echo "deb [signed-by=$keyring] https://deb.nodesource.com/node_20.x nodistro main" \
+                            | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+                        sudo apt-get update -qq
                         sudo apt-get install -y -qq nodejs
                         ;;
                     git) sudo apt-get install -y -qq git ;;
