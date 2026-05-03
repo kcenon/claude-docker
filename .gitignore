@@ -3,11 +3,6 @@
 !.env.example
 .claude-state/
 
-# Generated compose files (scripts/generate-compose.sh)
-docker-compose.yml
-docker-compose.worktree.yml
-docker-compose.linux.yml
-
 # npm cache (from host claude install)
 .npm-cache/
 package-lock.json
