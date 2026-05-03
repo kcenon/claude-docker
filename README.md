@@ -13,7 +13,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - **Cross-platform** -- Linux, macOS, Windows (WSL2 or native PowerShell)
 - **Flexible authentication** -- OAuth for Pro/Max/Team subscriptions, or API key for Console
 - **Scalable to N instances** -- Add accounts by copying a compose service block (up to 702 via Excel-style suffixes)
-- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; auto-downloads a signed prebuilt binary from GitHub Releases or builds from source when Go 1.21+ is available
+- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; auto-downloads a signed prebuilt binary from GitHub Releases or builds from source when Go 1.24+ is available
 
 ## Prerequisites
 
@@ -160,7 +160,7 @@ scripts/claude-docker help       # Show all available commands
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; auto-downloads a prebuilt binary if missing |
-| | `build-tui` | Rebuild the TUI dashboard binary from source (requires Go 1.21+) |
+| | `build-tui` | Rebuild the TUI dashboard binary from source (requires Go 1.24+) |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
 
@@ -373,7 +373,7 @@ authentication status, recent activity, and live token usage in one view.
 ```bash
 scripts/claude-docker tui            # Launch dashboard (auto-fetches binary if missing)
 scripts/claude-docker dashboard      # Alias of tui
-scripts/claude-docker build-tui      # Rebuild from source (Go 1.21+)
+scripts/claude-docker build-tui      # Rebuild from source (Go 1.24+)
 ```
 
 `tui` first looks for `tui/claude-docker-tui` in the project tree. If it is
@@ -695,6 +695,10 @@ claude-docker/
 +-- tests/                             Hadolint, parse_env, ccstatusline regression tests
     +-- env_fixtures/
 ```
+
+`sources/` contains local nested working directories that are gitignored
+and never copied into the Docker image. They can be removed safely if not
+in use.
 
 ## License
 
