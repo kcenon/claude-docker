@@ -48,6 +48,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# shellcheck source=lib/build-compose-cmd.sh
+. "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 
 # --- Compose Command Builder --------------------------------------------------
 
@@ -58,32 +60,10 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # 1. Base docker-compose.yml is always included
 # 2. docker-compose.linux.yml is added on Linux hosts when the file exists
 # 3. docker-compose.worktree.yml is added when .env declares PROJECT_DIR_A
+#
+# build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced above).
 COMPOSE_CMD=()
 COMPOSE_CMD_INITIALIZED=0
-
-build_compose_cmd() {
-    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
-
-    # Linux override: auto-detect platform
-    if [[ "$(uname -s)" == "Linux" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.linux.yml" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
-        # Export UID/GID for linux override
-        export UID GID
-        UID=$(id -u)
-        GID=$(id -g)
-    fi
-
-    # Worktree override: check if PROJECT_DIR_A is set in .env
-    if [[ -f "${PROJECT_ROOT}/.env" ]]; then
-        local pdir_a
-        pdir_a=$(parse_env_value "${PROJECT_ROOT}/.env" "PROJECT_DIR_A")
-        if [[ -n "$pdir_a" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
-            COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
-        fi
-    fi
-
-    COMPOSE_CMD_INITIALIZED=1
-}
 
 # Ensure COMPOSE_CMD is populated. Idempotent — safe to call from every subcommand.
 ensure_compose_cmd() {

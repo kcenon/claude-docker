@@ -73,6 +73,8 @@ log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# shellcheck source=lib/build-compose-cmd.sh
+. "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 
 prompt_select() {
     local question="$1"
@@ -914,21 +916,14 @@ setup_worktrees() {
 
 # Populate the global COMPOSE_CMD array with `docker compose -f ...` so
 # callers invoke it as `"${COMPOSE_CMD[@]}" up -d` instead of building and
-# eval'ing a string. Matches the pattern already used by
-# scripts/claude-docker (see build_compose_cmd there). Array form preserves
-# quoting of paths containing spaces, which was the source of issue #155.
+# eval'ing a string. Array form preserves quoting of paths containing spaces,
+# which was the source of issue #155.
+#
+# build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced near
+# the top of this script). It drives overlay selection from `uname -s` plus
+# the file-existence of the overlay files plus .env state for PROJECT_DIR_A,
+# matching the canonical logic in scripts/claude-docker.
 COMPOSE_CMD=()
-build_compose_cmd() {
-    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
-
-    if [[ "$PLATFORM" == "linux" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
-    fi
-
-    if [[ "$TIER" == "B" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
-    fi
-}
 
 # --- Container Startup --------------------------------------------------------
 
