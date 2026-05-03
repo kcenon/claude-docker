@@ -51,5 +51,10 @@ build_compose_cmd() {
         fi
     fi
 
+    # COMPOSE_CMD_INITIALIZED is consumed by callers (scripts/claude-docker
+    # ensure_compose_cmd) — it lets idempotent wrappers skip rebuilding the
+    # array on subsequent invocations from the same shell. Not used inside
+    # this lib, so silence shellcheck's local-only scan.
+    # shellcheck disable=SC2034
     COMPOSE_CMD_INITIALIZED=1
 }
