@@ -50,7 +50,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.dashboard.SetSize(msg.Width, msg.Height-4) // reserve space for header
-		return a, nil
+		var cmd tea.Cmd
+		a.dashboard, cmd = a.dashboard.Update(msg)
+		return a, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
