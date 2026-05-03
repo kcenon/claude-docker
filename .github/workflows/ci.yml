@@ -14,8 +14,8 @@ jobs:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: ludeeus/action-shellcheck@master
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         env:
           # SC1091: sourced files are resolved at runtime, not checkable in lint
           SHELLCHECK_OPTS: -e SC1091
@@ -27,8 +27,8 @@ jobs:
     name: Hadolint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5  # v3.3.0
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
@@ -37,7 +37,7 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
@@ -89,11 +89,11 @@ jobs:
     name: Go tests (TUI)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
         with:
-          # Must match or exceed tui/go.mod's `go` directive (currently 1.23).
-          go-version: "1.23"
+          # Must match or exceed tui/go.mod's `go` directive (currently 1.24).
+          go-version: "1.24"
       - name: Run Go unit tests
         working-directory: ./tui
         run: go test ./...
@@ -106,7 +106,7 @@ jobs:
       matrix:
         fixture: [minimal, tier-b, n5, n30, with-special-chars]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Stage fixture
         run: cp tests/env_fixtures/${{ matrix.fixture }}.env .env
       - name: Generate compose
