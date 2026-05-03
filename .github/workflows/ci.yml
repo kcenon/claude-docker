@@ -113,3 +113,34 @@ jobs:
         run: bash scripts/generate-compose.sh
       - name: Validate compose
         run: docker compose config > /dev/null
+
+  bash-tests:
+    name: Bash Tests (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - tests/test_ccstatusline_xdg_symlink.sh
+          - tests/test_parse_env.sh
+          - tests/test_transform_syntax_check.sh
+          - tests/test_cleanup_backups.sh
+          - scripts/test-entrypoint-settings.sh
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Run ${{ matrix.test }}
+        run: bash "${{ matrix.test }}"
+
+  pwsh-tests:
+    name: PowerShell Tests (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - tests/test_parse_env.ps1
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Run ${{ matrix.test }}
+        shell: pwsh
+        run: pwsh -NoProfile -File "${{ matrix.test }}"

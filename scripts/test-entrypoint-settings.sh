@@ -9,7 +9,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAUDE_CONFIG="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)/claude-config/global}"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Resolution order:
+#   1. Explicit positional argument (developer override).
+#   2. CI fixture under tests/entrypoint_fixtures/global when running in
+#      GitHub Actions, where claude-config/ is not checked out alongside
+#      the project (issue #232).
+#   3. Default ../claude-config/global relative to repo (developer host).
+if [ -n "${1:-}" ]; then
+    CLAUDE_CONFIG="$1"
+elif [ -n "${GITHUB_ACTIONS:-}" ] && [ -d "$PROJECT_ROOT/tests/entrypoint_fixtures/global" ]; then
+    CLAUDE_CONFIG="$PROJECT_ROOT/tests/entrypoint_fixtures/global"
+else
+    CLAUDE_CONFIG="$(cd "$SCRIPT_DIR/../.." && pwd)/claude-config/global"
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
