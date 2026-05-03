@@ -616,10 +616,11 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 }
 
 func padPlain(s string, width int) string {
-	if len(s) >= width {
+	visual := lipgloss.Width(s)
+	if visual >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-visual)
 }
 
 func padStyled(text string, width int, style lipgloss.Style) string {
