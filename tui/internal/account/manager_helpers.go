@@ -70,7 +70,9 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 			}
 
 			// JSONL token summary (always populated when session data exists).
-			if sessions, err := usage.ScanAccountSessions(sd.ProjectsDir()); err == nil && len(sessions) > 0 {
+			// Uses the manager-scoped cache so unchanged session files are
+			// not re-read and re-decoded on every dashboard refresh.
+			if sessions, err := usage.ScanAccountSessionsWithCache(sd.ProjectsDir(), m.usageCache); err == nil && len(sessions) > 0 {
 				opts := usage.AllTimeOptions()
 				tokens := usage.AggregateSessions(sessions, opts)
 				count := usage.CountFilteredSessions(sessions, opts)

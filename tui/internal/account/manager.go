@@ -12,17 +12,23 @@ import (
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
+	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
 
 // Manager provides CRUD operations on accounts.
 type Manager struct {
 	env    *config.Env
 	client *docker.Client
+	// usageCache memoizes parsed JSONL session files across ListAccounts
+	// calls. Unchanged files (same size+mtime) are returned from the cache
+	// instead of being re-read and re-decoded, which keeps refresh cost
+	// proportional to changed data rather than total accumulated history.
+	usageCache *usage.Cache
 }
 
 // NewManager creates an account manager.
 func NewManager(env *config.Env, client *docker.Client) *Manager {
-	return &Manager{env: env, client: client}
+	return &Manager{env: env, client: client, usageCache: usage.NewCache()}
 }
 
 // ListAccounts returns all configured accounts with enriched runtime status.
