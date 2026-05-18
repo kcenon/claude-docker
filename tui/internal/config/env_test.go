@@ -225,3 +225,49 @@ func TestAPIKey_CaseInsensitiveLetter(t *testing.T) {
 		t.Errorf("APIKey(z) missing should be empty, got %q", v)
 	}
 }
+
+func TestAgentRuntime_DefaultAndCodex(t *testing.T) {
+	cases := []struct {
+		content string
+		want    string
+	}{
+		{"", RuntimeClaude},
+		{"AGENT_RUNTIME=claude\n", RuntimeClaude},
+		{"AGENT_RUNTIME=codex\n", RuntimeCodex},
+		{"AGENT_RUNTIME=invalid\n", RuntimeClaude},
+	}
+	for _, c := range cases {
+		path := writeTempEnv(t, c.content)
+		e, err := LoadEnv(path)
+		if err != nil {
+			t.Fatalf("LoadEnv(%q): %v", c.content, err)
+		}
+		if got := e.AgentRuntime(); got != c.want {
+			t.Errorf("content=%q: AgentRuntime() = %q, want %q", c.content, got, c.want)
+		}
+	}
+}
+
+func TestCodexRuntimeAPIKeyAndCommandArgs(t *testing.T) {
+	path := writeTempEnv(t, "AGENT_RUNTIME=codex\nCODEX_API_KEY_A=sk-openai\nCLAUDE_API_KEY_A=sk-ant\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if got := e.APIKey("a"); got != "sk-openai" {
+		t.Errorf("APIKey(a) = %q, want codex key", got)
+	}
+	if got := e.StateDirName(); got != ".codex-state" {
+		t.Errorf("StateDirName() = %q, want .codex-state", got)
+	}
+	wantArgs := []string{"codex", "-c", `cli_auth_credentials_store="file"`, "--dangerously-bypass-approvals-and-sandbox"}
+	gotArgs := e.RuntimeCommandArgs(true)
+	if len(gotArgs) != len(wantArgs) {
+		t.Fatalf("RuntimeCommandArgs len = %d, want %d (%v)", len(gotArgs), len(wantArgs), gotArgs)
+	}
+	for i := range wantArgs {
+		if gotArgs[i] != wantArgs[i] {
+			t.Errorf("RuntimeCommandArgs[%d] = %q, want %q", i, gotArgs[i], wantArgs[i])
+		}
+	}
+}

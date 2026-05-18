@@ -313,6 +313,53 @@ function Get-NumAccounts {
     return 2
 }
 
+function Get-AgentRuntime {
+    <#
+    .SYNOPSIS
+    Resolve the selected agent runtime. Defaults to claude for compatibility.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $runtime = [Environment]::GetEnvironmentVariable('AGENT_RUNTIME')
+    if ([string]::IsNullOrWhiteSpace($runtime)) {
+        $envFile = Join-Path $ProjectRoot '.env'
+        if (Test-Path $envFile) {
+            $runtime = Get-EnvValue -Path $envFile -Key 'AGENT_RUNTIME'
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($runtime)) {
+        $runtime = 'claude'
+    }
+    $runtime = $runtime.ToLowerInvariant()
+    if ($runtime -notin @('claude', 'codex')) {
+        throw "AGENT_RUNTIME must be 'claude' or 'codex' (got: $runtime)"
+    }
+    return $runtime
+}
+
+function Get-ServicePrefix {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    return Get-AgentRuntime -ProjectRoot $ProjectRoot
+}
+
+function Get-PrimaryService {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    return "$(Get-ServicePrefix -ProjectRoot $ProjectRoot)-a"
+}
+
+function Get-AgentStateRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $dirName = if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -eq 'codex') { '.codex-state' } else { '.claude-state' }
+    return Join-Path $env:USERPROFILE $dirName
+}
+
 function ConvertTo-AccountLetter {
     <#
     .SYNOPSIS
@@ -339,15 +386,17 @@ function Get-ServiceNames {
     .SYNOPSIS
     Return an array of service names (claude-a, claude-b, ...) based on
     NUM_ACCOUNTS. Supports more than 26 via Excel-style double-letter
-    indexing (claude-aa, claude-zz, ...).
+    indexing (claude-aa, claude-zz, ...). When AGENT_RUNTIME=codex, the
+    service prefix becomes codex.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
     $n = Get-NumAccounts -ProjectRoot $ProjectRoot
+    $prefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
     $names = @()
     for ($i = 1; $i -le $n; $i++) {
-        $names += "claude-$(ConvertTo-AccountLetter -Index $i)"
+        $names += "$prefix-$(ConvertTo-AccountLetter -Index $i)"
     }
     return $names
 }
@@ -453,7 +502,9 @@ Export-ModuleMember -Function @(
     # Utilities
     'Test-Command', 'ConvertTo-ForwardSlash',
     # Accounts
-    'Get-NumAccounts', 'Get-ServiceNames', 'ConvertTo-AccountLetter',
+    'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
+    'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
+    'ConvertTo-AccountLetter',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose

@@ -65,6 +65,10 @@ if ($NumAccounts -lt 1 -or $NumAccounts -gt 702) {
     exit 1
 }
 
+$AgentRuntime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+$ServicePrefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
+$PrimaryService = Get-PrimaryService -ProjectRoot $ProjectRoot
+
 # Container resource envelope (override via .env or host env). Defaults
 # reproduce the historical hardcoded values so existing installs see no
 # behavior change after regenerating.
@@ -107,7 +111,7 @@ function New-BaseCompose {
     for ($i = 1; $i -le $NumAccounts; $i++) {
         $letter = ConvertTo-Letter $i
         $upper  = ConvertTo-UpperLetter $i
-        $svc    = "claude-$letter"
+        $svc    = "$ServicePrefix-$letter"
 
         [void]$sb.AppendLine("  ${svc}:")
 
@@ -115,14 +119,18 @@ function New-BaseCompose {
             [void]$sb.AppendLine('    build:')
             [void]$sb.AppendLine('      context: .')
             [void]$sb.AppendLine('      args:')
-            [void]$sb.AppendLine('        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}')
+            if ($AgentRuntime -eq 'codex') {
+                [void]$sb.AppendLine('        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-}')
+            } else {
+                [void]$sb.AppendLine('        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}')
+            }
         }
 
         [void]$sb.AppendLine("    image: claude-code-base:`${IMAGE_TAG:-$ImageTag}")
 
         if ($i -gt 1) {
             [void]$sb.AppendLine('    depends_on:')
-            [void]$sb.AppendLine('      - claude-a')
+            [void]$sb.AppendLine("      - $PrimaryService")
         }
 
         [void]$sb.AppendLine('    working_dir: ${CONTAINER_PROJECT_DIR:-/project}')
@@ -130,7 +138,11 @@ function New-BaseCompose {
         # the committed file see why the user line falls back to 1000:1000.
         # The bash generator emits the same four lines verbatim.
         [void]$sb.AppendLine("    # Match the host user's UID/GID so bind-mounted paths")
-        [void]$sb.AppendLine('    # (${HOME}/.claude-state/account-*) stay writable from')
+        if ($AgentRuntime -eq 'codex') {
+            [void]$sb.AppendLine('    # (${HOME}/.codex-state/account-*) stay writable from')
+        } else {
+            [void]$sb.AppendLine('    # (${HOME}/.claude-state/account-*) stay writable from')
+        }
         [void]$sb.AppendLine('    # inside the container. Falls back to 1000:1000 (the')
         [void]$sb.AppendLine('    # upstream node:20-slim default) when UID/GID are unset.')
         [void]$sb.AppendLine('    user: "${UID:-1000}:${GID:-1000}"')
@@ -138,8 +150,14 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    tty: true')
         [void]$sb.AppendLine('    volumes:')
         [void]$sb.AppendLine('      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}')
-        [void]$sb.AppendLine("      - `${HOME}/.claude-state/account-${letter}:/home/node/.claude")
-        [void]$sb.AppendLine('      - ${HOME}/.claude:/home/node/.claude-host:ro')
+        if ($AgentRuntime -eq 'codex') {
+            [void]$sb.AppendLine("      - `${HOME}/.codex-state/account-${letter}:/home/node/.codex")
+            [void]$sb.AppendLine('      - ${HOME}/.codex:/home/node/.codex-host:ro')
+            [void]$sb.AppendLine('      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro')
+        } else {
+            [void]$sb.AppendLine("      - `${HOME}/.claude-state/account-${letter}:/home/node/.claude")
+            [void]$sb.AppendLine('      - ${HOME}/.claude:/home/node/.claude-host:ro')
+        }
         [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
         [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
         [void]$sb.AppendLine('    environment:')
@@ -147,20 +165,32 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - TZ=${TZ:-UTC}')
         # When the container runs as the host UID instead of node(1000),
         # the passwd entry for that UID is missing, so $HOME defaults to
-        # /. Pinning HOME keeps ~/.claude, ~/.config, etc. resolvable.
+        # /. Pinning HOME keeps runtime state, ~/.config, etc. resolvable.
         [void]$sb.AppendLine('      - HOME=/home/node')
-        [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
-        [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
-        [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
+        if ($AgentRuntime -eq 'codex') {
+            [void]$sb.AppendLine('      - AGENT_RUNTIME=codex')
+            [void]$sb.AppendLine('      - CODEX_HOME=/home/node/.codex')
+            [void]$sb.AppendLine('      - CODEX_CONFIG_SOURCE=${CODEX_CONFIG_SOURCE:-}')
+        } else {
+            [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
+            [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
+            [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
+        }
         [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
-        # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is set at
-        # generate time. Path A (OAuth) users have no value; emitting
-        # ANTHROPIC_API_KEY= with an empty string makes the SDK prefer the
-        # empty env var over .credentials.json in the mounted state dir.
-        $keyVarName = "CLAUDE_API_KEY_${upper}"
+        # Only emit provider API keys when a per-account key is set at
+        # generate time. Emitting an empty key makes SDKs prefer the blank env
+        # var over persisted credentials in the mounted state dir.
+        $keyVarName = if ($AgentRuntime -eq 'codex') { "CODEX_API_KEY_${upper}" } else { "CLAUDE_API_KEY_${upper}" }
         $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
+        if ([string]::IsNullOrEmpty($keyValue) -and $envData.ContainsKey($keyVarName)) {
+            $keyValue = $envData[$keyVarName]
+        }
         if (-not [string]::IsNullOrEmpty($keyValue)) {
-            [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}}")
+            if ($AgentRuntime -eq 'codex') {
+                [void]$sb.AppendLine("      - OPENAI_API_KEY=`${CODEX_API_KEY_${upper}}")
+            } else {
+                [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}}")
+            }
         }
         [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
         [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
@@ -206,7 +236,7 @@ function New-WorktreeCompose {
     for ($i = 1; $i -le $NumAccounts; $i++) {
         $letter = ConvertTo-Letter $i
         $upper  = ConvertTo-UpperLetter $i
-        $svc    = "claude-$letter"
+        $svc    = "$ServicePrefix-$letter"
 
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine("    working_dir: `${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")
@@ -237,7 +267,7 @@ function New-LinuxCompose {
 
     for ($i = 1; $i -le $NumAccounts; $i++) {
         $letter = ConvertTo-Letter $i
-        $svc    = "claude-$letter"
+        $svc    = "$ServicePrefix-$letter"
 
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine('    user: "${UID}:${GID}"')

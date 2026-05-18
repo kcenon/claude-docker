@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+const (
+	RuntimeClaude = "claude"
+	RuntimeCodex  = "codex"
+)
+
 // Env holds parsed .env configuration with order-preserving entries.
 type Env struct {
 	path    string
@@ -142,9 +147,70 @@ func (e *Env) NumAccounts() int {
 	return n
 }
 
-// APIKey returns CLAUDE_API_KEY_<LETTER> if set.
+// AgentRuntime returns the selected agent runtime. Claude is the default.
+func (e *Env) AgentRuntime() string {
+	if e == nil {
+		return RuntimeClaude
+	}
+	v := strings.ToLower(strings.TrimSpace(e.Get("AGENT_RUNTIME")))
+	switch v {
+	case RuntimeCodex:
+		return RuntimeCodex
+	default:
+		return RuntimeClaude
+	}
+}
+
+// ServicePrefix returns the docker compose service prefix for the runtime.
+func (e *Env) ServicePrefix() string {
+	return e.AgentRuntime()
+}
+
+// StateDirName returns the host-side state directory name for the runtime.
+func (e *Env) StateDirName() string {
+	return StateDirNameForRuntime(e.AgentRuntime())
+}
+
+// RuntimeBinary returns the executable used inside the container.
+func (e *Env) RuntimeBinary() string {
+	return e.AgentRuntime()
+}
+
+// SkipPermissionsFlag returns the runtime-specific unsafe permission bypass flag.
+func (e *Env) SkipPermissionsFlag() string {
+	if e.AgentRuntime() == RuntimeCodex {
+		return "--dangerously-bypass-approvals-and-sandbox"
+	}
+	return "--dangerously-skip-permissions"
+}
+
+// RuntimeCommandArgs returns the command used to attach to the selected agent.
+func (e *Env) RuntimeCommandArgs(skipPermissions bool) []string {
+	args := []string{e.RuntimeBinary()}
+	if e.AgentRuntime() == RuntimeCodex {
+		args = append(args, "-c", `cli_auth_credentials_store="file"`)
+	}
+	if skipPermissions {
+		args = append(args, e.SkipPermissionsFlag())
+	}
+	return args
+}
+
+// SupportsClaudeUsage reports whether Claude-specific usage integrations apply.
+func (e *Env) SupportsClaudeUsage() bool {
+	return e.AgentRuntime() == RuntimeClaude
+}
+
+// APIKey returns the per-account provider API key if set.
 func (e *Env) APIKey(letter string) string {
-	return e.Get("CLAUDE_API_KEY_" + strings.ToUpper(letter))
+	if e == nil {
+		return ""
+	}
+	prefix := "CLAUDE_API_KEY_"
+	if e.AgentRuntime() == RuntimeCodex {
+		prefix = "CODEX_API_KEY_"
+	}
+	return e.Get(prefix + strings.ToUpper(letter))
 }
 
 // HasWorktrees returns true if PROJECT_DIR_A is set (worktree mode).

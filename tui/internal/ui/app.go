@@ -77,7 +77,7 @@ func (a App) View() string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#06B6D4")).
 		Render(fmt.Sprintf(" claude-docker %s", a.version))
 	summary := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).
-		Render(fmt.Sprintf("  %d accounts", count))
+		Render(fmt.Sprintf("  %s  %d accounts", a.env.AgentRuntime(), count))
 	b.WriteString(title + summary + "\n\n")
 
 	// Dashboard

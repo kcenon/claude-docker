@@ -43,7 +43,7 @@ $ProjectRoot = Split-Path $PSScriptRoot -Parent
 # --- Account Directory Helpers -----------------------------------------------
 
 function Get-AccountDirs {
-    $stateBase = Join-Path $env:USERPROFILE '.claude-state'
+    $stateBase = Get-AgentStateRoot -ProjectRoot $ProjectRoot
     if (-not (Test-Path $stateBase)) { return @() }
     Get-ChildItem $stateBase -Directory -Filter 'account-*' | Select-Object -ExpandProperty FullName
 }
@@ -85,10 +85,11 @@ function Invoke-Up {
 
     # Lightweight post-start GitHub auth check (non-blocking)
     Write-Host ''
-    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
+    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($cid) {
         Start-Sleep -Seconds 2  # wait for entrypoint gh auth setup
-        Test-ContainerGhAuth -Service 'claude-a' | Out-Null
+        Test-ContainerGhAuth -Service $primary | Out-Null
     }
 }
 
@@ -145,6 +146,32 @@ function Invoke-Claude {
     }
 }
 
+function Invoke-Codex {
+    if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -ne 'codex') {
+        Write-LogError 'codex command requires AGENT_RUNTIME=codex. Set it in .env, regenerate compose files, then run again.'
+        exit 1
+    }
+
+    $skipPerms = $false
+    $service = ''
+    foreach ($arg in $Arguments) {
+        if ($arg -in @('--dangerously-bypass-approvals-and-sandbox', '--dangerously-skip-permissions')) {
+            $skipPerms = $true
+        } elseif (-not $service) {
+            $service = $arg
+        }
+    }
+    if (-not $service) { $service = 'codex-a' }
+    Write-Host "Starting Codex CLI in " -ForegroundColor Cyan -NoNewline
+    Write-Host $service -ForegroundColor White -NoNewline
+    Write-Host '...' -ForegroundColor Cyan
+    $codexArgs = @('codex', '-c', 'cli_auth_credentials_store="file"')
+    if ($skipPerms) {
+        $codexArgs += '--dangerously-bypass-approvals-and-sandbox'
+    }
+    Invoke-Compose -ProjectRoot $ProjectRoot exec $service @codexArgs
+}
+
 function Invoke-GhAuth {
     if (-not (Test-Command 'gh')) {
         Write-LogError 'gh CLI not found on host.'
@@ -174,17 +201,18 @@ function Invoke-GhAuth {
     Write-Host 'GitHub token injected into .env' -ForegroundColor Green
 
     # Restart containers if running
-    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
+    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($running) {
         Write-Host 'Restarting containers to apply...' -ForegroundColor Cyan
         Invoke-Compose -ProjectRoot $ProjectRoot down
         Invoke-Compose -ProjectRoot $ProjectRoot up --detach
 
         Start-Sleep -Seconds 2
-        $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+        $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
         if ($cid) {
             Write-Host ''
-            Write-Host 'Verifying GitHub auth in claude-a:' -ForegroundColor White
+            Write-Host "Verifying GitHub auth in ${primary}:" -ForegroundColor White
             & docker exec $cid gh auth status 2>&1
         }
     }
@@ -284,7 +312,8 @@ function Invoke-Build {
 }
 
 function Invoke-Update {
-    Write-Host 'Updating Claude Code to latest version' -ForegroundColor White
+    $binary = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    Write-Host "Updating $binary CLI to latest version" -ForegroundColor White
     Write-Host ''
 
     # Pre-check and refresh GitHub auth token from host
@@ -308,15 +337,16 @@ function Invoke-Update {
 
     # Verify version and GitHub auth
     Write-Host '[5/5] Verifying...' -ForegroundColor Cyan
-    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
+    $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($cid) {
-        $version = & docker exec $cid claude --version 2>$null
+        $version = & docker exec $cid $binary --version 2>$null
         if (-not $version) { $version = 'unknown' }
-        Write-Host "  * Claude Code version: $version" -ForegroundColor Green
+        Write-Host "  * $binary version: $version" -ForegroundColor Green
 
         # Wait briefly for entrypoint to complete gh auth setup
         Start-Sleep -Seconds 2
-        Test-ContainerGhAuth -Service 'claude-a' | Out-Null
+        Test-ContainerGhAuth -Service $primary | Out-Null
 
         Write-Host ''
         Write-Host 'Update complete.' -ForegroundColor Green
@@ -355,8 +385,8 @@ function Invoke-Scale {
     if ($newCount -gt $currentCount) {
         Write-Host 'Creating new state directories...' -ForegroundColor Cyan
         for ($i = $currentCount + 1; $i -le $newCount; $i++) {
-            $letter = [char](96 + $i)
-            $stateDir = Join-Path $env:USERPROFILE ".claude-state\account-$letter"
+            $letter = ConvertTo-AccountLetter -Index $i
+            $stateDir = Join-Path (Get-AgentStateRoot -ProjectRoot $ProjectRoot) "account-$letter"
             if (-not (Test-Path $stateDir)) {
                 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
                 Write-Host "  + account-$letter" -ForegroundColor Green
@@ -375,7 +405,8 @@ function Invoke-Scale {
     & "$PSScriptRoot\generate-compose.ps1" -NumAccounts $newCount
 
     # Restart containers if running
-    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service 'claude-a'
+    $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
+    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($running) {
         Write-Host 'Restarting containers...' -ForegroundColor Cyan
         Invoke-Compose -ProjectRoot $ProjectRoot down
@@ -404,6 +435,11 @@ function Invoke-ComposePass {
 }
 
 function Invoke-Usage {
+    if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -ne 'claude') {
+        Write-LogError 'usage is currently Claude-only; Codex usage aggregation is not supported.'
+        exit 1
+    }
+
     if (-not (Test-Command 'npx')) {
         Write-LogError 'npx not found. Node.js is required to run ccusage.'
         Write-Host '  Install Node.js 20+: https://nodejs.org/' -ForegroundColor Cyan
@@ -486,12 +522,13 @@ function Show-Help {
     Write-Host '  down                  ' -ForegroundColor Green -NoNewline; Write-Host 'Stop all containers'
     Write-Host '  restart               ' -ForegroundColor Green -NoNewline; Write-Host 'Restart all containers'
     Write-Host '  build                 ' -ForegroundColor Green -NoNewline; Write-Host 'Build/rebuild Docker image'
-    Write-Host '  update                ' -ForegroundColor Green -NoNewline; Write-Host 'Rebuild with latest Claude Code and recreate'
+    Write-Host '  update                ' -ForegroundColor Green -NoNewline; Write-Host 'Rebuild with latest agent CLI and recreate'
     Write-Host '  ps                    ' -ForegroundColor Green -NoNewline; Write-Host 'Show container status'
     Write-Host '  logs                  ' -ForegroundColor Green -NoNewline; Write-Host 'Follow container logs'
     Write-Host ''
     Write-Host 'INTERACTIVE' -ForegroundColor White
     Write-Host '  claude [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Claude Code (default: claude-a)'
+    Write-Host '  codex [service]       ' -ForegroundColor Green -NoNewline; Write-Host 'Start OpenAI Codex CLI (default: codex-a)'
     Write-Host '  gh-auth               ' -ForegroundColor Green -NoNewline; Write-Host 'Inject GitHub token from host gh CLI'
     Write-Host '  exec <service>        ' -ForegroundColor Green -NoNewline; Write-Host 'Open shell in a service'
     Write-Host ''
@@ -511,7 +548,8 @@ function Show-Help {
     $svcNames = @(Get-ServiceNames -ProjectRoot $ProjectRoot)
     for ($idx = 0; $idx -lt $svcNames.Count; $idx++) {
         $svc = $svcNames[$idx]
-        $suffix = ($svc -replace '^claude-', '').ToUpper()
+        $prefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
+        $suffix = ($svc -replace "^$([regex]::Escape($prefix))-", '').ToUpper()
         $label = "Account $suffix"
         if ($idx -eq 0) { $label += ' (default)' }
         Write-Host "  $($svc.PadRight(22))" -ForegroundColor Green -NoNewline; Write-Host $label
@@ -584,6 +622,7 @@ switch ($Command) {
     'ps'         { Invoke-Ps }
     'exec'       { Invoke-Exec }
     'claude'     { Invoke-Claude }
+    'codex'      { Invoke-Codex }
     'tui'        { Invoke-Tui }
     'dashboard'  { Invoke-Tui }
     'gh-auth'    { Invoke-GhAuth }

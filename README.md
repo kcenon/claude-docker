@@ -157,6 +157,7 @@ scripts/claude-docker help       # Show all available commands
 | | `ps` | Show container status |
 | | `logs` | Follow container logs |
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
+| | `codex [service]` | Start OpenAI Codex CLI (default: codex-a) |
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; auto-downloads a prebuilt binary if missing |
@@ -196,6 +197,36 @@ scripts/claude-docker claude claude-b
 Both sessions see the same project source at `${PROJECT_DIR}` (Tier A) or
 their own worktree (Tier B). Each session has independent conversation
 history, settings, memory, and credentials.
+
+### Running OpenAI Codex CLI
+
+Codex support is opt-in. Set `AGENT_RUNTIME=codex` in `.env`, then regenerate
+compose files and recreate containers:
+
+```bash
+scripts/generate-compose.sh
+scripts/claude-docker up --remove-orphans
+scripts/claude-docker codex
+```
+
+PowerShell users can run `.\scripts\generate-compose.ps1` and
+`.\scripts\claude-docker.ps1 codex` instead.
+
+When `AGENT_RUNTIME=codex` is active, generated services are named
+`codex-a`, `codex-b`, and so on. Each account stores mutable Codex state in
+`~/.codex-state/account-*/`, while host-managed Codex config is mounted
+read-only from `~/.codex/` and copied or linked into `CODEX_HOME` without
+importing `auth.json`, sessions, caches, or logs. Codex skills are mounted
+from `${AGENTS_SKILLS_DIR}` or `~/.agents/skills`.
+
+For API-key based Codex sessions, set per-account keys such as
+`CODEX_API_KEY_A`; the generator injects `OPENAI_API_KEY` only for accounts
+that have a non-empty key. The `codex` wrapper starts the CLI with
+`cli_auth_credentials_store="file"` so container logins persist in the
+account state bind mount.
+
+The TUI can list and attach to Codex services. Claude-specific usage
+aggregation and `scripts/claude-docker usage` remain Claude-only.
 
 ### Authentication
 

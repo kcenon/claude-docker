@@ -136,12 +136,14 @@ func (c *Client) HasRunningContainers() bool {
 // ServiceNames returns the expected service names based on NUM_ACCOUNTS.
 func (c *Client) ServiceNames() []string {
 	n := 1
+	prefix := config.RuntimeClaude
 	if c.env != nil {
 		n = c.env.NumAccounts()
+		prefix = c.env.ServicePrefix()
 	}
 	names := make([]string, n)
 	for i := 1; i <= n; i++ {
-		names[i-1] = "claude-" + config.IndexToLetter(i)
+		names[i-1] = prefix + "-" + config.IndexToLetter(i)
 	}
 	return names
 }

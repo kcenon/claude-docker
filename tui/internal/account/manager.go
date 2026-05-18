@@ -48,6 +48,15 @@ func (m *Manager) ListAccounts() ([]Account, error) {
 }
 
 func detectAuthType(sd config.StateDir, env *config.Env, letter string) AuthType {
+	if env != nil && env.AgentRuntime() == config.RuntimeCodex {
+		if env.APIKey(letter) != "" {
+			return AuthAPIKey
+		}
+		if sd.HasCodexAuth() {
+			return AuthLogin
+		}
+		return AuthNone
+	}
 	if sd.HasCredentials() {
 		return AuthOAuth
 	}
@@ -181,7 +190,10 @@ func writeAPICooldown(stateDirPath string) {
 
 // ClearAPICooldowns removes all API cooldown files so the next refresh retries the API.
 func (m *Manager) ClearAPICooldowns() {
-	stateDirs, _ := config.DiscoverStateDirs()
+	if m.env != nil && !m.env.SupportsClaudeUsage() {
+		return
+	}
+	stateDirs, _ := config.DiscoverStateDirsForRuntime(config.RuntimeClaude)
 	for _, sd := range stateDirs {
 		os.Remove(filepath.Join(sd.Path, apiCooldownFile))
 	}
