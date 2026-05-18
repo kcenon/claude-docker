@@ -33,6 +33,11 @@ func (s StateDir) CredentialsPath() string {
 	return filepath.Join(s.Path, ".credentials.json")
 }
 
+// CodexAuthPath returns the path to Codex auth.json in this state dir.
+func (s StateDir) CodexAuthPath() string {
+	return filepath.Join(s.Path, "auth.json")
+}
+
 // LimitlineCachePath returns the path to the limitline usage cache.
 func (s StateDir) LimitlineCachePath() string {
 	return filepath.Join(s.Path, "limitline-usage-cache.json")
@@ -49,6 +54,12 @@ func (s StateDir) HasCredentials() bool {
 	return err == nil
 }
 
+// HasCodexAuth returns true if Codex auth.json exists.
+func (s StateDir) HasCodexAuth() bool {
+	_, err := os.Stat(s.CodexAuthPath())
+	return err == nil
+}
+
 // HasLimitlineCache returns true if limitline-usage-cache.json exists.
 func (s StateDir) HasLimitlineCache() bool {
 	_, err := os.Stat(s.LimitlineCachePath())
@@ -57,11 +68,31 @@ func (s StateDir) HasLimitlineCache() bool {
 
 // DiscoverStateDirs finds all account state directories under ~/.claude-state/.
 func DiscoverStateDirs() ([]StateDir, error) {
-	home, err := os.UserHomeDir()
+	return DiscoverStateDirsForRuntime(RuntimeClaude)
+}
+
+// StateDirNameForRuntime returns the host-side state directory name.
+func StateDirNameForRuntime(runtime string) string {
+	if runtime == RuntimeCodex {
+		return ".codex-state"
+	}
+	return ".claude-state"
+}
+
+// DiscoverStateDirsForRuntime finds all account state directories for runtime.
+func DiscoverStateDirsForRuntime(runtime string) ([]StateDir, error) {
+	home, err := userHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home dir: %w", err)
 	}
-	return DiscoverStateDirsAt(filepath.Join(home, ".claude-state"))
+	return DiscoverStateDirsAt(filepath.Join(home, StateDirNameForRuntime(runtime)))
+}
+
+func userHomeDir() (string, error) {
+	if home := os.Getenv("HOME"); home != "" {
+		return home, nil
+	}
+	return os.UserHomeDir()
 }
 
 // DiscoverStateDirsAt finds account state directories under the given base path.

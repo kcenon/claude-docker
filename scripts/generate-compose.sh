@@ -18,6 +18,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 
 # --- Read configuration -------------------------------------------------------
 
@@ -25,6 +27,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 load_env_file "$PROJECT_ROOT/.env"
 
 NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
+AGENT_RUNTIME="$(agent_runtime)"
+SERVICE_PREFIX="$(agent_service_prefix)"
+PRIMARY_SERVICE="${SERVICE_PREFIX}-a"
 
 # IMAGE_TAG defaults come from the repo-root VERSION file — single source of
 # truth shared with install.sh and the "Bumping the Base Image" README
@@ -70,7 +75,7 @@ generate_base() {
             letter=$(index_to_letter "$i")
             local upper
             upper=$(index_to_upper "$i")
-            local svc="claude-${letter}"
+            local svc="${SERVICE_PREFIX}-${letter}"
 
             echo "  ${svc}:"
 
@@ -79,20 +84,29 @@ generate_base() {
                 echo "    build:"
                 echo "      context: ."
                 echo "      args:"
-                echo "        CLAUDE_CODE_VERSION: \${CLAUDE_CODE_VERSION:-}"
+                if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                    echo "        CODEX_CLI_VERSION: \${CODEX_CLI_VERSION:-}"
+                else
+                    echo "        CLAUDE_CODE_VERSION: \${CLAUDE_CODE_VERSION:-}"
+                fi
             fi
 
             echo "    image: claude-code-base:\${IMAGE_TAG:-${IMAGE_TAG}}"
 
-            # All services after the first depend on claude-a (for build ordering)
+            # All services after the first depend on the first account service
+            # for build ordering.
             if [[ "$i" -gt 1 ]]; then
                 echo "    depends_on:"
-                echo "      - claude-a"
+                echo "      - ${PRIMARY_SERVICE}"
             fi
 
             echo "    working_dir: \${CONTAINER_PROJECT_DIR:-/project}"
             echo "    # Match the host user's UID/GID so bind-mounted paths"
-            echo "    # (\${HOME}/.claude-state/account-*) stay writable from"
+            if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                echo "    # (\${HOME}/.codex-state/account-*) stay writable from"
+            else
+                echo "    # (\${HOME}/.claude-state/account-*) stay writable from"
+            fi
             echo "    # inside the container. Falls back to 1000:1000 (the"
             echo "    # upstream node:20-slim default) when UID/GID are unset."
             echo "    user: \"\${UID:-1000}:\${GID:-1000}\""
@@ -100,8 +114,14 @@ generate_base() {
             echo "    tty: true"
             echo "    volumes:"
             echo "      - \${PROJECT_DIR}:\${CONTAINER_PROJECT_DIR:-/project}"
-            echo "      - \${HOME}/.claude-state/account-${letter}:/home/node/.claude"
-            echo "      - \${HOME}/.claude:/home/node/.claude-host:ro"
+            if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                echo "      - \${HOME}/.codex-state/account-${letter}:/home/node/.codex"
+                echo "      - \${HOME}/.codex:/home/node/.codex-host:ro"
+                echo '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+            else
+                echo "      - \${HOME}/.claude-state/account-${letter}:/home/node/.claude"
+                echo "      - \${HOME}/.claude:/home/node/.claude-host:ro"
+            fi
             echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
             echo "      - node_modules_${letter}:\${CONTAINER_PROJECT_DIR:-/project}/node_modules"
             echo "    environment:"
@@ -109,19 +129,34 @@ generate_base() {
             echo "      - TZ=\${TZ:-UTC}"
             # When the container runs as the host UID instead of node(1000),
             # the passwd entry for that UID is missing, so \$HOME defaults
-            # to /. Pinning HOME keeps ~/.claude, ~/.config, etc. resolvable.
+            # to /. Pinning HOME keeps runtime state, ~/.config, etc.
+            # resolvable.
             echo "      - HOME=/home/node"
-            echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
-            echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
-            echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
+            if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                echo "      - AGENT_RUNTIME=codex"
+                echo "      - CODEX_HOME=/home/node/.codex"
+                echo "      - CODEX_CONFIG_SOURCE=\${CODEX_CONFIG_SOURCE:-}"
+            else
+                echo "      - CLAUDE_CONFIG_DIR=/home/node/.claude"
+                echo "      - CLAUDE_CONFIG_SOURCE=\${CLAUDE_CONFIG_SOURCE:-}"
+                echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
+            fi
             echo "      - NODE_OPTIONS=--max-old-space-size=4096"
-            # Only emit ANTHROPIC_API_KEY when CLAUDE_API_KEY_<LETTER> is
-            # set at generate time. Path A (OAuth) users have no value;
-            # emitting ANTHROPIC_API_KEY= with an empty string makes the
-            # SDK prefer the empty env var over .credentials.json.
-            local key_var="CLAUDE_API_KEY_${upper}"
+            # Only emit provider API keys when a per-account key is set at
+            # generate time. Emitting an empty key makes SDKs prefer the
+            # blank env var over persisted credentials.
+            local key_var
+            if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                key_var="CODEX_API_KEY_${upper}"
+            else
+                key_var="CLAUDE_API_KEY_${upper}"
+            fi
             if [[ -n "${!key_var:-}" ]]; then
-                echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}}"
+                if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+                    echo "      - OPENAI_API_KEY=\${CODEX_API_KEY_${upper}}"
+                else
+                    echo "      - ANTHROPIC_API_KEY=\${CLAUDE_API_KEY_${upper}}"
+                fi
             fi
             echo "      - GH_TOKEN=\${GH_TOKEN:-}"
             echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
@@ -170,7 +205,7 @@ generate_worktree() {
             letter=$(index_to_letter "$i")
             local upper
             upper=$(index_to_upper "$i")
-            local svc="claude-${letter}"
+            local svc="${SERVICE_PREFIX}-${letter}"
 
             echo "  ${svc}:"
             echo "    working_dir: \${CONTAINER_PROJECT_DIR_${upper}:-/project-${letter}}"
@@ -201,7 +236,7 @@ generate_linux() {
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
             letter=$(index_to_letter "$i")
-            local svc="claude-${letter}"
+            local svc="${SERVICE_PREFIX}-${letter}"
 
             echo "  ${svc}:"
             echo "    user: \"\${UID}:\${GID}\""

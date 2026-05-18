@@ -84,6 +84,33 @@ func TestDiscoverStateDirs_EmptyHome(t *testing.T) {
 	}
 }
 
+func TestDiscoverStateDirs_CodexRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	stateBase := filepath.Join(tmp, ".codex-state")
+	if err := os.MkdirAll(filepath.Join(stateBase, "account-a"), 0755); err != nil {
+		t.Fatalf("mkdir codex state: %v", err)
+	}
+
+	env := config.NewEmptyEnv(filepath.Join(tmp, ".env"))
+	env.Set("AGENT_RUNTIME", "codex")
+	env.Set("NUM_ACCOUNTS", "1")
+	m := newTestManager(t, env)
+
+	stateDirs, n := m.discoverStateDirs()
+	if n != 1 {
+		t.Errorf("n = %d, want 1", n)
+	}
+	sd, ok := stateDirs["a"]
+	if !ok {
+		t.Fatal("missing codex state dir for account a")
+	}
+	if got, want := sd.Path, filepath.Join(stateBase, "account-a"); got != want {
+		t.Errorf("codex state path = %q, want %q", got, want)
+	}
+}
+
 // TestFetchContainerStatus confirms the helper returns an empty map when
 // the docker client cannot enumerate containers (no compose project, no
 // daemon). The orchestrator must continue to function in this degraded
@@ -143,6 +170,26 @@ func TestEnrichAPIUsage_NonOAuthIsNoop(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("results len = %d, want 0", len(results))
+	}
+}
+
+func TestBuildAccounts_CodexRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	env := config.NewEmptyEnv(filepath.Join(tmp, ".env"))
+	env.Set("AGENT_RUNTIME", "codex")
+	env.Set("CODEX_API_KEY_A", "sk-openai")
+	m := newTestManager(t, env)
+
+	stateDir := config.StateDir{Letter: "a", Path: t.TempDir()}
+	accounts := m.buildAccounts(1, map[string]config.StateDir{"a": stateDir}, map[string]docker.ContainerInfo{})
+	if len(accounts) != 1 {
+		t.Fatalf("len(accounts) = %d, want 1", len(accounts))
+	}
+	if got := accounts[0].ServiceName; got != "codex-a" {
+		t.Errorf("ServiceName = %q, want codex-a", got)
+	}
+	if got := accounts[0].AuthType; got != AuthAPIKey {
+		t.Errorf("AuthType = %v, want AuthAPIKey", got)
 	}
 }
 

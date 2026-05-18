@@ -17,6 +17,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
+ARG CODEX_CLI_VERSION
 
 WORKDIR /workspace
 
@@ -96,13 +97,18 @@ RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
 # Add the native install location to PATH for all users
 ENV PATH="/home/node/.local/bin:${PATH}"
 
-# Install statusline tools globally (still npm packages)
+# Install Codex CLI and statusline tools globally (npm packages)
 #
-# DL3016 waived: ccstatusline and claude-limitline are latest-tracking
-# helper packages; pinning them would block bug fixes without a security
-# benefit. The base npm version is pinned via the node:20.18.1-slim digest.
+# DL3016 waived: @openai/codex, ccstatusline, and claude-limitline are
+# latest-tracking helper packages; pinning them would block bug fixes without
+# a security benefit. CODEX_CLI_VERSION is available when reproducibility is
+# preferred for the Codex CLI.
 # hadolint ignore=DL3016
-RUN npm install -g ccstatusline claude-limitline \
+RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
+        npm install -g "@openai/codex@${CODEX_CLI_VERSION}" ccstatusline claude-limitline; \
+    else \
+        npm install -g @openai/codex ccstatusline claude-limitline; \
+    fi \
     && npm cache clean --force
 
 # Memory heap limit

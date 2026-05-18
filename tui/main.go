@@ -19,7 +19,7 @@ func main() {
 	var filteredArgs []string
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "--dangerously-skip-permissions":
+		case "--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox":
 			skipPermissions = true
 		default:
 			filteredArgs = append(filteredArgs, arg)
@@ -127,6 +127,7 @@ func runJSON() error {
 
 	fmt.Printf("{\n")
 	fmt.Printf("  \"project_root\": %q,\n", projectRoot)
+	fmt.Printf("  \"runtime\": %q,\n", env.AgentRuntime())
 	fmt.Printf("  \"num_accounts\": %d,\n", len(accounts))
 	fmt.Printf("  \"accounts\": [\n")
 	for i, a := range accounts {

@@ -63,7 +63,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case sessionFinishedMsg:
-		// After Claude session ends, refresh account list
+		// After an attached agent session ends, refresh account list.
 		return m, m.Refresh()
 
 	case dockerOpDoneMsg:
@@ -144,15 +144,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "enter", "c":
-			// Attach to selected account's Claude session
+			// Attach to selected account's agent session.
 			if m.cursor < len(m.accounts) {
 				acct := m.accounts[m.cursor]
 				if acct.IsRunning() {
-					claudeArgs := []string{"claude"}
-					if m.skipPermissions {
-						claudeArgs = append(claudeArgs, "--dangerously-skip-permissions")
-					}
-					bin, args := m.client.ExecArgs(acct.ServiceName, claudeArgs...)
+					bin, args := m.client.ExecArgs(acct.ServiceName, m.env.RuntimeCommandArgs(m.skipPermissions)...)
 					cmd := exec.Command(bin, args...)
 					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 						return sessionFinishedMsg{err: err}
@@ -223,10 +219,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case "p":
 			m.skipPermissions = !m.skipPermissions
+			flag := m.env.SkipPermissionsFlag()
 			if m.skipPermissions {
-				m = m.toast("--dangerously-skip-permissions ON", statusInfo)
+				m = m.toast(flag+" ON", statusInfo)
 			} else {
-				m = m.toast("--dangerously-skip-permissions OFF", statusInfo)
+				m = m.toast(flag+" OFF", statusInfo)
 			}
 			return m, m.toastExpireCmd()
 

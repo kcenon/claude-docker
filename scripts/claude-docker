@@ -7,6 +7,7 @@
 # Commands:
 #   up/down/restart   Manage containers
 #   claude [svc]      Start Claude Code (default: claude-a)
+#   codex [svc]       Start OpenAI Codex CLI (default: codex-a)
 #   exec <svc>        Open shell in a service
 #   usage [type]      Token usage report
 #   build             Build/rebuild Docker image
@@ -48,6 +49,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 # shellcheck source=lib/build-compose-cmd.sh
 . "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 
@@ -81,7 +84,7 @@ compose_cmd_display() {
 
 # Determine the primary interactive service
 get_primary_service() {
-    echo "claude-a"
+    echo "$(agent_service_prefix)-a"
 }
 
 # --- Account Helpers ----------------------------------------------------------
@@ -105,9 +108,11 @@ _index_to_letter() {
 get_service_names() {
     local n
     n=$(get_num_accounts)
+    local prefix
+    prefix=$(agent_service_prefix)
     local names=()
     for i in $(seq 1 "$n"); do
-        names+=("claude-$(_index_to_letter "$i")")
+        names+=("${prefix}-$(_index_to_letter "$i")")
     done
     echo "${names[@]}"
 }
@@ -117,7 +122,8 @@ get_service_names() {
 # List account state directories under ~/.claude-state/account-*.
 # Outputs one path per line.
 list_account_dirs() {
-    local state_base="$HOME/.claude-state"
+    local state_base
+    state_base="$(agent_state_root)"
     [[ -d "$state_base" ]] || return
     for dir in "$state_base"/account-*; do
         [[ -d "$dir" ]] || continue
@@ -166,10 +172,12 @@ cmd_up() {
     # Lightweight post-start GitHub auth check (non-blocking)
     echo ""
     local cid
-    cid=$(get_container_id "claude-a")
+    local primary
+    primary=$(get_primary_service)
+    cid=$(get_container_id "$primary")
     if [[ -n "$cid" ]]; then
         sleep 2  # wait for entrypoint gh auth setup
-        verify_container_gh_auth "claude-a" || true
+        verify_container_gh_auth "$primary" || true
     fi
 }
 
@@ -217,7 +225,7 @@ cmd_claude() {
             *) [[ -z "$service" ]] && service="$arg" ;;
         esac
     done
-    service="${service:-$(get_primary_service)}"
+    service="${service:-claude-a}"
     ensure_compose_cmd
     echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
     if [[ "$skip_perms" == true ]]; then
@@ -225,6 +233,30 @@ cmd_claude() {
     else
         "${COMPOSE_CMD[@]}" exec "$service" claude
     fi
+}
+
+cmd_codex() {
+    if [[ "$(agent_runtime)" != "codex" ]]; then
+        log_error "codex command requires AGENT_RUNTIME=codex. Set it in .env, regenerate compose files, then run again."
+        exit 1
+    fi
+
+    local skip_perms=false
+    local service=""
+    for arg in "$@"; do
+        case "$arg" in
+            --dangerously-bypass-approvals-and-sandbox|--dangerously-skip-permissions) skip_perms=true ;;
+            *) [[ -z "$service" ]] && service="$arg" ;;
+        esac
+    done
+    service="${service:-codex-a}"
+    ensure_compose_cmd
+    echo -e "${CYAN}Starting Codex CLI in ${BOLD}$service${NC}${CYAN}...${NC}"
+    local codex_args=(codex -c 'cli_auth_credentials_store="file"')
+    if [[ "$skip_perms" == true ]]; then
+        codex_args+=("--dangerously-bypass-approvals-and-sandbox")
+    fi
+    "${COMPOSE_CMD[@]}" exec "$service" "${codex_args[@]}"
 }
 
 # Resolve a compose service name to its running Docker container ID.
@@ -355,11 +387,13 @@ cmd_gh_auth() {
 
         # Verify inside container
         sleep 2
+        local primary
+        primary=$(get_primary_service)
         local cid
-        cid=$(get_container_id "claude-a")
+        cid=$(get_container_id "$primary")
         if [[ -n "$cid" ]]; then
             echo ""
-            echo -e "${BOLD}Verifying GitHub auth in claude-a:${NC}"
+            echo -e "${BOLD}Verifying GitHub auth in ${primary}:${NC}"
             docker exec "$cid" gh auth status 2>&1 || true
         fi
     else
@@ -377,7 +411,10 @@ cmd_build() {
 cmd_update() {
     ensure_compose_cmd
 
-    echo -e "${BOLD}Updating Claude Code to latest version${NC}"
+    local binary
+    binary=$(agent_binary)
+
+    echo -e "${BOLD}Updating ${binary} CLI to latest version${NC}"
     echo ""
 
     # Pre-check and refresh GitHub auth token from host
@@ -404,15 +441,17 @@ cmd_update() {
     # Verify version and GitHub auth
     echo -e "${CYAN}[5/5] Verifying...${NC}"
     local cid
-    cid=$(get_container_id "claude-a")
+    local primary
+    primary=$(get_primary_service)
+    cid=$(get_container_id "$primary")
     if [[ -n "$cid" ]]; then
         local version
-        version=$(docker exec "$cid" claude --version 2>/dev/null || echo "unknown")
-        echo -e "  ${GREEN}*${NC} Claude Code version: ${BOLD}$version${NC}"
+        version=$(docker exec "$cid" "$binary" --version 2>/dev/null || echo "unknown")
+        echo -e "  ${GREEN}*${NC} ${binary} version: ${BOLD}$version${NC}"
 
         # Wait briefly for entrypoint to complete gh auth setup
         sleep 2
-        verify_container_gh_auth "claude-a" || true
+        verify_container_gh_auth "$primary" || true
 
         echo ""
         echo -e "${GREEN}Update complete.${NC}"
@@ -454,7 +493,8 @@ cmd_scale() {
         for i in $(seq $((current_count + 1)) "$new_count"); do
             local letter
             letter=$(_index_to_letter "$i")
-            local state_dir="$HOME/.claude-state/account-${letter}"
+            local state_dir
+            state_dir="$(agent_state_root)/account-${letter}"
             if [[ ! -d "$state_dir" ]]; then
                 mkdir -p "$state_dir"
                 chmod 700 "$state_dir"
@@ -510,6 +550,11 @@ cmd_compose() {
 }
 
 cmd_usage() {
+    if [[ "$(agent_runtime)" != "claude" ]]; then
+        log_error "usage is currently Claude-only; Codex usage aggregation is not supported."
+        exit 1
+    fi
+
     # Check for npx availability (runs on host, not in container)
     if ! command -v npx &>/dev/null; then
         log_error "npx not found. Node.js is required to run ccusage."
@@ -646,12 +691,13 @@ ${BOLD}LIFECYCLE${NC}
   ${GREEN}down${NC}                  Stop all containers
   ${GREEN}restart${NC}               Restart all containers
   ${GREEN}build${NC}                 Build/rebuild Docker image
-  ${GREEN}update${NC}                Rebuild with latest Claude Code and recreate
+  ${GREEN}update${NC}                Rebuild with latest agent CLI and recreate
   ${GREEN}ps${NC}                    Show container status
   ${GREEN}logs${NC}                  Follow container logs
 
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
+  ${GREEN}codex${NC} [service]       Start OpenAI Codex CLI (default: codex-a)
   ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
   ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
   ${GREEN}exec${NC} <service>        Open shell in a service
@@ -674,9 +720,11 @@ HELP
 
     # Dynamic service list
     read -ra svc_names <<< "$(get_service_names)"
+    local prefix
+    prefix=$(agent_service_prefix)
     for idx in "${!svc_names[@]}"; do
         local svc="${svc_names[$idx]}"
-        local suffix="${svc#claude-}"
+        local suffix="${svc#${prefix}-}"
         local label
         label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
         if [[ "$idx" -eq 0 ]]; then
@@ -707,6 +755,7 @@ main() {
         ps)        cmd_ps "$@" ;;
         exec)      cmd_exec "$@" ;;
         claude)    cmd_claude "$@" ;;
+        codex)     cmd_codex "$@" ;;
         gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;

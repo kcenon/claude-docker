@@ -22,7 +22,7 @@ import (
 // the highest discovered letter index, whichever is larger).
 func (m *Manager) discoverStateDirs() (map[string]config.StateDir, int) {
 	n := m.env.NumAccounts()
-	dirs, _ := config.DiscoverStateDirs()
+	dirs, _ := config.DiscoverStateDirsForRuntime(m.env.AgentRuntime())
 	stateDirMap := make(map[string]config.StateDir, len(dirs))
 	for _, sd := range dirs {
 		stateDirMap[sd.Letter] = sd
@@ -51,9 +51,11 @@ func (m *Manager) fetchContainerStatus() map[string]docker.ContainerInfo {
 // and container status applied.
 func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, containerMap map[string]docker.ContainerInfo) []Account {
 	accounts := make([]Account, n)
+	servicePrefix := m.env.ServicePrefix()
+	claudeUsage := m.env.SupportsClaudeUsage()
 	for i := 1; i <= n; i++ {
 		letter := config.IndexToLetter(i)
-		svcName := "claude-" + letter
+		svcName := servicePrefix + "-" + letter
 
 		acct := Account{
 			Letter:      letter,
@@ -64,23 +66,25 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 			acct.StateDirPath = sd.Path
 			acct.AuthType = detectAuthType(sd, m.env, letter)
 
-			// Parse limitline cache for usage data (this account's own cache).
-			if sd.HasLimitlineCache() {
+			// Parse Claude limitline cache for usage data (this account's own cache).
+			if claudeUsage && sd.HasLimitlineCache() {
 				acct.FiveHourUsage, acct.SevenDayUsage = parseLimitlineCache(sd.LimitlineCachePath())
 			}
 
 			// JSONL token summary (always populated when session data exists).
 			// Uses the manager-scoped cache so unchanged session files are
 			// not re-read and re-decoded on every dashboard refresh.
-			if sessions, err := usage.ScanAccountSessionsWithCache(sd.ProjectsDir(), m.usageCache); err == nil && len(sessions) > 0 {
-				opts := usage.AllTimeOptions()
-				tokens := usage.AggregateSessions(sessions, opts)
-				count := usage.CountFilteredSessions(sessions, opts)
-				acct.Tokens = &TokenSummary{
-					InputTokens:  tokens.InputTokens,
-					OutputTokens: tokens.OutputTokens,
-					CacheTokens:  tokens.CacheCreationInputTokens + tokens.CacheReadInputTokens,
-					SessionCount: count,
+			if claudeUsage {
+				if sessions, err := usage.ScanAccountSessionsWithCache(sd.ProjectsDir(), m.usageCache); err == nil && len(sessions) > 0 {
+					opts := usage.AllTimeOptions()
+					tokens := usage.AggregateSessions(sessions, opts)
+					count := usage.CountFilteredSessions(sessions, opts)
+					acct.Tokens = &TokenSummary{
+						InputTokens:  tokens.InputTokens,
+						OutputTokens: tokens.OutputTokens,
+						CacheTokens:  tokens.CacheCreationInputTokens + tokens.CacheReadInputTokens,
+						SessionCount: count,
+					}
 				}
 			}
 		}
@@ -147,6 +151,9 @@ func (m *Manager) enrichGHAuth(a *Account, wg *sync.WaitGroup) {
 // cooldown so we don't hammer the API after a 429. Successful responses
 // are recorded in results for writeCacheUpdates to persist.
 func (m *Manager) enrichAPIUsage(a *Account, results map[string]apiResult, mu *sync.Mutex, wg *sync.WaitGroup) {
+	if m.env != nil && !m.env.SupportsClaudeUsage() {
+		return
+	}
 	if a.AuthType != AuthOAuth || a.StateDirPath == "" {
 		return
 	}

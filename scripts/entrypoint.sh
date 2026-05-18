@@ -1,13 +1,22 @@
 #!/bin/bash
-# Entrypoint: symlink host claude-config into the account state directory.
-# Host config is mounted read-only at /home/node/.claude-host/
-# Account state is at /home/node/.claude/ (writable)
+# Entrypoint: prepare per-account agent state before running the requested
+# command. Claude remains the default runtime; Codex is selected by setting
+# AGENT_RUNTIME=codex in the generated compose file.
+AGENT_RUNTIME="${AGENT_RUNTIME:-claude}"
+case "$AGENT_RUNTIME" in
+    claude|codex) ;;
+    *)
+        echo "[entrypoint] ERROR: AGENT_RUNTIME must be 'claude' or 'codex' (got: $AGENT_RUNTIME)" >&2
+        exit 1
+        ;;
+esac
 
-# Config source: CLAUDE_CONFIG_SOURCE overrides the default host config path.
-# Set CLAUDE_CONFIG_SOURCE to a path inside the project (e.g., /project/claude-config/global)
-# so that config changes are reflected immediately without running bootstrap on the host.
+# Claude config source: CLAUDE_CONFIG_SOURCE overrides the default host
+# config path. Set CLAUDE_CONFIG_SOURCE to a path inside the project (e.g.,
+# /project/claude-config/global) so config changes are reflected immediately
+# without running bootstrap on the host.
 CONFIG_SOURCE="${CLAUDE_CONFIG_SOURCE:-/home/node/.claude-host}"
-ACCOUNT_DIR="/home/node/.claude"
+ACCOUNT_DIR="${CLAUDE_CONFIG_DIR:-/home/node/.claude}"
 
 # --- Settings transformation ---------------------------------------------------
 # Generate a container-local settings.json from the host settings.
@@ -62,7 +71,7 @@ generate_container_settings() {
     ' "$src" > "${dst}.tmp" && mv "${dst}.tmp" "$dst"
 }
 
-if [ -d "$CONFIG_SOURCE" ]; then
+if [ "$AGENT_RUNTIME" = "claude" ] && [ -d "$CONFIG_SOURCE" ]; then
     # Fix Windows CRLF line endings in shell scripts (bind mounts from Windows
     # hosts may have \r\n even with .gitattributes if the repo lacks one).
     if [ -n "$CLAUDE_CONFIG_SOURCE" ]; then
@@ -278,6 +287,84 @@ if [ -d "$CONFIG_SOURCE" ]; then
                     echo "[entrypoint]   Fix: rebuild base image so Dockerfile's chmod -R a+rwX takes effect" >&2
                 fi
             fi
+        fi
+    fi
+fi
+
+# --- Codex config --------------------------------------------------------------
+# Codex stores mutable auth/session state under CODEX_HOME. Host-managed
+# configuration is mounted separately at /home/node/.codex-host and only
+# non-secret config is linked or copied into CODEX_HOME. auth.json, sessions,
+# caches, and logs are intentionally left in the writable per-account state
+# directory.
+copy_codex_dir() {
+    local src="$1"
+    local dst="$2"
+    rm -rf "$dst" 2>/dev/null
+    mkdir -p "$dst"
+    (cd "$src" && find . -type f 2>/dev/null) | while IFS= read -r rel; do
+        mkdir -p "$dst/$(dirname "$rel")" 2>/dev/null
+        case "$rel" in
+            *.sh)
+                sed 's/\r$//' "$src/$rel" > "$dst/$rel"
+                chmod +x "$dst/$rel" 2>/dev/null || true
+                ;;
+            *)
+                cp "$src/$rel" "$dst/$rel"
+                ;;
+        esac
+    done
+}
+
+link_codex_item() {
+    local src="$1"
+    local dst="$2"
+    local force="$3"
+    if [ "$force" = "true" ] || [ ! -e "$dst" ] || [ ! -L "$dst" ]; then
+        if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+            local backup
+            backup="${dst}.stale.$(date +%s)"
+            mv "$dst" "$backup"
+            echo "[entrypoint] codex: backed up stale $(basename "$dst") to $backup"
+        fi
+        ln -sfn "$src" "$dst"
+    fi
+}
+
+if [ "$AGENT_RUNTIME" = "codex" ]; then
+    CODEX_ACCOUNT_DIR="${CODEX_HOME:-/home/node/.codex}"
+    CODEX_SOURCE="${CODEX_CONFIG_SOURCE:-/home/node/.codex-host}"
+    mkdir -p "$CODEX_ACCOUNT_DIR" /home/node/.agents/skills 2>/dev/null || true
+    chmod 700 "$CODEX_ACCOUNT_DIR" 2>/dev/null || true
+
+    if [ -d "$CODEX_SOURCE" ]; then
+        FORCE_CODEX_LINK="${CODEX_CONFIG_SOURCE:+true}"
+
+        if [ -f "$CODEX_SOURCE/config.toml" ]; then
+            link_codex_item "$CODEX_SOURCE/config.toml" "$CODEX_ACCOUNT_DIR/config.toml" "$FORCE_CODEX_LINK"
+        elif [ -f "$CODEX_SOURCE/config.codex-config.toml" ]; then
+            link_codex_item "$CODEX_SOURCE/config.codex-config.toml" "$CODEX_ACCOUNT_DIR/config.toml" "$FORCE_CODEX_LINK"
+        fi
+
+        if [ -f "$CODEX_SOURCE/AGENTS.md" ]; then
+            link_codex_item "$CODEX_SOURCE/AGENTS.md" "$CODEX_ACCOUNT_DIR/AGENTS.md" "$FORCE_CODEX_LINK"
+        fi
+
+        if [ -d "$CODEX_SOURCE/hooks" ]; then
+            target="$CODEX_ACCOUNT_DIR/hooks"
+            if [ "$FORCE_CODEX_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
+                if [ -e "$target" ] && [ ! -L "$target" ]; then
+                    backup="${target}.stale.$(date +%s)"
+                    mv "$target" "$backup"
+                    echo "[entrypoint] codex hooks: backed up stale copy to $backup"
+                fi
+                copy_codex_dir "$CODEX_SOURCE/hooks" "$target"
+                echo "[entrypoint] codex hooks: copied and CRLF-normalized"
+            fi
+        fi
+
+        if [ -d "$CODEX_SOURCE/rules" ]; then
+            link_codex_item "$CODEX_SOURCE/rules" "$CODEX_ACCOUNT_DIR/rules" "$FORCE_CODEX_LINK"
         fi
     fi
 fi

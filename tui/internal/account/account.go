@@ -7,7 +7,8 @@ type AuthType int
 const (
 	AuthNone   AuthType = iota
 	AuthOAuth           // .credentials.json present
-	AuthAPIKey          // CLAUDE_API_KEY_* set in .env
+	AuthAPIKey          // provider API key set in .env
+	AuthLogin           // runtime-specific login state present
 )
 
 func (a AuthType) String() string {
@@ -16,6 +17,8 @@ func (a AuthType) String() string {
 		return "OAuth"
 	case AuthAPIKey:
 		return "Key"
+	case AuthLogin:
+		return "Login"
 	default:
 		return "--"
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kcenon/claude-docker/tui/internal/config"
 )
 
 // View renders the dashboard.
@@ -21,7 +22,7 @@ func (m Model) View() string {
 	}
 
 	if m.showHelp {
-		return renderHelp()
+		return renderHelp(m.env)
 	}
 
 	var b strings.Builder
@@ -64,7 +65,6 @@ func (m Model) View() string {
 		b.WriteString("\n" + toast)
 	}
 
-
 	// API retry status: visible when any account is rate-limited or currently refreshing
 	if m.hasRateLimitedAccounts() || m.refreshing {
 		var statusText string
@@ -101,16 +101,18 @@ func (m Model) View() string {
 }
 
 // renderHelp shows the key-map overlay (dismissed by any key).
-func renderHelp() string {
+func renderHelp(env *config.Env) string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#06B6D4")).
 		Render("  Keybindings")
 	key := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E5E7EB"))
 	desc := lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
+	runtime := env.RuntimeBinary()
+	skipFlag := env.SkipPermissionsFlag()
 
 	rows := [][2]string{
 		{"j / k", "Move cursor down / up"},
-		{"Enter / c", "Attach to selected account's claude session"},
-		{"p", "Toggle --dangerously-skip-permissions"},
+		{"Enter / c", "Attach to selected account's " + runtime + " session"},
+		{"p", "Toggle " + skipFlag},
 		{"r", "Refresh dashboard"},
 		{"u / d", "docker compose up -d / down (all)"},
 		{"b", "docker compose build (cached)"},

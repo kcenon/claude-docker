@@ -132,6 +132,9 @@ func TestStateDir_PathHelpers(t *testing.T) {
 	if got, want := sd.CredentialsPath(), filepath.Join(base, ".credentials.json"); got != want {
 		t.Errorf("CredentialsPath = %q, want %q", got, want)
 	}
+	if got, want := sd.CodexAuthPath(), filepath.Join(base, "auth.json"); got != want {
+		t.Errorf("CodexAuthPath = %q, want %q", got, want)
+	}
 	if got, want := sd.LimitlineCachePath(), filepath.Join(base, "limitline-usage-cache.json"); got != want {
 		t.Errorf("LimitlineCachePath = %q, want %q", got, want)
 	}
@@ -140,6 +143,9 @@ func TestStateDir_PathHelpers(t *testing.T) {
 	}
 	if sd.HasCredentials() {
 		t.Error("HasCredentials should be false for non-existent path")
+	}
+	if sd.HasCodexAuth() {
+		t.Error("HasCodexAuth should be false for non-existent path")
 	}
 	if sd.HasLimitlineCache() {
 		t.Error("HasLimitlineCache should be false for non-existent path")

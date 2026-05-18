@@ -20,7 +20,7 @@ const (
 	opDown
 	opBuild
 	opBuildNoCache
-	opUpdateBuild   // step 1 of update chain
+	opUpdateBuild    // step 1 of update chain
 	opUpdateRecreate // step 2 of update chain
 	opRestart
 	opGHAuthRecreate
@@ -48,8 +48,8 @@ type Model struct {
 	width         int
 	height        int
 	loading       bool
-	refreshing    bool      // true while Refresh is in-flight
-	tickActive    bool      // true while a 1s tick chain is running (prevents duplicates)
+	refreshing    bool // true while Refresh is in-flight
+	tickActive    bool // true while a 1s tick chain is running (prevents duplicates)
 	err           error
 	retryCount    int       // number of auto-retries since TUI started
 	lastRefreshAt time.Time // time of last refresh completion
@@ -58,7 +58,7 @@ type Model struct {
 	// Action state (Docker rebuild / gh-auth / restart).
 	busy            bool        // true while a background op is running
 	showHelp        bool        // ? toggles a key-map overlay
-	skipPermissions bool        // pass --dangerously-skip-permissions to claude
+	skipPermissions bool        // pass the runtime-specific permission bypass flag
 	statusText      string      // last toast message
 	statusLevel     statusLevel // toast color
 	statusExpiry    time.Time   // when the toast should disappear
