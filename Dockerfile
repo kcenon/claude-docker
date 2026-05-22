@@ -137,6 +137,16 @@ RUN mkdir -p /home/node/.config/ccstatusline \
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Copy the shared bash libraries, the per-runtime bootstrap modules, and the
+# runtime registry into the image (issue #269). The entrypoint is now a thin
+# dispatcher that sources scripts/lib/bootstrap-<runtime>.sh; runtime.sh
+# resolves runtimes.json relative to PROJECT_ROOT, so the repo's
+# scripts/lib + tui/internal/config layout is preserved here verbatim and
+# the entrypoint sets PROJECT_ROOT=/usr/local/share/claude-docker.
+COPY scripts/lib/ /usr/local/share/claude-docker/scripts/lib/
+COPY tui/internal/config/runtimes.json /usr/local/share/claude-docker/tui/internal/config/runtimes.json
+RUN chmod -R a+rX /usr/local/share/claude-docker
+
 # Run as non-root (node user UID 1000 is pre-created in node:20-slim)
 USER node
 
