@@ -69,6 +69,26 @@ $AgentRuntime = Get-AgentRuntime -ProjectRoot $ProjectRoot
 $ServicePrefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
 $PrimaryService = Get-PrimaryService -ProjectRoot $ProjectRoot
 
+# Runtime registry bundle. Every per-runtime value the generator emits is
+# resolved once here from runtimes.json, so the loops below are pure variable
+# substitution with no `if ($AgentRuntime -eq 'codex')` branching. The bash
+# generator (generate-compose.sh) builds the same bundle.
+function Get-RtField([string]$Field) {
+    return Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $AgentRuntime -Field $Field
+}
+$RtBuildArg            = Get-RtField 'buildArg'
+$RtStateDir            = Get-RtField 'stateDir'
+$RtHostConfigMount     = Get-RtField 'hostConfigMount'
+$RtContainerConfigMount = Get-RtField 'containerConfigMount'
+$RtApiKeyPrefix        = Get-RtField 'apiKeyVarPrefix'
+$RtSdkApiKeyVar        = Get-RtField 'sdkApiKeyVar'
+$RtConfigDirEnv        = Get-RtField 'configDirEnv'
+$RtConfigSourceEnv     = Get-RtField 'configSourceEnv'
+# Host-side config directory basename (e.g. .claude, .codex) — the host
+# mount whose container target is <hostConfigMount>. Derived from the
+# container config mount basename, which the registry keeps in sync.
+$RtHostConfigBasename  = '.' + ($RtContainerConfigMount -split '\.')[-1]
+
 # Container resource envelope (override via .env or host env). Defaults
 # reproduce the historical hardcoded values so existing installs see no
 # behavior change after regenerating.
@@ -119,11 +139,7 @@ function New-BaseCompose {
             [void]$sb.AppendLine('    build:')
             [void]$sb.AppendLine('      context: .')
             [void]$sb.AppendLine('      args:')
-            if ($AgentRuntime -eq 'codex') {
-                [void]$sb.AppendLine('        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:-}')
-            } else {
-                [void]$sb.AppendLine('        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}')
-            }
+            [void]$sb.AppendLine("        ${RtBuildArg}: `${${RtBuildArg}:-}")
         }
 
         [void]$sb.AppendLine("    image: claude-code-base:`${IMAGE_TAG:-$ImageTag}")
@@ -138,11 +154,7 @@ function New-BaseCompose {
         # the committed file see why the user line falls back to 1000:1000.
         # The bash generator emits the same four lines verbatim.
         [void]$sb.AppendLine("    # Match the host user's UID/GID so bind-mounted paths")
-        if ($AgentRuntime -eq 'codex') {
-            [void]$sb.AppendLine('    # (${HOME}/.codex-state/account-*) stay writable from')
-        } else {
-            [void]$sb.AppendLine('    # (${HOME}/.claude-state/account-*) stay writable from')
-        }
+        [void]$sb.AppendLine("    # (`${HOME}/${RtStateDir}/account-*) stay writable from")
         [void]$sb.AppendLine('    # inside the container. Falls back to 1000:1000 (the')
         [void]$sb.AppendLine('    # upstream node:20-slim default) when UID/GID are unset.')
         [void]$sb.AppendLine('    user: "${UID:-1000}:${GID:-1000}"')
@@ -150,13 +162,14 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    tty: true')
         [void]$sb.AppendLine('    volumes:')
         [void]$sb.AppendLine('      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}')
+        [void]$sb.AppendLine("      - `${HOME}/${RtStateDir}/account-${letter}:${RtContainerConfigMount}")
+        [void]$sb.AppendLine("      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro")
+        # The agents/skills mount is a codex-only volume: claude does not
+        # bind it. The registry has no per-runtime field that singles it
+        # out (mountsAgentsSkills is true for both), so this one line is
+        # gated on the runtime id to preserve byte-identical output.
         if ($AgentRuntime -eq 'codex') {
-            [void]$sb.AppendLine("      - `${HOME}/.codex-state/account-${letter}:/home/node/.codex")
-            [void]$sb.AppendLine('      - ${HOME}/.codex:/home/node/.codex-host:ro')
             [void]$sb.AppendLine('      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro')
-        } else {
-            [void]$sb.AppendLine("      - `${HOME}/.claude-state/account-${letter}:/home/node/.claude")
-            [void]$sb.AppendLine('      - ${HOME}/.claude:/home/node/.claude-host:ro')
         }
         [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
         [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
@@ -167,30 +180,30 @@ function New-BaseCompose {
         # the passwd entry for that UID is missing, so $HOME defaults to
         # /. Pinning HOME keeps runtime state, ~/.config, etc. resolvable.
         [void]$sb.AppendLine('      - HOME=/home/node')
-        if ($AgentRuntime -eq 'codex') {
-            [void]$sb.AppendLine('      - AGENT_RUNTIME=codex')
-            [void]$sb.AppendLine('      - CODEX_HOME=/home/node/.codex')
-            [void]$sb.AppendLine('      - CODEX_CONFIG_SOURCE=${CODEX_CONFIG_SOURCE:-}')
-        } else {
-            [void]$sb.AppendLine('      - CLAUDE_CONFIG_DIR=/home/node/.claude')
-            [void]$sb.AppendLine('      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}')
+        # AGENT_RUNTIME is now always emitted (previously codex-only).
+        # The entrypoint defaults to claude when unset, so emitting it
+        # for claude too is functionally inert and keeps the env block
+        # uniform across runtimes.
+        [void]$sb.AppendLine("      - AGENT_RUNTIME=${AgentRuntime}")
+        [void]$sb.AppendLine("      - ${RtConfigDirEnv}=${RtContainerConfigMount}")
+        [void]$sb.AppendLine("      - ${RtConfigSourceEnv}=`${${RtConfigSourceEnv}:-}")
+        # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
+        # the entrypoint, no codex equivalent). The registry has no field
+        # for it, so this one line stays gated on the runtime id.
+        if ($AgentRuntime -eq 'claude') {
             [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
         }
         [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
         # Only emit provider API keys when a per-account key is set at
         # generate time. Emitting an empty key makes SDKs prefer the blank env
         # var over persisted credentials in the mounted state dir.
-        $keyVarName = if ($AgentRuntime -eq 'codex') { "CODEX_API_KEY_${upper}" } else { "CLAUDE_API_KEY_${upper}" }
+        $keyVarName = "${RtApiKeyPrefix}${upper}"
         $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
         if ([string]::IsNullOrEmpty($keyValue) -and $envData.ContainsKey($keyVarName)) {
             $keyValue = $envData[$keyVarName]
         }
         if (-not [string]::IsNullOrEmpty($keyValue)) {
-            if ($AgentRuntime -eq 'codex') {
-                [void]$sb.AppendLine("      - OPENAI_API_KEY=`${CODEX_API_KEY_${upper}}")
-            } else {
-                [void]$sb.AppendLine("      - ANTHROPIC_API_KEY=`${CLAUDE_API_KEY_${upper}}")
-            }
+            [void]$sb.AppendLine("      - ${RtSdkApiKeyVar}=`${${keyVarName}}")
         }
         [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
         [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')

@@ -125,51 +125,67 @@ function Invoke-Exec {
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service @rest
 }
 
-function Invoke-Claude {
-    $skipPerms = $false
-    $service = ''
-    foreach ($arg in $Arguments) {
-        if ($arg -eq '--dangerously-skip-permissions') {
-            $skipPerms = $true
-        } elseif (-not $service) {
-            $service = $arg
-        }
-    }
-    if (-not $service) { $service = 'claude-a' }
-    Write-Host "Starting Claude Code in " -ForegroundColor Cyan -NoNewline
-    Write-Host $service -ForegroundColor White -NoNewline
-    Write-Host '...' -ForegroundColor Cyan
-    if ($skipPerms) {
-        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude --dangerously-skip-permissions
-    } else {
-        Invoke-Compose -ProjectRoot $ProjectRoot exec $service claude
-    }
-}
+function Invoke-Agent {
+    <#
+    .SYNOPSIS
+    Unified runtime-launch subcommand, replacing the former Invoke-Claude /
+    Invoke-Codex pair. $Subcommand is the runtime name the user typed
+    (claude or codex). Binary, skip-permissions flag, and extra run args are
+    all read from the registry.
+    #>
+    param([Parameter(Mandatory)][string]$Subcommand)
 
-function Invoke-Codex {
-    if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -ne 'codex') {
+    $runtime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+
+    # Wrong-runtime guard, preserved verbatim from the former Invoke-Codex:
+    # a codex subcommand only works when AGENT_RUNTIME selects codex. Kept
+    # codex-specific so claude's prior behavior under any AGENT_RUNTIME is
+    # unchanged.
+    if ($Subcommand -eq 'codex' -and $runtime -ne 'codex') {
         Write-LogError 'codex command requires AGENT_RUNTIME=codex. Set it in .env, regenerate compose files, then run again.'
         exit 1
     }
 
+    # Runtime values for the subcommand the user typed. The former
+    # Invoke-Claude always launched the claude binary regardless of
+    # AGENT_RUNTIME, so resolve from the subcommand to keep that behavior.
+    $binary       = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'binary'
+    $skipFlag     = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'skipPermissionsFlag'
+    $extraRunArgs = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'extraRunArgs'
+    $servicePrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'servicePrefix'
+
+    # Skip-permissions flags accepted: the runtime's own flag plus the
+    # universal --dangerously-skip-permissions alias (a no-op duplicate for
+    # claude, the historical alias codex also honored).
     $skipPerms = $false
     $service = ''
     foreach ($arg in $Arguments) {
-        if ($arg -in @('--dangerously-bypass-approvals-and-sandbox', '--dangerously-skip-permissions')) {
+        if ($arg -eq $skipFlag -or $arg -eq '--dangerously-skip-permissions') {
             $skipPerms = $true
         } elseif (-not $service) {
             $service = $arg
         }
     }
-    if (-not $service) { $service = 'codex-a' }
-    Write-Host "Starting Codex CLI in " -ForegroundColor Cyan -NoNewline
+    # Default service is keyed off the subcommand (claude-a / codex-a).
+    if (-not $service) { $service = "$servicePrefix-a" }
+
+    # Pretty launch banner: Claude Code vs Codex CLI matched the prior wording.
+    $label = if ($Subcommand -eq 'codex') { 'Codex CLI' } else { 'Claude Code' }
+    Write-Host "Starting $label in " -ForegroundColor Cyan -NoNewline
     Write-Host $service -ForegroundColor White -NoNewline
     Write-Host '...' -ForegroundColor Cyan
-    $codexArgs = @('codex', '-c', 'cli_auth_credentials_store="file"')
-    if ($skipPerms) {
-        $codexArgs += '--dangerously-bypass-approvals-and-sandbox'
+
+    # Build argv: binary, then registry extraRunArgs (split on whitespace;
+    # the codex entry expands to  -c cli_auth_credentials_store="file" ),
+    # then the skip-permissions flag when requested.
+    $agentArgs = @($binary)
+    if (-not [string]::IsNullOrWhiteSpace($extraRunArgs)) {
+        $agentArgs += ($extraRunArgs -split '\s+')
     }
-    Invoke-Compose -ProjectRoot $ProjectRoot exec $service @codexArgs
+    if ($skipPerms) {
+        $agentArgs += $skipFlag
+    }
+    Invoke-Compose -ProjectRoot $ProjectRoot exec $service @agentArgs
 }
 
 function Invoke-GhAuth {
@@ -435,7 +451,10 @@ function Invoke-ComposePass {
 }
 
 function Invoke-Usage {
-    if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -ne 'claude') {
+    # Usage aggregation availability is a per-runtime registry capability
+    # (supportsUsage), not a hardcoded claude-only check.
+    $runtime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    if ((Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'supportsUsage') -ne $true) {
         Write-LogError 'usage is currently Claude-only; Codex usage aggregation is not supported.'
         exit 1
     }
@@ -614,6 +633,14 @@ function Invoke-BuildTui {
     }
 }
 
+# Runtime subcommands (claude, codex, ...) route to the unified Invoke-Agent
+# rather than being enumerated below, so a new registry entry needs no change
+# here. Matched before the static switch.
+if ($Command -in (Get-RuntimeList -ProjectRoot $ProjectRoot)) {
+    Invoke-Agent -Subcommand $Command
+    return
+}
+
 switch ($Command) {
     'up'         { Invoke-Up }
     'down'       { Invoke-Down }
@@ -621,8 +648,6 @@ switch ($Command) {
     'logs'       { Invoke-Logs }
     'ps'         { Invoke-Ps }
     'exec'       { Invoke-Exec }
-    'claude'     { Invoke-Claude }
-    'codex'      { Invoke-Codex }
     'tui'        { Invoke-Tui }
     'dashboard'  { Invoke-Tui }
     'gh-auth'    { Invoke-GhAuth }
