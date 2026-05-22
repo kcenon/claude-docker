@@ -1,0 +1,51 @@
+{
+  "_comment": "Cross-language runtime registry — the single source of truth for every runtime-specific value. Read by Go (go:embed), bash (jq with an awk fallback), PowerShell (ConvertFrom-Json), and the container entrypoint (jq). It lives under tui/internal/config/ because Go's go:embed requires the embedded file inside the embedding package tree; the shell layers reach it via PROJECT_ROOT. See issue #267. Do not edit field names without updating every reader.",
+  "runtimes": {
+    "claude": {
+      "binary": "claude",
+      "servicePrefix": "claude",
+      "stateDir": ".claude-state",
+      "containerHome": "/home/node/.claude",
+      "hostConfigMount": "/home/node/.claude-host",
+      "containerConfigMount": "/home/node/.claude",
+      "configDirEnv": "CLAUDE_CONFIG_DIR",
+      "configSourceEnv": "CLAUDE_CONFIG_SOURCE",
+      "apiKeyVarPrefix": "CLAUDE_API_KEY_",
+      "sdkApiKeyVar": "ANTHROPIC_API_KEY",
+      "buildArg": "CLAUDE_CODE_VERSION",
+      "installMethod": "native",
+      "skipPermissionsFlag": "--dangerously-skip-permissions",
+      "configFormat": "json",
+      "bootstrapModule": "bootstrap-claude.sh",
+      "extraEnv": "",
+      "extraRunArgs": "",
+      "supportsUsage": true,
+      "mountsAgentsSkills": true,
+      "credentialFiles": ".credentials.json",
+      "oauthCredentialFile": ".credentials.json"
+    },
+    "codex": {
+      "binary": "codex",
+      "servicePrefix": "codex",
+      "stateDir": ".codex-state",
+      "containerHome": "/home/node/.codex",
+      "hostConfigMount": "/home/node/.codex-host",
+      "containerConfigMount": "/home/node/.codex",
+      "configDirEnv": "CODEX_HOME",
+      "configSourceEnv": "CODEX_CONFIG_SOURCE",
+      "apiKeyVarPrefix": "CODEX_API_KEY_",
+      "sdkApiKeyVar": "OPENAI_API_KEY",
+      "buildArg": "CODEX_CLI_VERSION",
+      "installMethod": "npm",
+      "skipPermissionsFlag": "--dangerously-bypass-approvals-and-sandbox",
+      "configFormat": "toml",
+      "bootstrapModule": "bootstrap-codex.sh",
+      "extraEnv": "",
+      "extraRunArgs": "-c cli_auth_credentials_store=\"file\"",
+      "supportsUsage": false,
+      "mountsAgentsSkills": true,
+      "credentialFiles": "auth.json",
+      "oauthCredentialFile": "auth.json"
+    }
+  }
+}
