@@ -22,7 +22,7 @@
       "extraEnv": "",
       "extraRunArgs": "",
       "supportsUsage": true,
-      "mountsAgentsSkills": true,
+      "mountsAgentsSkills": false,
       "credentialFiles": ".credentials.json",
       "oauthCredentialFile": ".credentials.json"
     },
@@ -72,7 +72,7 @@
       "extraEnv": "",
       "extraRunArgs": "",
       "supportsUsage": false,
-      "mountsAgentsSkills": true,
+      "mountsAgentsSkills": false,
       "credentialFiles": "oauth_creds.json",
       "oauthCredentialFile": "oauth_creds.json"
     }

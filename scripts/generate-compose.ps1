@@ -89,6 +89,10 @@ $RtConfigDirEnv        = Get-RtField 'configDirEnv'
 # (gemini) whose CLI appends its own subdirectory.
 $RtConfigDirEnvValue   = Get-RtField 'configDirEnvValue'
 $RtConfigSourceEnv     = Get-RtField 'configSourceEnv'
+# Whether this runtime needs the separate agents/skills compose volume.
+# Only codex binds it; claude obtains skills via its host config mount and
+# gemini via its own config mount, so neither needs the extra volume.
+$RtMountsAgentsSkills  = Get-RtField 'mountsAgentsSkills'
 # Host-side config directory basename (e.g. .claude, .codex) — the host
 # mount whose container target is <hostConfigMount>. Derived from the
 # container config mount basename, which the registry keeps in sync.
@@ -169,11 +173,9 @@ function New-BaseCompose {
         [void]$sb.AppendLine('      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}')
         [void]$sb.AppendLine("      - `${HOME}/${RtStateDir}/account-${letter}:${RtContainerConfigMount}")
         [void]$sb.AppendLine("      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro")
-        # The agents/skills mount is a codex-only volume: claude does not
-        # bind it. The registry has no per-runtime field that singles it
-        # out (mountsAgentsSkills is true for both), so this one line is
-        # gated on the runtime id to preserve byte-identical output.
-        if ($AgentRuntime -eq 'codex') {
+        # The agents/skills volume is bound only for runtimes whose
+        # registry entry sets mountsAgentsSkills (currently codex).
+        if ($RtMountsAgentsSkills -eq $true) {
             [void]$sb.AppendLine('      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro')
         }
         [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
