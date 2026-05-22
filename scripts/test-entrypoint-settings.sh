@@ -66,9 +66,11 @@ assert_nonzero() {
     fi
 }
 
-# --- Load transformation function from entrypoint ---
-# Source only the function definition (not the full entrypoint logic)
-eval "$(sed -n '/^generate_container_settings()/,/^}/p' "$SCRIPT_DIR/entrypoint.sh")"
+# --- Load transformation function from the claude bootstrap module ---
+# generate_container_settings moved out of entrypoint.sh into the per-runtime
+# bootstrap module scripts/lib/bootstrap-claude.sh (issue #269). Source only
+# the function definition, not the full module logic.
+eval "$(sed -n '/^generate_container_settings()/,/^}/p' "$SCRIPT_DIR/lib/bootstrap-claude.sh")"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: jq is required to run these tests"
