@@ -216,47 +216,76 @@ cmd_exec() {
     fi
 }
 
-cmd_claude() {
-    local skip_perms=false
-    local service=""
-    for arg in "$@"; do
-        case "$arg" in
-            --dangerously-skip-permissions) skip_perms=true ;;
-            *) [[ -z "$service" ]] && service="$arg" ;;
-        esac
-    done
-    service="${service:-claude-a}"
-    ensure_compose_cmd
-    echo -e "${CYAN}Starting Claude Code in ${BOLD}$service${NC}${CYAN}...${NC}"
-    if [[ "$skip_perms" == true ]]; then
-        "${COMPOSE_CMD[@]}" exec "$service" claude --dangerously-skip-permissions
-    else
-        "${COMPOSE_CMD[@]}" exec "$service" claude
-    fi
-}
+# cmd_agent SUBCOMMAND [args...]
+# Unified runtime-launch subcommand, replacing the former cmd_claude /
+# cmd_codex pair. SUBCOMMAND is the runtime name the user typed (claude or
+# codex). Every runtime-specific value — binary, skip-permissions flag,
+# extra run args — is read from the registry, so adding a runtime needs no
+# new subcommand here.
+cmd_agent() {
+    local subcommand="$1"
+    shift
 
-cmd_codex() {
-    if [[ "$(agent_runtime)" != "codex" ]]; then
+    local runtime
+    runtime="$(agent_runtime)" || exit 1
+
+    # Wrong-runtime guard, preserved verbatim from the former cmd_codex
+    # (claude-docker:239-241): a codex subcommand only works when
+    # AGENT_RUNTIME selects codex. Kept codex-specific so claude's prior
+    # behavior under any AGENT_RUNTIME is unchanged.
+    if [[ "$subcommand" == "codex" && "$runtime" != "codex" ]]; then
         log_error "codex command requires AGENT_RUNTIME=codex. Set it in .env, regenerate compose files, then run again."
         exit 1
     fi
 
+    # Runtime values for the *subcommand* the user typed. With the guard
+    # above, subcommand and runtime agree for codex; for claude they may
+    # differ (claude under AGENT_RUNTIME=codex), and the historical
+    # cmd_claude always launched the claude binary regardless — so resolve
+    # from the subcommand to keep that behavior.
+    local binary skip_flag extra_run_args
+    binary="$(runtime_field "$subcommand" binary)"
+    skip_flag="$(runtime_field "$subcommand" skipPermissionsFlag)"
+    extra_run_args="$(runtime_field "$subcommand" extraRunArgs)"
+
+    # Skip-permissions flags accepted: the runtime's own flag plus the
+    # universal --dangerously-skip-permissions alias (a no-op duplicate for
+    # claude, the historical alias codex also honored).
     local skip_perms=false
     local service=""
     for arg in "$@"; do
         case "$arg" in
-            --dangerously-bypass-approvals-and-sandbox|--dangerously-skip-permissions) skip_perms=true ;;
+            "$skip_flag"|--dangerously-skip-permissions) skip_perms=true ;;
             *) [[ -z "$service" ]] && service="$arg" ;;
         esac
     done
-    service="${service:-codex-a}"
+    # Default service is keyed off the subcommand (claude-a / codex-a),
+    # matching the former cmd_claude / cmd_codex defaults.
+    service="${service:-$(runtime_field "$subcommand" servicePrefix)-a}"
     ensure_compose_cmd
-    echo -e "${CYAN}Starting Codex CLI in ${BOLD}$service${NC}${CYAN}...${NC}"
-    local codex_args=(codex -c 'cli_auth_credentials_store="file"')
-    if [[ "$skip_perms" == true ]]; then
-        codex_args+=("--dangerously-bypass-approvals-and-sandbox")
+
+    # Pretty launch banner: Claude Code vs Codex CLI matched the prior wording.
+    local label
+    if [[ "$subcommand" == "codex" ]]; then
+        label="Codex CLI"
+    else
+        label="Claude Code"
     fi
-    "${COMPOSE_CMD[@]}" exec "$service" "${codex_args[@]}"
+    echo -e "${CYAN}Starting ${label} in ${BOLD}$service${NC}${CYAN}...${NC}"
+
+    # Build argv: binary, then registry extraRunArgs (word-split; the codex
+    # entry expands to  -c cli_auth_credentials_store="file" ), then the
+    # skip-permissions flag when requested.
+    local agent_args=("$binary")
+    if [[ -n "$extra_run_args" ]]; then
+        local extra_tokens=()
+        read -ra extra_tokens <<< "$extra_run_args"
+        agent_args+=("${extra_tokens[@]}")
+    fi
+    if [[ "$skip_perms" == true ]]; then
+        agent_args+=("$skip_flag")
+    fi
+    "${COMPOSE_CMD[@]}" exec "$service" "${agent_args[@]}"
 }
 
 # Resolve a compose service name to its running Docker container ID.
@@ -550,7 +579,11 @@ cmd_compose() {
 }
 
 cmd_usage() {
-    if [[ "$(agent_runtime)" != "claude" ]]; then
+    # Usage aggregation availability is a per-runtime registry capability
+    # (supportsUsage), not a hardcoded claude-only check.
+    local runtime
+    runtime="$(agent_runtime)" || exit 1
+    if [[ "$(runtime_field "$runtime" supportsUsage)" != "true" ]]; then
         log_error "usage is currently Claude-only; Codex usage aggregation is not supported."
         exit 1
     fi
@@ -743,9 +776,27 @@ HELP
 
 # --- Main ---------------------------------------------------------------------
 
+# is_runtime_subcommand NAME
+# True when NAME is a registered runtime (claude, codex, ...). The runtime
+# subcommands are dispatched to cmd_agent rather than enumerated in the
+# case statement, so a new registry entry needs no change here.
+is_runtime_subcommand() {
+    local name="$1" known
+    while IFS= read -r known; do
+        [[ "$known" == "$name" ]] && return 0
+    done < <(runtime_list)
+    return 1
+}
+
 main() {
     local command="${1:-help}"
     shift 2>/dev/null || true
+
+    # Runtime subcommands (claude, codex, ...) route to the unified cmd_agent.
+    if is_runtime_subcommand "$command"; then
+        cmd_agent "$command" "$@"
+        return
+    fi
 
     case "$command" in
         up)        cmd_up "$@" ;;
@@ -754,8 +805,6 @@ main() {
         logs)      cmd_logs "$@" ;;
         ps)        cmd_ps "$@" ;;
         exec)      cmd_exec "$@" ;;
-        claude)    cmd_claude "$@" ;;
-        codex)     cmd_codex "$@" ;;
         gh-auth)   cmd_gh_auth "$@" ;;
         usage)     cmd_usage "$@" ;;
         build)     cmd_build "$@" ;;
