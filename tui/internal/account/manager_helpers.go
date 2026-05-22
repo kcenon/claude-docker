@@ -131,8 +131,14 @@ func (m *Manager) enrichAccounts(accounts []Account) map[string]apiResult {
 	return results
 }
 
-// enrichGHAuth runs `gh auth status` inside the account's running container
+// enrichGHAuth runs `gh api user` inside the account's running container
 // and sets GHAuthOK on success. No-op when the container is not running.
+//
+// `gh api user` is used instead of `gh auth status` because the latter
+// evaluates every configured account — including the unusable `default`
+// account the mounted host gh config exposes alongside a working GH_TOKEN —
+// and exits non-zero even though API calls succeed. The verdict is the
+// command exit code, not substring matching on the output.
 func (m *Manager) enrichGHAuth(a *Account, wg *sync.WaitGroup) {
 	if a.ContainerStatus != ContainerRunning || a.ContainerID == "" {
 		return
@@ -140,12 +146,17 @@ func (m *Manager) enrichGHAuth(a *Account, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "auth", "status")
-		out, _ := cmd.CombinedOutput()
-		if strings.Contains(string(out), "Logged in") {
-			a.GHAuthOK = true
-		}
+		cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "api", "user", "--jq", ".login")
+		err := cmd.Run()
+		a.GHAuthOK = ghAuthVerdict(err)
 	}()
+}
+
+// ghAuthVerdict maps the exit status of the in-container `gh api user`
+// command to a GitHub auth verdict: a nil error (exit code 0) means the
+// credential gh uses for API calls is valid.
+func ghAuthVerdict(runErr error) bool {
+	return runErr == nil
 }
 
 // enrichAPIUsage fetches usage from the limitline API for OAuth accounts

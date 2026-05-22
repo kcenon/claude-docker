@@ -303,13 +303,20 @@ function Test-ContainerGhAuth {
     .SYNOPSIS
     Verify GitHub auth inside a running container.
     Returns $true if gh auth is OK, $false otherwise.
+
+    .DESCRIPTION
+    Uses `gh api user` rather than `gh auth status`: when GH_TOKEN coexists
+    with a mounted host gh config, `gh auth status` also evaluates the
+    unusable mounted `default` account and exits non-zero even though the
+    token works. `gh api user` checks the credential path gh actually uses
+    for API calls.
     #>
     param([string]$Service = 'claude-a')
 
     $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $Service
     if (-not $cid) { return $false }
 
-    $null = & docker exec $cid gh auth status 2>&1
+    $null = & docker exec $cid gh api user --jq .login 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  * GitHub auth: OK ($Service)" -ForegroundColor Green
         return $true

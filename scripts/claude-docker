@@ -346,7 +346,11 @@ refresh_gh_token() {
 }
 
 # Verify GitHub auth inside a running container.
-# Prints status and returns gh auth exit code (0 = OK, non-zero = failure).
+# Uses `gh api user` rather than `gh auth status`: when GH_TOKEN coexists with
+# a mounted host gh config, `gh auth status` also evaluates the unusable
+# mounted `default` account and exits non-zero even though the token works.
+# `gh api user` checks the credential path gh actually uses for API calls.
+# Returns 0 if the API call succeeds, non-zero otherwise.
 verify_container_gh_auth() {
     local svc="${1:-claude-a}"
     local cid
@@ -355,7 +359,7 @@ verify_container_gh_auth() {
         return 1
     fi
 
-    if docker exec "$cid" gh auth status >/dev/null 2>&1; then
+    if docker exec "$cid" gh api user --jq .login >/dev/null 2>&1; then
         echo -e "  ${GREEN}*${NC} GitHub auth: OK ($svc)"
         return 0
     else

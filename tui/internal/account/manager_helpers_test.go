@@ -3,6 +3,7 @@ package account
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -149,6 +150,32 @@ func TestEnrichGHAuth_NotRunning(t *testing.T) {
 				t.Errorf("GHAuthOK = true, want false for %s", c.name)
 			}
 		})
+	}
+}
+
+// TestGHAuthVerdict covers the auth verdict logic used by enrichGHAuth. The
+// container check switched from `gh auth status` to `gh api user` because
+// `gh auth status` exits non-zero when the mounted host gh config exposes an
+// unusable `default` account alongside a working GH_TOKEN. The verdict must
+// follow the command exit code: `gh api user` succeeding (exit 0) means the
+// credential is valid even in that mixed-config case where `gh auth status`
+// would fail.
+func TestGHAuthVerdict(t *testing.T) {
+	// A real exit-0 command stands in for `gh api user` succeeding.
+	if err := exec.Command("true").Run(); err != nil {
+		t.Fatalf("setup: `true` should exit 0: %v", err)
+	} else if !ghAuthVerdict(err) {
+		t.Error("ghAuthVerdict(nil) = false, want true (gh api user succeeded)")
+	}
+
+	// A real non-zero exit stands in for `gh auth status` style failure:
+	// the verdict must be false so a failed check is not reported as OK.
+	failErr := exec.Command("false").Run()
+	if failErr == nil {
+		t.Fatal("setup: `false` should exit non-zero")
+	}
+	if ghAuthVerdict(failErr) {
+		t.Error("ghAuthVerdict(exit-error) = true, want false (command exited non-zero)")
 	}
 }
 
