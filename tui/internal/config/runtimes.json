@@ -46,6 +46,29 @@
       "mountsAgentsSkills": true,
       "credentialFiles": "auth.json",
       "oauthCredentialFile": "auth.json"
+    },
+    "gemini": {
+      "binary": "gemini",
+      "servicePrefix": "gemini",
+      "stateDir": ".gemini-state",
+      "containerHome": "/home/node/.gemini",
+      "hostConfigMount": "/home/node/.gemini-host",
+      "containerConfigMount": "/home/node/.gemini",
+      "configDirEnv": "GEMINI_CLI_HOME",
+      "configSourceEnv": "GEMINI_CONFIG_SOURCE",
+      "apiKeyVarPrefix": "GEMINI_API_KEY_",
+      "sdkApiKeyVar": "GEMINI_API_KEY",
+      "buildArg": "GEMINI_CLI_VERSION",
+      "installMethod": "npm",
+      "skipPermissionsFlag": "--yolo",
+      "configFormat": "json",
+      "bootstrapModule": "bootstrap-gemini.sh",
+      "extraEnv": "",
+      "extraRunArgs": "",
+      "supportsUsage": false,
+      "mountsAgentsSkills": true,
+      "credentialFiles": "oauth_creds.json",
+      "oauthCredentialFile": "oauth_creds.json"
     }
   }
 }

@@ -158,6 +158,7 @@ scripts/claude-docker help       # Show all available commands
 | | `logs` | Follow container logs |
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
 | | `codex [service]` | Start OpenAI Codex CLI (default: codex-a) |
+| | `gemini [service]` | Start Google Gemini CLI (default: gemini-a) |
 | | `exec <service>` | Open shell in a container |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; auto-downloads a prebuilt binary if missing |
@@ -227,6 +228,38 @@ account state bind mount.
 
 The TUI can list and attach to Codex services. Claude-specific usage
 aggregation and `scripts/claude-docker usage` remain Claude-only.
+
+### Running Google Gemini CLI
+
+Gemini support is opt-in. Set `AGENT_RUNTIME=gemini` in `.env`, then
+regenerate compose files and recreate containers:
+
+```bash
+scripts/generate-compose.sh
+scripts/claude-docker up --remove-orphans
+scripts/claude-docker gemini
+```
+
+PowerShell users can run `.\scripts\generate-compose.ps1` and
+`.\scripts\claude-docker.ps1 gemini` instead.
+
+When `AGENT_RUNTIME=gemini` is active, generated services are named
+`gemini-a`, `gemini-b`, and so on. Each account stores mutable Gemini state
+in `~/.gemini-state/account-*/`, while host-managed Gemini config is mounted
+read-only from `~/.gemini/` and linked into the container's Gemini config
+directory. `settings.json`, `GEMINI.md`, `commands/`, and `extensions/` are
+linked; OAuth credentials, sessions, and logs stay in the writable account
+state directory.
+
+Gemini OAuth credentials ("Login with Google") are stored in the host
+system keychain, which a Linux container cannot read — the same limitation
+as the `gh` token caveat. The primary in-container auth path is therefore an
+API key: set per-account keys such as `GEMINI_API_KEY_A`, and the generator
+injects `GEMINI_API_KEY` only for accounts that have a non-empty key.
+
+The TUI can list and attach to Gemini services; usage columns show `--`.
+Claude-specific usage aggregation and `scripts/claude-docker usage` remain
+Claude-only.
 
 ### Authentication
 

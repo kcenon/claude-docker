@@ -11,6 +11,8 @@ is copied to the repo root as `.env`, then `scripts/generate-compose.sh` and
 | `n5.env` | `NUM_ACCOUNTS=5` scaling path (claude-a..claude-e) |
 | `n30.env` | `NUM_ACCOUNTS=30` Excel-style letter enumeration (#178) |
 | `with-special-chars.env` | Values containing `#`, `=`, quotes, whitespace — exercises the #170 parser |
+| `codex.env` | `AGENT_RUNTIME=codex` runtime selection (codex-a/codex-b services) |
+| `gemini.env` | `AGENT_RUNTIME=gemini` runtime selection (gemini-a/gemini-b services, #272) |
 
 ## Running locally
 
