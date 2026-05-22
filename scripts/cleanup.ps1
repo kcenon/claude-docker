@@ -97,15 +97,22 @@ try {
             Write-Error '  stdin is not interactive. Pass -Force to remove state non-interactively, or -SkipState to skip.'
             exit 1
         }
-        $shouldRemove = Read-Confirmation -Question 'Remove ~/.claude-state/*?'
+        $shouldRemove = Read-Confirmation -Question "Remove every runtime's state directory (~/.*-state)?"
     }
 
     if ($shouldRemove) {
-        $statePath = Join-Path $env:USERPROFILE '.claude-state'
-        if (Test-Path $statePath) {
-            Remove-Item $statePath -Recurse -Force
-            Write-Host '  State directories removed.'
+        # Remove every registered runtime's state directory, not just
+        # Claude's, so a codex/gemini install is fully cleaned up (see #273).
+        foreach ($runtime in Get-RuntimeList -ProjectRoot $ProjectRoot) {
+            $stateDir = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'stateDir'
+            if (-not $stateDir) { continue }
+            $statePath = Join-Path $env:USERPROFILE $stateDir
+            if (Test-Path $statePath) {
+                Remove-Item $statePath -Recurse -Force
+                Write-Host "  Removed: ~/$stateDir"
+            }
         }
+        Write-Host '  State directories removed.'
     }
     else {
         Write-Host '  Skipped.'

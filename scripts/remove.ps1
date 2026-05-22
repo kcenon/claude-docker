@@ -157,27 +157,37 @@ function Remove-Worktrees {
 function Remove-StateDirectories {
     Write-LogStep 'Removing state directories'
 
-    $stateRoot = Join-Path $env:USERPROFILE '.claude-state'
+    # Offer every registered runtime's state directory, not just Claude's, so
+    # a codex/gemini install does not leave its state orphaned. State-dir
+    # names are resolved from the runtime registry (see #267, #273).
+    $found = $false
+    foreach ($runtime in Get-RuntimeList -ProjectRoot $ProjectRoot) {
+        $stateDir = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'stateDir'
+        if (-not $stateDir) { continue }
+        $stateRoot = Join-Path $env:USERPROFILE $stateDir
 
-    if (-not (Test-Path $stateRoot)) {
-        Write-LogInfo "No state directories found at $stateRoot"
-        return
+        if (-not (Test-Path $stateRoot)) { continue }
+        $found = $true
+
+        # List what exists
+        Write-Host "  Contents of ${stateRoot}:" -ForegroundColor DarkGray
+        foreach ($item in Get-ChildItem $stateRoot -ErrorAction SilentlyContinue) {
+            $size = Get-FriendlySize -Bytes (Get-DirectorySize -Path $item.FullName)
+            Write-Host "    $($item.Name) ($size)" -ForegroundColor DarkGray
+        }
+
+        Write-Host ''
+        if (Read-Confirmation -Question "Remove all $runtime state directories (~/$stateDir)?") {
+            Remove-Item $stateRoot -Recurse -Force
+            Write-LogSuccess "$runtime state directories removed"
+        }
+        else {
+            Write-LogInfo "$runtime state directories kept"
+        }
     }
 
-    # List what exists
-    Write-Host "  Contents of ${stateRoot}:" -ForegroundColor DarkGray
-    foreach ($item in Get-ChildItem $stateRoot -ErrorAction SilentlyContinue) {
-        $size = Get-FriendlySize -Bytes (Get-DirectorySize -Path $item.FullName)
-        Write-Host "    $($item.Name) ($size)" -ForegroundColor DarkGray
-    }
-
-    Write-Host ''
-    if (Read-Confirmation -Question 'Remove all account state directories (~/.claude-state)?') {
-        Remove-Item $stateRoot -Recurse -Force
-        Write-LogSuccess 'State directories removed'
-    }
-    else {
-        Write-LogInfo 'State directories kept'
+    if (-not $found) {
+        Write-LogInfo 'No state directories found'
     }
 }
 

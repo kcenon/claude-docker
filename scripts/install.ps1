@@ -53,6 +53,9 @@ $Script:SourceDir = ''
 $Script:ClaudeVersion = ''
 $Script:ApiKeyA = ''
 $Script:ApiKeyB = ''
+# Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
+# non-interactive or default install behaves exactly as before (see #273).
+$Script:Runtime = 'claude'
 
 # --- I/O Latency Benchmark ---------------------------------------------------
 
@@ -261,6 +264,23 @@ function Get-Configuration {
     Write-Host '=== Configuration ===' -ForegroundColor Cyan
     Write-Host ''
 
+    # Agent runtime. Options are read from the runtime registry; claude is
+    # listed first so accepting the default keeps today's behavior. A single
+    # registered runtime skips the prompt entirely.
+    $runtimes = @(Get-RuntimeList -ProjectRoot $ProjectRoot)
+    if ($runtimes -contains 'claude') {
+        $runtimes = @('claude') + ($runtimes | Where-Object { $_ -ne 'claude' })
+    }
+    if ($runtimes.Count -gt 1) {
+        $Script:Runtime = Read-Selection `
+            -Question 'Which agent runtime will you use?' `
+            -Options $runtimes
+    }
+    elseif ($runtimes.Count -eq 1) {
+        $Script:Runtime = $runtimes[0]
+    }
+    Write-LogInfo "Agent runtime: $($Script:Runtime)"
+
     # Auth Path
     $authChoice = Read-Selection `
         -Question 'Which authentication method will you use?' `
@@ -330,14 +350,16 @@ function Get-Configuration {
     }
     Write-LogInfo "Accounts: $($Script:NumAccounts)"
 
-    # API keys (Path B)
+    # API keys (Path B). The .env variable prefix is resolved from the runtime
+    # registry (CLAUDE_API_KEY_ / CODEX_API_KEY_ / GEMINI_API_KEY_ / ...).
     $Script:ApiKeys = @()
     if ($Script:AuthPath -eq 'B') {
+        $apiKeyPrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'apiKeyVarPrefix'
         Write-Host ''
-        Write-Host 'Enter Console API keys (from console.anthropic.com):' -ForegroundColor Cyan
+        Write-Host "Enter Console API keys (written as ${apiKeyPrefix}<LETTER>):" -ForegroundColor Cyan
         for ($i = 1; $i -le $Script:NumAccounts; $i++) {
             $letter = Get-AccountLetterUpper -Index $i  # A, B, ..., Z, AA, ZZ
-            $Script:ApiKeys += Read-Secret -Question "API key for Account $letter (sk-ant-...)"
+            $Script:ApiKeys += Read-Secret -Question "API key for Account $letter"
         }
 
         if (-not $Script:ApiKeys[0]) {
@@ -408,6 +430,15 @@ function New-EnvFile {
     $lines += '# ==== Windows: HOME for Docker Compose volume expansion ===='
     $lines += "HOME=$homePath"
     $lines += ''
+
+    # AGENT_RUNTIME is written only for non-default runtimes; omitting it for
+    # claude keeps a default install byte-compatible with prior runs.
+    if ($Script:Runtime -ne 'claude') {
+        $lines += '# ==== Agent Runtime ===='
+        $lines += "AGENT_RUNTIME=$($Script:Runtime)"
+        $lines += ''
+    }
+
     $lines += '# ==== Claude Config Source (optional) ===='
     $lines += '# Set to a path inside the container to source config directly from a repo.'
     $lines += '# Example: /project/claude-config/global'
@@ -421,10 +452,12 @@ function New-EnvFile {
     }
 
     if ($Script:AuthPath -eq 'B') {
+        # API-key variable prefix is resolved from the runtime registry.
+        $apiKeyPrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'apiKeyVarPrefix'
         $lines += '# ==== Path B: Console API Keys ===='
         for ($i = 1; $i -le $Script:NumAccounts; $i++) {
             $letter = Get-AccountLetterUpper -Index $i  # A, B, ..., Z, AA, ZZ
-            $lines += "CLAUDE_API_KEY_${letter}=$($Script:ApiKeys[$i - 1])"
+            $lines += "${apiKeyPrefix}${letter}=$($Script:ApiKeys[$i - 1])"
         }
         $lines += ''
     }
@@ -514,10 +547,18 @@ function New-EnvFile {
 function New-StateDirs {
     Write-LogStep 'Creating state directories'
 
-    $dirs = @((Join-Path $env:USERPROFILE '.claude'))
+    # Host config directory and per-account state directory are both resolved
+    # from the runtime registry (see #273). The host config dir is the
+    # basename of containerHome (e.g. /home/node/.claude -> .claude); the
+    # state-dir name is the registry's stateDir field verbatim.
+    $containerHome = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'containerHome'
+    $configDir = ($containerHome -split '/')[-1]
+    $stateDir = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'stateDir'
+
+    $dirs = @((Join-Path $env:USERPROFILE $configDir))
     for ($i = 1; $i -le $Script:NumAccounts; $i++) {
         $letter = Get-AccountLetter -Index $i
-        $dirs += (Join-Path $env:USERPROFILE ".claude-state\account-$letter")
+        $dirs += (Join-Path $env:USERPROFILE (Join-Path $stateDir "account-$letter"))
     }
 
     foreach ($dir in $dirs) {
@@ -759,7 +800,14 @@ function Install-Dependencies {
         return
     }
 
-    $services = @(Get-ServiceNames -ProjectRoot $ProjectRoot)
+    # Service names use the selected runtime's registry servicePrefix
+    # (claude-a, codex-a, gemini-a, ...) so npm install targets the right
+    # containers (see #273).
+    $servicePrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'servicePrefix'
+    $services = @()
+    for ($i = 1; $i -le $Script:NumAccounts; $i++) {
+        $services += "$servicePrefix-$(Get-AccountLetter -Index $i)"
+    }
 
     foreach ($svc in $services) {
         Write-LogInfo "Installing npm dependencies in $svc..."
@@ -779,7 +827,11 @@ function Install-Dependencies {
 function Invoke-Verification {
     Write-LogStep 'Verifying setup'
 
-    $primarySvc = 'claude-a'
+    # The primary service name and the runtime binary are resolved from the
+    # registry (claude-a/claude, codex-a/codex, gemini-a/gemini — see #273).
+    $servicePrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'servicePrefix'
+    $runtimeBinary = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'binary'
+    $primarySvc = "$servicePrefix-a"
 
     # Check container is running
     $psOutput = Invoke-Compose -ProjectRoot $ProjectRoot ps --format '{{.Name}}' 2>$null
@@ -788,21 +840,21 @@ function Invoke-Verification {
     }
     else {
         Write-LogError "Container $primarySvc is not running"
-        Write-LogInfo 'Check logs: docker compose logs claude-a'
+        Write-LogInfo "Check logs: docker compose logs $primarySvc"
         return
     }
 
-    # Check Claude Code is available
-    $version = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc claude --version 2>$null
+    # Check the runtime CLI is available
+    $version = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc $runtimeBinary --version 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-LogSuccess "Claude Code is available ($version)"
+        Write-LogSuccess "$runtimeBinary is available ($version)"
     }
     else {
-        Write-LogWarn 'Could not verify Claude Code (container may still be starting)'
+        Write-LogWarn "Could not verify $runtimeBinary (container may still be starting)"
     }
 
     # Check auth status (Path A: OAuth login required; Path B: API key validates)
-    $null = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc claude auth status 2>$null
+    $null = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc $runtimeBinary auth status 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-LogSuccess 'Authentication verified'
     }

@@ -57,6 +57,9 @@ AUTH_PATH=""
 TIER=""
 SOURCE_DIR=""
 CLAUDE_VERSION=""
+# Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
+# non-interactive or default install behaves exactly as before (see #273).
+RUNTIME="claude"
 
 # --- Utility Functions --------------------------------------------------------
 
@@ -71,6 +74,8 @@ log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_
 . "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
 # shellcheck source=lib/build-compose-cmd.sh
@@ -478,6 +483,27 @@ run_prerequisite_checks() {
 collect_configuration() {
     echo -e "\n${BOLD}${CYAN}=== Configuration ===${NC}\n"
 
+    # Agent runtime. Options are read from the runtime registry; claude is
+    # listed first so pressing 1 (or accepting the default) keeps today's
+    # behavior. A single registered runtime skips the prompt entirely.
+    local runtimes=()
+    local r
+    while IFS= read -r r; do
+        [[ -z "$r" ]] && continue
+        if [[ "$r" == "claude" ]]; then
+            runtimes=("$r" "${runtimes[@]}")
+        else
+            runtimes+=("$r")
+        fi
+    done < <(runtime_list)
+
+    if [[ ${#runtimes[@]} -gt 1 ]]; then
+        RUNTIME=$(prompt_select "Which agent runtime will you use?" "${runtimes[@]}")
+    elif [[ ${#runtimes[@]} -eq 1 ]]; then
+        RUNTIME="${runtimes[0]}"
+    fi
+    log_info "Agent runtime: $RUNTIME"
+
     # Auth Path
     local auth_choice
     auth_choice=$(prompt_select \
@@ -543,16 +569,19 @@ collect_configuration() {
     fi
     log_info "Accounts: $NUM_ACCOUNTS"
 
-    # API keys (Path B)
+    # API keys (Path B). The .env variable prefix is resolved from the runtime
+    # registry (CLAUDE_API_KEY_ / CODEX_API_KEY_ / GEMINI_API_KEY_ / ...).
     API_KEYS=()
     if [[ "$AUTH_PATH" == "B" ]]; then
-        echo -e "\n${CYAN}Enter Console API keys (from console.anthropic.com):${NC}"
+        local api_key_prefix
+        api_key_prefix=$(runtime_field "$RUNTIME" "apiKeyVarPrefix")
+        echo -e "\n${CYAN}Enter Console API keys (written as ${api_key_prefix}<LETTER>):${NC}"
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
             letter=$(index_to_letter "$i")
             local upper
             upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
-            API_KEYS+=("$(prompt_secret "API key for Account $upper (sk-ant-...)")")
+            API_KEYS+=("$(prompt_secret "API key for Account $upper")")
         done
 
         # Validate at least the first key is non-empty
@@ -602,6 +631,15 @@ generate_env() {
         fi
         echo "IMAGE_TAG=${default_tag:-$(date '+%Y.%m.%d')}"
         echo ""
+
+        # AGENT_RUNTIME is written only for non-default runtimes; omitting it
+        # for claude keeps a default install byte-compatible with prior runs.
+        if [[ "$RUNTIME" != "claude" ]]; then
+            echo "# ==== Agent Runtime ===="
+            echo "AGENT_RUNTIME=$RUNTIME"
+            echo ""
+        fi
+
         echo "# ==== Claude Config Source (optional) ===="
         echo "# Set to a path inside the container to source config directly from a repo."
         echo "# Example: /project/claude-config/global"
@@ -615,13 +653,16 @@ generate_env() {
         fi
 
         if [[ "$AUTH_PATH" == "B" ]]; then
+            # API-key variable prefix is resolved from the runtime registry.
+            local api_key_prefix
+            api_key_prefix=$(runtime_field "$RUNTIME" "apiKeyVarPrefix")
             echo "# ==== Path B: Console API Keys ===="
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
                 letter=$(index_to_letter "$i")
                 local upper
                 upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
-                echo "CLAUDE_API_KEY_${upper}=${API_KEYS[$((i-1))]}"
+                echo "${api_key_prefix}${upper}=${API_KEYS[$((i-1))]}"
             done
             echo ""
         fi
@@ -706,11 +747,20 @@ generate_env() {
 create_state_dirs() {
     log_step "Creating state directories"
 
-    local dirs=("$HOME/.claude")
+    # Host config directory and per-account state directory are both resolved
+    # from the runtime registry (see #273). The host config dir is the
+    # basename of containerHome (e.g. /home/node/.claude -> .claude); the
+    # state-dir name is the registry's stateDir field verbatim.
+    local container_home state_dir config_dir
+    container_home=$(runtime_field "$RUNTIME" "containerHome")
+    config_dir="${container_home##*/}"
+    state_dir=$(runtime_field "$RUNTIME" "stateDir")
+
+    local dirs=("$HOME/$config_dir")
     for i in $(seq 1 "$NUM_ACCOUNTS"); do
         local letter
         letter=$(index_to_letter "$i")
-        dirs+=("$HOME/.claude-state/account-${letter}")
+        dirs+=("$HOME/$state_dir/account-${letter}")
     done
 
     for dir in "${dirs[@]}"; do
@@ -725,9 +775,12 @@ create_state_dirs() {
         fi
     done
 
-    # Harden any existing credential files (Path A OAuth stores .credentials.json)
+    # Harden any existing credential files (Path A OAuth stores them under the
+    # account state dir; the filename is the registry's credentialFiles field).
+    local cred_file
+    cred_file=$(runtime_field "$RUNTIME" "credentialFiles")
     local cred_files
-    cred_files=$(find "$HOME/.claude-state" -name "*.credentials.json" -o -name ".credentials.json" 2>/dev/null || true)
+    cred_files=$(find "$HOME/$state_dir" -name "*${cred_file}" -o -name "$cred_file" 2>/dev/null || true)
     if [[ -n "$cred_files" ]]; then
         while IFS= read -r cfile; do
             chmod 600 "$cfile"
@@ -963,12 +1016,16 @@ install_dependencies() {
 
     build_compose_cmd
 
+    # Service names use the runtime's registry servicePrefix (claude-a,
+    # codex-a, gemini-a, ...) so npm install targets the right containers.
+    local service_prefix
+    service_prefix=$(runtime_field "$RUNTIME" "servicePrefix")
     local services=()
     local n="${NUM_ACCOUNTS:-2}"
     for i in $(seq 1 "$n"); do
         local letter
         letter=$(index_to_letter "$i")
-        services+=("claude-${letter}")
+        services+=("${service_prefix}-${letter}")
     done
 
     for svc in "${services[@]}"; do
@@ -989,7 +1046,13 @@ run_verification() {
     cd "$PROJECT_ROOT"
 
     build_compose_cmd
-    local primary_svc="claude-a"
+
+    # The primary service name and the runtime binary are resolved from the
+    # registry (claude-a/claude, codex-a/codex, gemini-a/gemini — see #273).
+    local service_prefix runtime_binary primary_svc
+    service_prefix=$(runtime_field "$RUNTIME" "servicePrefix")
+    runtime_binary=$(runtime_field "$RUNTIME" "binary")
+    primary_svc="${service_prefix}-a"
 
     # Check container is running
     if "${COMPOSE_CMD[@]}" ps --format '{{.Name}}' 2>/dev/null | grep -q "$primary_svc"; then
@@ -1000,15 +1063,15 @@ run_verification() {
         return 1
     fi
 
-    # Check Claude Code is available
-    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude --version 2>/dev/null; then
-        log_success "Claude Code is available"
+    # Check the runtime CLI is available
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" "$runtime_binary" --version 2>/dev/null; then
+        log_success "$runtime_binary is available"
     else
-        log_warn "Could not verify Claude Code (container may still be starting)"
+        log_warn "Could not verify $runtime_binary (container may still be starting)"
     fi
 
     # Check auth status
-    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude auth status 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" "$runtime_binary" auth status 2>/dev/null; then
         log_success "Authentication verified"
     else
         log_warn "Authentication not verified (may need browser login or API key check)"
