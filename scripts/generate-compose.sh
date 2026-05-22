@@ -42,6 +42,11 @@ RT_CONTAINER_CONFIG_MOUNT="$(runtime_field "$AGENT_RUNTIME" containerConfigMount
 RT_API_KEY_PREFIX="$(runtime_field "$AGENT_RUNTIME" apiKeyVarPrefix)"
 RT_SDK_API_KEY_VAR="$(runtime_field "$AGENT_RUNTIME" sdkApiKeyVar)"
 RT_CONFIG_DIR_ENV="$(runtime_field "$AGENT_RUNTIME" configDirEnv)"
+# Value the configDirEnv variable carries — decoupled from containerConfigMount
+# (issue #280). Equal to containerConfigMount for runtimes whose config-dir env
+# var IS the config directory (claude, codex); the parent path for runtimes
+# (gemini) whose CLI appends its own subdirectory.
+RT_CONFIG_DIR_ENV_VALUE="$(runtime_field "$AGENT_RUNTIME" configDirEnvValue)"
 RT_CONFIG_SOURCE_ENV="$(runtime_field "$AGENT_RUNTIME" configSourceEnv)"
 # Host-side config directory basename (e.g. .claude, .codex) — the host
 # mount whose container target is <hostConfigMount>. Derived from the
@@ -147,7 +152,7 @@ generate_base() {
             # for claude too is functionally inert and keeps the env block
             # uniform across runtimes.
             echo "      - AGENT_RUNTIME=${AGENT_RUNTIME}"
-            echo "      - ${RT_CONFIG_DIR_ENV}=${RT_CONTAINER_CONFIG_MOUNT}"
+            echo "      - ${RT_CONFIG_DIR_ENV}=${RT_CONFIG_DIR_ENV_VALUE}"
             echo "      - ${RT_CONFIG_SOURCE_ENV}=\${${RT_CONFIG_SOURCE_ENV}:-}"
             # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
             # the entrypoint, no codex equivalent). The registry has no field

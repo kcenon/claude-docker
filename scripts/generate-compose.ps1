@@ -83,6 +83,11 @@ $RtContainerConfigMount = Get-RtField 'containerConfigMount'
 $RtApiKeyPrefix        = Get-RtField 'apiKeyVarPrefix'
 $RtSdkApiKeyVar        = Get-RtField 'sdkApiKeyVar'
 $RtConfigDirEnv        = Get-RtField 'configDirEnv'
+# Value the configDirEnv variable carries — decoupled from containerConfigMount
+# (issue #280). Equal to containerConfigMount for runtimes whose config-dir env
+# var IS the config directory (claude, codex); the parent path for runtimes
+# (gemini) whose CLI appends its own subdirectory.
+$RtConfigDirEnvValue   = Get-RtField 'configDirEnvValue'
 $RtConfigSourceEnv     = Get-RtField 'configSourceEnv'
 # Host-side config directory basename (e.g. .claude, .codex) — the host
 # mount whose container target is <hostConfigMount>. Derived from the
@@ -185,7 +190,7 @@ function New-BaseCompose {
         # for claude too is functionally inert and keeps the env block
         # uniform across runtimes.
         [void]$sb.AppendLine("      - AGENT_RUNTIME=${AgentRuntime}")
-        [void]$sb.AppendLine("      - ${RtConfigDirEnv}=${RtContainerConfigMount}")
+        [void]$sb.AppendLine("      - ${RtConfigDirEnv}=${RtConfigDirEnvValue}")
         [void]$sb.AppendLine("      - ${RtConfigSourceEnv}=`${${RtConfigSourceEnv}:-}")
         # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
         # the entrypoint, no codex equivalent). The registry has no field

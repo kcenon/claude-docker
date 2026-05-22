@@ -25,6 +25,7 @@ type RuntimeSpec struct {
 	HostConfigMount      string `json:"hostConfigMount"`
 	ContainerConfigMount string `json:"containerConfigMount"`
 	ConfigDirEnv         string `json:"configDirEnv"`
+	ConfigDirEnvValue    string `json:"configDirEnvValue"`
 	ConfigSourceEnv      string `json:"configSourceEnv"`
 	APIKeyVarPrefix      string `json:"apiKeyVarPrefix"`
 	SDKAPIKeyVar         string `json:"sdkApiKeyVar"`

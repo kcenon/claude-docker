@@ -22,12 +22,15 @@ _CLAUDE_DOCKER_BOOTSTRAP_GEMINI_SH_SOURCED=1
 # --- Gemini config -------------------------------------------------------------
 # Gemini CLI resolves its config directory as <home>/.gemini, where <home> is
 # GEMINI_CLI_HOME when set, otherwise the OS home directory. The compose
-# generator emits GEMINI_CLI_HOME=<containerConfigMount> (the state-volume
-# mount), so the effective config directory is <GEMINI_CLI_HOME>/.gemini —
-# still inside the per-account state volume, so credentials and history
-# persist. oauth_creds.json, google_accounts.json, sessions, and logs are
-# left in that writable state directory; only non-secret host config
-# (settings.json, GEMINI.md, commands/, extensions/) is linked in.
+# generator emits GEMINI_CLI_HOME=<configDirEnvValue>, the parent of the
+# config directory (issue #280 decoupled this value from containerConfigMount).
+# With GEMINI_CLI_HOME=/home/node the effective config directory is
+# /home/node/.gemini — exactly the per-account state-volume mount
+# (containerConfigMount), so credentials and history persist there directly
+# with no nested .gemini/.gemini path. oauth_creds.json, google_accounts.json,
+# sessions, and logs are left in that writable state directory; only
+# non-secret host config (settings.json, GEMINI.md, commands/, extensions/)
+# is linked in.
 
 # runtime_bootstrap
 # Gemini-runtime entry point. Prepares the Gemini config directory:
@@ -36,8 +39,9 @@ _CLAUDE_DOCKER_BOOTSTRAP_GEMINI_SH_SOURCED=1
 # the Gemini-specific environment variables.
 runtime_bootstrap() {
     # Gemini computes its config dir as <home>/.gemini. GEMINI_CLI_HOME, when
-    # set by the generated compose file, overrides <home>; fall back to
-    # /home/node so the path matches the container's default OS home.
+    # set by the generated compose file, overrides <home>; the generator emits
+    # /home/node, so the config dir resolves to /home/node/.gemini. Fall back
+    # to /home/node so the path matches the container's default OS home.
     local GEMINI_HOME_ROOT="${GEMINI_CLI_HOME:-/home/node}"
     local GEMINI_ACCOUNT_DIR="$GEMINI_HOME_ROOT/.gemini"
     local GEMINI_SOURCE="${GEMINI_CONFIG_SOURCE:-/home/node/.gemini-host}"
