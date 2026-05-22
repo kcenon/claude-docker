@@ -94,9 +94,12 @@ if command -v gh >/dev/null 2>&1; then
         echo "[entrypoint] GitHub auth: using GH_TOKEN environment variable"
     elif [ -f /home/node/.config/gh/hosts.yml ]; then
         gh auth setup-git 2>/dev/null || true
-        # Validate token (macOS Keychain / Windows Credential Manager tokens
-        # are NOT in hosts.yml — only the host config structure is present)
-        if ! gh auth status >/dev/null 2>&1; then
+        # Validate the credential gh actually uses for API calls. `gh api user`
+        # is checked instead of `gh auth status` because the latter also
+        # evaluates the unusable mounted `default` account and exits non-zero.
+        # macOS Keychain / Windows Credential Manager tokens are NOT in
+        # hosts.yml — only the host config structure is present.
+        if ! gh api user --jq .login >/dev/null 2>&1; then
             echo "[entrypoint] WARNING: GitHub token is invalid or missing."
             echo "  On macOS/Windows, gh stores tokens in OS credential stores"
             echo "  (Keychain / Credential Manager), not in hosts.yml."
