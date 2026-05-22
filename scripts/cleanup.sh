@@ -17,6 +17,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$PROJECT_ROOT"
 
+# runtime.sh resolves per-runtime state-directory names from the registry so
+# state cleanup covers every registered runtime, not just Claude (see #273).
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
+
 REPO_DIR=""
 CONFIRM="ask"
 RUN_BACKUPS=0
@@ -101,7 +106,7 @@ fi
 echo "=== Removing state directories ==="
 if [ "$CONFIRM" = "ask" ]; then
     if [ -t 0 ]; then
-        read -p "Remove ~/.claude-state/*? (y/N) " confirm
+        read -p "Remove every runtime's state directory (~/.*-state)? (y/N) " confirm
         case "$confirm" in
             y|Y|yes|YES) CONFIRM="yes" ;;
             *)           CONFIRM="no"  ;;
@@ -114,7 +119,17 @@ if [ "$CONFIRM" = "ask" ]; then
 fi
 
 if [ "$CONFIRM" = "yes" ]; then
-    rm -rf "${HOME}/.claude-state"
+    # Remove every registered runtime's state directory, not just Claude's,
+    # so a codex/gemini install is fully cleaned up (see #273).
+    while IFS= read -r runtime; do
+        [ -z "$runtime" ] && continue
+        state_dir="$(runtime_field "$runtime" "stateDir")"
+        [ -z "$state_dir" ] && continue
+        if [ -d "${HOME}/${state_dir}" ]; then
+            rm -rf "${HOME:?}/${state_dir}"
+            echo "  Removed: ~/${state_dir}"
+        fi
+    done < <(runtime_list)
     echo "  State directories removed."
 else
     echo "  Skipped."

@@ -11,6 +11,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -182,28 +184,50 @@ remove_worktrees() {
 remove_state_directories() {
     log_step "Removing state directories"
 
-    local state_root="$HOME/.claude-state"
+    # Offer every registered runtime's state directory, not just Claude's,
+    # so a codex/gemini install does not leave its state orphaned. State-dir
+    # names are resolved from the runtime registry (see #267, #273).
+    #
+    # runtime_list output is collected into an array first: prompt_confirm
+    # reads from stdin, so iterating via `done < <(runtime_list)` would let
+    # the prompt consume the runtime stream instead of the user's answer.
+    local runtimes=()
+    local runtime
+    while IFS= read -r runtime; do
+        [[ -n "$runtime" ]] && runtimes+=("$runtime")
+    done < <(runtime_list)
 
-    if [[ ! -d "$state_root" ]]; then
-        log_info "No state directories found at $state_root"
-        return 0
-    fi
+    local found=0
+    local state_dir state_root
+    for runtime in "${runtimes[@]}"; do
+        state_dir="$(runtime_field "$runtime" "stateDir")"
+        [[ -z "$state_dir" ]] && continue
+        state_root="$HOME/$state_dir"
 
-    # List what exists
-    echo -e "${DIM}  Contents of $state_root/:${NC}"
-    ls -1 "$state_root" 2>/dev/null | while read -r item; do
-        local size
-        size=$(du -sh "$state_root/$item" 2>/dev/null | cut -f1)
-        echo -e "${DIM}    $item ($size)${NC}"
+        if [[ ! -d "$state_root" ]]; then
+            continue
+        fi
+        found=1
+
+        # List what exists
+        echo -e "${DIM}  Contents of $state_root/:${NC}"
+        ls -1 "$state_root" 2>/dev/null | while read -r item; do
+            local size
+            size=$(du -sh "$state_root/$item" 2>/dev/null | cut -f1)
+            echo -e "${DIM}    $item ($size)${NC}"
+        done
+
+        echo ""
+        if prompt_confirm "Remove all $runtime state directories (~/$state_dir)?"; then
+            rm -rf "$state_root"
+            log_success "$runtime state directories removed"
+        else
+            log_info "$runtime state directories kept"
+        fi
     done
 
-    # Account state directories
-    echo ""
-    if prompt_confirm "Remove all account state directories (~/.claude-state)?"; then
-        rm -rf "$state_root"
-        log_success "State directories removed"
-    else
-        log_info "State directories kept"
+    if [[ "$found" -eq 0 ]]; then
+        log_info "No state directories found"
     fi
 }
 
