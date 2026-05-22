@@ -261,6 +261,43 @@ The TUI can list and attach to Gemini services; usage columns show `--`.
 Claude-specific usage aggregation and `scripts/claude-docker usage` remain
 Claude-only.
 
+### Adding a runtime
+
+Claude, Codex, and Gemini are all defined the same way: a registry entry plus
+a bootstrap module. No installer, lifecycle script, or compose generator code
+is runtime-specific — they all resolve per-runtime values from the registry.
+To add a new runtime:
+
+1. **Add a registry entry.** Append an object under `runtimes` in
+   `tui/internal/config/runtimes.json`, keyed by the runtime name. Populate
+   every field that the existing entries declare (the registry is the single
+   source of truth read by Go, bash, PowerShell, and the container
+   entrypoint). The fields the lifecycle scripts depend on are:
+
+   | Field | Used for |
+   |-------|----------|
+   | `binary` | CLI executable verified inside the container |
+   | `servicePrefix` | compose service names (`<prefix>-a`, `<prefix>-b`, ...) |
+   | `stateDir` | per-account host state directory (`~/<stateDir>/account-*`) |
+   | `containerHome` | its basename is the host config directory (`~/<basename>`) |
+   | `apiKeyVarPrefix` | `.env` API-key variable prefix (`<PREFIX><LETTER>`) |
+   | `sdkApiKeyVar` | SDK key variable the API key is mapped to at runtime |
+   | `buildArg` | Docker build argument for the version pin |
+   | `bootstrapModule` | bootstrap script sourced by the entrypoint |
+   | `credentialFiles` | credential filename hardened to `600` by the installer |
+
+2. **Add a bootstrap module.** Create `scripts/lib/bootstrap-<runtime>.sh`
+   matching the name in the registry's `bootstrapModule` field. It must
+   expose a single `runtime_bootstrap` entry point; the container entrypoint
+   sources it via the registry and runs it after the runtime-agnostic common
+   steps. Use `scripts/lib/bootstrap-codex.sh` as a template — shared logic
+   lives in `scripts/lib/bootstrap-common.sh`.
+
+Once both exist, `install`, `remove`, and `cleanup` (bash and PowerShell)
+pick up the new runtime automatically: the installer offers it in the
+runtime-selection prompt, and `remove`/`cleanup` iterate every registered
+runtime when removing state directories.
+
 ### Authentication
 
 Authenticate directly inside each container. Each container keeps its own
