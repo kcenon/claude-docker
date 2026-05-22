@@ -1,6 +1,12 @@
 // Package auth provides OAuth token reading and Anthropic usage API access.
 package auth
 
+// This file is Claude-only. The usage API it wraps
+// (api.anthropic.com/api/oauth/usage) is specific to Anthropic's OAuth
+// flow; Codex, Gemini, and other runtimes have no equivalent endpoint.
+// Callers gate it via Env.SupportsClaudeUsage so non-Claude runtimes
+// degrade gracefully (the dashboard renders "--" for usage). See #271.
+
 import (
 	"encoding/json"
 	"fmt"

@@ -51,6 +51,7 @@ func (m *Manager) fetchContainerStatus() map[string]docker.ContainerInfo {
 // and container status applied.
 func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, containerMap map[string]docker.ContainerInfo) []Account {
 	accounts := make([]Account, n)
+	runtime := m.env.AgentRuntime()
 	servicePrefix := m.env.ServicePrefix()
 	claudeUsage := m.env.SupportsClaudeUsage()
 	for i := 1; i <= n; i++ {
@@ -60,6 +61,7 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 		acct := Account{
 			Letter:      letter,
 			ServiceName: svcName,
+			Runtime:     runtime,
 		}
 
 		if sd, ok := stateDirs[letter]; ok {

@@ -149,22 +149,30 @@ func (e *Env) NumAccounts() int {
 }
 
 // AgentRuntime returns the selected agent runtime. Claude is the default.
+// Only runtimes present in the embedded registry are honored; any other
+// value (including an empty one) falls back to Claude.
 func (e *Env) AgentRuntime() string {
 	if e == nil {
 		return RuntimeClaude
 	}
 	v := strings.ToLower(strings.TrimSpace(e.Get("AGENT_RUNTIME")))
-	switch v {
-	case RuntimeCodex:
-		return RuntimeCodex
-	default:
-		return RuntimeClaude
+	if _, ok := LookupRuntime(v); ok {
+		return v
 	}
+	return RuntimeClaude
+}
+
+// RuntimeSpec returns the registry entry for the selected agent runtime.
+// AgentRuntime guarantees the name is registered, so the lookup always
+// succeeds.
+func (e *Env) RuntimeSpec() RuntimeSpec {
+	spec, _ := LookupRuntime(e.AgentRuntime())
+	return spec
 }
 
 // ServicePrefix returns the docker compose service prefix for the runtime.
 func (e *Env) ServicePrefix() string {
-	return e.AgentRuntime()
+	return e.RuntimeSpec().ServicePrefix
 }
 
 // StateDirName returns the host-side state directory name for the runtime.
@@ -174,32 +182,28 @@ func (e *Env) StateDirName() string {
 
 // RuntimeBinary returns the executable used inside the container.
 func (e *Env) RuntimeBinary() string {
-	return e.AgentRuntime()
+	return e.RuntimeSpec().Binary
 }
 
 // SkipPermissionsFlag returns the runtime-specific unsafe permission bypass flag.
 func (e *Env) SkipPermissionsFlag() string {
-	if e.AgentRuntime() == RuntimeCodex {
-		return "--dangerously-bypass-approvals-and-sandbox"
-	}
-	return "--dangerously-skip-permissions"
+	return e.RuntimeSpec().SkipPermissionsFlag
 }
 
 // RuntimeCommandArgs returns the command used to attach to the selected agent.
 func (e *Env) RuntimeCommandArgs(skipPermissions bool) []string {
-	args := []string{e.RuntimeBinary()}
-	if e.AgentRuntime() == RuntimeCodex {
-		args = append(args, "-c", `cli_auth_credentials_store="file"`)
-	}
+	spec := e.RuntimeSpec()
+	args := []string{spec.Binary}
+	args = append(args, strings.Fields(spec.ExtraRunArgs)...)
 	if skipPermissions {
-		args = append(args, e.SkipPermissionsFlag())
+		args = append(args, spec.SkipPermissionsFlag)
 	}
 	return args
 }
 
 // SupportsClaudeUsage reports whether Claude-specific usage integrations apply.
 func (e *Env) SupportsClaudeUsage() bool {
-	return e.AgentRuntime() == RuntimeClaude
+	return e.RuntimeSpec().SupportsUsage
 }
 
 // APIKey returns the per-account provider API key if set.
@@ -207,11 +211,7 @@ func (e *Env) APIKey(letter string) string {
 	if e == nil {
 		return ""
 	}
-	prefix := "CLAUDE_API_KEY_"
-	if e.AgentRuntime() == RuntimeCodex {
-		prefix = "CODEX_API_KEY_"
-	}
-	return e.Get(prefix + strings.ToUpper(letter))
+	return e.Get(e.RuntimeSpec().APIKeyVarPrefix + strings.ToUpper(letter))
 }
 
 // HasWorktrees returns true if PROJECT_DIR_A is set (worktree mode).
