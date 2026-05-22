@@ -48,6 +48,10 @@ RT_CONFIG_DIR_ENV="$(runtime_field "$AGENT_RUNTIME" configDirEnv)"
 # (gemini) whose CLI appends its own subdirectory.
 RT_CONFIG_DIR_ENV_VALUE="$(runtime_field "$AGENT_RUNTIME" configDirEnvValue)"
 RT_CONFIG_SOURCE_ENV="$(runtime_field "$AGENT_RUNTIME" configSourceEnv)"
+# Whether this runtime needs the separate agents/skills compose volume.
+# Only codex binds it; claude obtains skills via its host config mount and
+# gemini via its own config mount, so neither needs the extra volume.
+RT_MOUNTS_AGENTS_SKILLS="$(runtime_field "$AGENT_RUNTIME" mountsAgentsSkills)"
 # Host-side config directory basename (e.g. .claude, .codex) — the host
 # mount whose container target is <hostConfigMount>. Derived from the
 # container config mount basename, which the registry keeps in sync.
@@ -130,11 +134,9 @@ generate_base() {
             echo "      - \${PROJECT_DIR}:\${CONTAINER_PROJECT_DIR:-/project}"
             echo "      - \${HOME}/${RT_STATE_DIR}/account-${letter}:${RT_CONTAINER_CONFIG_MOUNT}"
             echo "      - \${HOME}/${RT_HOST_CONFIG_BASENAME}:${RT_HOST_CONFIG_MOUNT}:ro"
-            # The agents/skills mount is a codex-only volume: claude does not
-            # bind it. The registry has no per-runtime field that singles it
-            # out (mountsAgentsSkills is true for both), so this one line is
-            # gated on the runtime id to preserve byte-identical output.
-            if [[ "$AGENT_RUNTIME" == "codex" ]]; then
+            # The agents/skills volume is bound only for runtimes whose
+            # registry entry sets mountsAgentsSkills (currently codex).
+            if [[ "$RT_MOUNTS_AGENTS_SKILLS" == "true" ]]; then
                 echo '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
             fi
             echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
