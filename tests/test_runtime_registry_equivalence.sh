@@ -37,11 +37,11 @@ fi
 
 # The set of fields every runtime entry carries (see #268 / #267).
 FIELDS=(
-    binary servicePrefix stateDir containerHome hostConfigMount
-    containerConfigMount configDirEnv configDirEnvValue configSourceEnv
-    apiKeyVarPrefix sdkApiKeyVar buildArg installMethod skipPermissionsFlag
-    configFormat bootstrapModule extraEnv extraRunArgs supportsUsage
-    mountsAgentsSkills credentialFiles oauthCredentialFile
+    binary displayName servicePrefix stateDir containerHome
+    hostConfigMount containerConfigMount configDirEnv configDirEnvValue
+    configSourceEnv apiKeyVarPrefix sdkApiKeyVar buildArg installMethod
+    skipPermissionsFlag configFormat bootstrapModule extraEnv extraRunArgs
+    supportsUsage mountsAgentsSkills credentialFiles oauthCredentialFile
 )
 
 PASS=0

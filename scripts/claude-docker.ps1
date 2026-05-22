@@ -153,6 +153,7 @@ function Invoke-Agent {
     $skipFlag     = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'skipPermissionsFlag'
     $extraRunArgs = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'extraRunArgs'
     $servicePrefix = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'servicePrefix'
+    $label        = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'displayName'
 
     # Skip-permissions flags accepted: the runtime's own flag plus the
     # universal --dangerously-skip-permissions alias (a no-op duplicate for
@@ -169,8 +170,8 @@ function Invoke-Agent {
     # Default service is keyed off the subcommand (claude-a / codex-a).
     if (-not $service) { $service = "$servicePrefix-a" }
 
-    # Pretty launch banner: Claude Code vs Codex CLI matched the prior wording.
-    $label = if ($Subcommand -eq 'codex') { 'Codex CLI' } else { 'Claude Code' }
+    # Pretty launch banner: the label is the runtime's registry displayName,
+    # so every registered runtime prints a correct name (not just claude/codex).
     Write-Host "Starting $label in " -ForegroundColor Cyan -NoNewline
     Write-Host $service -ForegroundColor White -NoNewline
     Write-Host '...' -ForegroundColor Cyan
