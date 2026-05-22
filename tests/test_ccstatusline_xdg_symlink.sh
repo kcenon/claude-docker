@@ -22,7 +22,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENTRYPOINT="$SCRIPT_DIR/../scripts/entrypoint.sh"
+# The XDG symlink block moved out of entrypoint.sh into the per-runtime
+# bootstrap module scripts/lib/bootstrap-claude.sh (issue #269), where it
+# lives inside the runtime_bootstrap function.
+BOOTSTRAP_CLAUDE="$SCRIPT_DIR/../scripts/lib/bootstrap-claude.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,11 +54,15 @@ make_fixture() {
     chmod "$xdg_mode" "$root/xdg"
 }
 
-# Run the XDG block of entrypoint.sh against a fabricated environment.
+# Run the XDG block of bootstrap-claude.sh against a fabricated environment.
 # We extract the block (lines between the "Symlink ccstatusline" marker
 # and the closing "fi" that matches it) instead of sourcing the whole
-# entrypoint, which would try to create /home/node paths and call
+# module, which would try to create /home/node paths and call
 # generate_container_settings on unrelated inputs.
+#
+# The block lives inside the runtime_bootstrap function and uses `local`
+# declarations, so the extracted lines are wrapped in a throwaway function
+# before execution — `local` outside a function is a fatal error.
 run_xdg_block() {
     local root="$1"
     local xdg="$root/xdg" account="$root/account" src="$root/config-source"
@@ -64,11 +71,16 @@ run_xdg_block() {
     # real script; we override by redefining the literal via sed.
     local tmp_block
     tmp_block=$(mktemp)
-    awk '
-        /# Symlink ccstatusline config to XDG path/ { capture=1 }
-        capture { print }
-        capture && /^    fi$/ { exit }
-    ' "$ENTRYPOINT" > "$tmp_block"
+    {
+        echo "_xdg_block() {"
+        awk '
+            /# Symlink ccstatusline config to XDG path/ { capture=1 }
+            capture { print }
+            capture && /^    fi$/ { exit }
+        ' "$BOOTSTRAP_CLAUDE"
+        echo "}"
+        echo "_xdg_block"
+    } > "$tmp_block"
 
     # Redirect the block's hardcoded /home/node/.config/ccstatusline to
     # our fixture. The block also references $ACCOUNT_DIR and
