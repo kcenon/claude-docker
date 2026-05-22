@@ -3,6 +3,7 @@
   "runtimes": {
     "claude": {
       "binary": "claude",
+      "displayName": "Claude Code",
       "servicePrefix": "claude",
       "stateDir": ".claude-state",
       "containerHome": "/home/node/.claude",
@@ -27,6 +28,7 @@
     },
     "codex": {
       "binary": "codex",
+      "displayName": "Codex CLI",
       "servicePrefix": "codex",
       "stateDir": ".codex-state",
       "containerHome": "/home/node/.codex",
@@ -51,6 +53,7 @@
     },
     "gemini": {
       "binary": "gemini",
+      "displayName": "Gemini CLI",
       "servicePrefix": "gemini",
       "stateDir": ".gemini-state",
       "containerHome": "/home/node/.gemini",

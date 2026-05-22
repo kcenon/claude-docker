@@ -19,6 +19,7 @@ var runtimesJSON []byte
 // awk fallback and PowerShell readers stay simple.
 type RuntimeSpec struct {
 	Binary               string `json:"binary"`
+	DisplayName          string `json:"displayName"`
 	ServicePrefix        string `json:"servicePrefix"`
 	StateDir             string `json:"stateDir"`
 	ContainerHome        string `json:"containerHome"`

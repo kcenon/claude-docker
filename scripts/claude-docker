@@ -243,10 +243,11 @@ cmd_agent() {
     # differ (claude under AGENT_RUNTIME=codex), and the historical
     # cmd_claude always launched the claude binary regardless — so resolve
     # from the subcommand to keep that behavior.
-    local binary skip_flag extra_run_args
+    local binary skip_flag extra_run_args label
     binary="$(runtime_field "$subcommand" binary)"
     skip_flag="$(runtime_field "$subcommand" skipPermissionsFlag)"
     extra_run_args="$(runtime_field "$subcommand" extraRunArgs)"
+    label="$(runtime_field "$subcommand" displayName)"
 
     # Skip-permissions flags accepted: the runtime's own flag plus the
     # universal --dangerously-skip-permissions alias (a no-op duplicate for
@@ -264,13 +265,8 @@ cmd_agent() {
     service="${service:-$(runtime_field "$subcommand" servicePrefix)-a}"
     ensure_compose_cmd
 
-    # Pretty launch banner: Claude Code vs Codex CLI matched the prior wording.
-    local label
-    if [[ "$subcommand" == "codex" ]]; then
-        label="Codex CLI"
-    else
-        label="Claude Code"
-    fi
+    # Pretty launch banner: the label is the runtime's registry displayName,
+    # so every registered runtime prints a correct name (not just claude/codex).
     echo -e "${CYAN}Starting ${label} in ${BOLD}$service${NC}${CYAN}...${NC}"
 
     # Build argv: binary, then registry extraRunArgs (word-split; the codex
