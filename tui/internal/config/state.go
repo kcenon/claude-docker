@@ -90,10 +90,12 @@ func DiscoverStateDirs() ([]StateDir, error) {
 	return DiscoverStateDirsForRuntime(RuntimeClaude)
 }
 
-// StateDirNameForRuntime returns the host-side state directory name.
+// StateDirNameForRuntime returns the host-side state directory name for the
+// given runtime, resolved from the runtime registry. Falls back to
+// ".claude-state" when the runtime is unknown.
 func StateDirNameForRuntime(runtime string) string {
-	if runtime == RuntimeCodex {
-		return ".codex-state"
+	if spec, ok := LookupRuntime(runtime); ok {
+		return spec.StateDir
 	}
 	return ".claude-state"
 }
