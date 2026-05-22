@@ -60,6 +60,25 @@ func (s StateDir) HasCodexAuth() bool {
 	return err == nil
 }
 
+// OAuthCredentialPath returns the path to the runtime's OAuth credential
+// file (e.g. .credentials.json for Claude, auth.json for Codex) inside
+// this state dir, sourced from the runtime registry.
+func (s StateDir) OAuthCredentialPath(spec RuntimeSpec) string {
+	return filepath.Join(s.Path, spec.OAuthCredentialFile)
+}
+
+// HasAnyCredential reports whether any of the runtime's credential files
+// exist in this state dir. The registry's credentialFiles entry is a
+// space-separated list, so each candidate is checked in turn.
+func (s StateDir) HasAnyCredential(spec RuntimeSpec) bool {
+	for _, name := range strings.Fields(spec.CredentialFiles) {
+		if _, err := os.Stat(filepath.Join(s.Path, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // HasLimitlineCache returns true if limitline-usage-cache.json exists.
 func (s StateDir) HasLimitlineCache() bool {
 	_, err := os.Stat(s.LimitlineCachePath())

@@ -47,21 +47,33 @@ func (m *Manager) ListAccounts() ([]Account, error) {
 	return accounts, nil
 }
 
+// detectAuthType resolves an account's authentication method from the
+// runtime registry, with no per-runtime branching. Runtimes that expose a
+// Claude-style OAuth usage endpoint (SupportsUsage) treat an OAuth
+// credential as AuthOAuth and rank it above an API key; other runtimes
+// treat the credential as opaque login state (AuthLogin) and rank an API
+// key first. A nil env degrades to a Claude-shaped lookup.
 func detectAuthType(sd config.StateDir, env *config.Env, letter string) AuthType {
-	if env != nil && env.AgentRuntime() == config.RuntimeCodex {
-		if env.APIKey(letter) != "" {
-			return AuthAPIKey
+	spec, _ := config.LookupRuntime(config.RuntimeClaude)
+	apiKey := ""
+	if env != nil {
+		spec = env.RuntimeSpec()
+		apiKey = env.APIKey(letter)
+	}
+	if spec.SupportsUsage {
+		if sd.HasAnyCredential(spec) {
+			return AuthOAuth
 		}
-		if sd.HasCodexAuth() {
-			return AuthLogin
+		if apiKey != "" {
+			return AuthAPIKey
 		}
 		return AuthNone
 	}
-	if sd.HasCredentials() {
-		return AuthOAuth
-	}
-	if env.APIKey(letter) != "" {
+	if apiKey != "" {
 		return AuthAPIKey
+	}
+	if sd.HasAnyCredential(spec) {
+		return AuthLogin
 	}
 	return AuthNone
 }
