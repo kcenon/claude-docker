@@ -18,6 +18,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_CLI_VERSION
+ARG GEMINI_CLI_VERSION
 
 WORKDIR /workspace
 
@@ -97,17 +98,26 @@ RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
 # Add the native install location to PATH for all users
 ENV PATH="/home/node/.local/bin:${PATH}"
 
-# Install Codex CLI and statusline tools globally (npm packages)
+# Install Codex CLI, Gemini CLI, and statusline tools globally (npm packages)
 #
-# DL3016 waived: @openai/codex, ccstatusline, and claude-limitline are
-# latest-tracking helper packages; pinning them would block bug fixes without
-# a security benefit. CODEX_CLI_VERSION is available when reproducibility is
-# preferred for the Codex CLI.
+# Codex and Gemini share this npm layer: both runtimes install via npm
+# (installMethod "npm" in runtimes.json), so a single RUN keeps the image
+# layer count down. Each CLI keeps its own version-pin ARG.
+#
+# DL3016 waived: @openai/codex, @google/gemini-cli, ccstatusline, and
+# claude-limitline are latest-tracking helper packages; pinning them would
+# block bug fixes without a security benefit. CODEX_CLI_VERSION and
+# GEMINI_CLI_VERSION are available when reproducibility is preferred.
 # hadolint ignore=DL3016
 RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
         npm install -g "@openai/codex@${CODEX_CLI_VERSION}" ccstatusline claude-limitline; \
     else \
         npm install -g @openai/codex ccstatusline claude-limitline; \
+    fi \
+    && if [[ -n "${GEMINI_CLI_VERSION:-}" ]]; then \
+        npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
+    else \
+        npm install -g @google/gemini-cli; \
     fi \
     && npm cache clean --force
 
