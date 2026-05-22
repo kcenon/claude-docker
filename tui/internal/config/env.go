@@ -13,6 +13,7 @@ import (
 const (
 	RuntimeClaude = "claude"
 	RuntimeCodex  = "codex"
+	RuntimeGemini = "gemini"
 )
 
 // Env holds parsed .env configuration with order-preserving entries.

@@ -124,6 +124,7 @@ jobs:
           - tests/test_ccstatusline_xdg_symlink.sh
           - tests/test_parse_env.sh
           - tests/test_parse_env_equivalence.sh
+          - tests/test_runtime_registry_equivalence.sh
           - tests/test_transform_syntax_check.sh
           - tests/test_cleanup_backups.sh
           - scripts/test-entrypoint-settings.sh

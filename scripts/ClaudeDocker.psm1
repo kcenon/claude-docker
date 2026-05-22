@@ -313,6 +313,68 @@ function Get-NumAccounts {
     return 2
 }
 
+# --- Runtime registry --------------------------------------------------------
+# Runtime-specific values are resolved from the JSON registry at
+# tui/internal/config/runtimes.json — the cross-language single source of
+# truth (see #267). The registry lives under tui/ so Go's go:embed can reach
+# it; this module finds it relative to $ProjectRoot. The parsed registry is
+# cached in a module-scoped variable so ConvertFrom-Json runs only once.
+
+$script:RuntimeRegistryCache = $null
+
+function Get-RuntimeRegistry {
+    <#
+    .SYNOPSIS
+    Parse and cache runtimes.json from the project tree. Returns the parsed
+    PSCustomObject. Parses once per module load.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    if ($null -ne $script:RuntimeRegistryCache) {
+        return $script:RuntimeRegistryCache
+    }
+    $registryPath = Join-Path $ProjectRoot 'tui/internal/config/runtimes.json'
+    if (-not (Test-Path $registryPath)) {
+        throw "Runtime registry not found: $registryPath"
+    }
+    $script:RuntimeRegistryCache = Get-Content -Raw -Path $registryPath | ConvertFrom-Json
+    return $script:RuntimeRegistryCache
+}
+
+function Get-RuntimeField {
+    <#
+    .SYNOPSIS
+    Return the value of a single field for the named runtime from the
+    registry. Returns $null if the runtime or field is absent.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Runtime,
+        [Parameter(Mandatory)][string]$Field
+    )
+
+    $registry = Get-RuntimeRegistry -ProjectRoot $ProjectRoot
+    $entry = $registry.runtimes.$Runtime
+    if ($null -eq $entry) {
+        return $null
+    }
+    return $entry.$Field
+}
+
+function Get-RuntimeList {
+    <#
+    .SYNOPSIS
+    Return the registered runtime names from the registry, sorted.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $registry = Get-RuntimeRegistry -ProjectRoot $ProjectRoot
+    return @($registry.runtimes.PSObject.Properties.Name | Sort-Object)
+}
+
 function Get-AgentRuntime {
     <#
     .SYNOPSIS
@@ -332,8 +394,10 @@ function Get-AgentRuntime {
         $runtime = 'claude'
     }
     $runtime = $runtime.ToLowerInvariant()
-    if ($runtime -notin @('claude', 'codex')) {
-        throw "AGENT_RUNTIME must be 'claude' or 'codex' (got: $runtime)"
+    # Validate against the registry rather than a hardcoded allowlist.
+    $known = Get-RuntimeList -ProjectRoot $ProjectRoot
+    if ($runtime -notin $known) {
+        throw "AGENT_RUNTIME is not a known runtime (got: $runtime)"
     }
     return $runtime
 }
@@ -342,7 +406,8 @@ function Get-ServicePrefix {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
-    return Get-AgentRuntime -ProjectRoot $ProjectRoot
+    $runtime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    return Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'servicePrefix'
 }
 
 function Get-PrimaryService {
@@ -356,7 +421,8 @@ function Get-AgentStateRoot {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
-    $dirName = if ((Get-AgentRuntime -ProjectRoot $ProjectRoot) -eq 'codex') { '.codex-state' } else { '.claude-state' }
+    $runtime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    $dirName = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'stateDir'
     return Join-Path $env:USERPROFILE $dirName
 }
 
@@ -505,6 +571,8 @@ Export-ModuleMember -Function @(
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
     'ConvertTo-AccountLetter',
+    # Runtime registry
+    'Get-RuntimeField', 'Get-RuntimeList',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose
