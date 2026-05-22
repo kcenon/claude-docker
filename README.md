@@ -323,13 +323,24 @@ limitations, switch to API keys in `.env`.
 > it with an empty string would otherwise make the SDK ignore the
 > `.credentials.json` from OAuth.
 
-**GitHub CLI (`gh`)** is automatically available inside containers. The host's
-`~/.config/gh/` is bind-mounted read-only, so `gh` commands use the host's
-GitHub session without separate authentication.
+**GitHub CLI (`gh`)** is automatically available inside containers. The
+preferred container auth path is the `GH_TOKEN` environment variable:
+`scripts/claude-docker gh-auth` extracts a token from the host `gh` CLI and
+injects it into `.env`, and the installer auto-detects one on first run.
+
+The host's `~/.config/gh/` is still bind-mounted read-only as a fallback for
+Linux hosts that keep their token in `hosts.yml`. On **Windows and macOS**,
+`gh` stores the token in the OS credential store (Credential Manager /
+Keychain), not in `hosts.yml` — the Linux container cannot read those stores,
+so `GH_TOKEN` is required there.
+
+Because the mounted host config can expose an unusable `default` account
+alongside a working `GH_TOKEN`, verify auth with `gh api user` (which checks
+the credential `gh` actually uses for API calls) rather than `gh auth status`:
 
 ```bash
 # Verify gh auth inside container
-scripts/claude-docker exec claude-a gh auth status
+scripts/claude-docker exec claude-a gh api user --jq .login
 
 # Use gh normally
 scripts/claude-docker exec claude-a gh pr list
