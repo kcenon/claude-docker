@@ -112,6 +112,33 @@ func TestDiscoverStateDirs_CodexRuntime(t *testing.T) {
 	}
 }
 
+func TestDiscoverStateDirs_GeminiRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	stateBase := filepath.Join(tmp, ".gemini-state")
+	if err := os.MkdirAll(filepath.Join(stateBase, "account-a"), 0755); err != nil {
+		t.Fatalf("mkdir gemini state: %v", err)
+	}
+
+	env := config.NewEmptyEnv(filepath.Join(tmp, ".env"))
+	env.Set("AGENT_RUNTIME", "gemini")
+	env.Set("NUM_ACCOUNTS", "1")
+	m := newTestManager(t, env)
+
+	stateDirs, n := m.discoverStateDirs()
+	if n != 1 {
+		t.Errorf("n = %d, want 1", n)
+	}
+	sd, ok := stateDirs["a"]
+	if !ok {
+		t.Fatal("missing gemini state dir for account a")
+	}
+	if got, want := sd.Path, filepath.Join(stateBase, "account-a"); got != want {
+		t.Errorf("gemini state path = %q, want %q", got, want)
+	}
+}
+
 // TestFetchContainerStatus confirms the helper returns an empty map when
 // the docker client cannot enumerate containers (no compose project, no
 // daemon). The orchestrator must continue to function in this degraded
