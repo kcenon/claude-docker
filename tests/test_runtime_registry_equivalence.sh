@@ -48,14 +48,22 @@ PASS=0
 FAIL=0
 
 # pwsh_runtime_field RUNTIME FIELD
-# Invoke pwsh Get-RuntimeField and normalize $null -> '' to match the
-# empty-string convention of the bash readers for absent values.
+# Invoke pwsh Get-RuntimeField and normalize the result to the convention
+# the bash readers use:
+#   - $null            -> ''     (absent value; matches bash empty string)
+#   - [bool] $true/$false -> 'true'/'false'  (ConvertFrom-Json yields a
+#     [bool]; its default ToString() is "True"/"False", but jq -r and the
+#     awk fallback both emit lowercase JSON literals)
+# String values pass through unchanged. This normalization is the pwsh
+# analogue of the $null -> '' step in test_parse_env_equivalence.sh.
 pwsh_runtime_field() {
     local runtime="$1" field="$2"
     pwsh -NoProfile -Command "
         Import-Module '$PROJECT_ROOT/scripts/ClaudeDocker.psm1' -Force
         \$v = Get-RuntimeField -ProjectRoot '$PROJECT_ROOT' -Runtime '$runtime' -Field '$field'
-        if (\$null -eq \$v) { '' } else { \$v }
+        if (\$null -eq \$v) { '' }
+        elseif (\$v -is [bool]) { \$v.ToString().ToLowerInvariant() }
+        else { \$v }
     "
 }
 
