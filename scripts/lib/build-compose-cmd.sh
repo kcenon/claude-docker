@@ -36,10 +36,15 @@ build_compose_cmd() {
     # Linux override: auto-detect platform via uname.
     if [[ "$(uname -s)" == "Linux" ]] && [[ -f "${PROJECT_ROOT}/docker-compose.linux.yml" ]]; then
         COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
-        # Export UID/GID for the linux override file.
+        # Export UID/GID for the linux override file. Bash already maintains
+        # UID as a readonly special variable holding the current user's id, so
+        # assigning to it aborts under `set -e` ("UID: readonly variable").
+        # Reuse the existing values and only fall back to `id` when unset
+        # (e.g. a shell that does not provide them); the result is identical
+        # since UID/GID already equal `id -u`/`id -g`.
+        : "${UID:=$(id -u)}"
+        : "${GID:=$(id -g)}"
         export UID GID
-        UID=$(id -u)
-        GID=$(id -g)
     fi
 
     # Worktree override: drive selection from .env state, not caller-local vars.
