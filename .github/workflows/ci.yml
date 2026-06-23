@@ -146,3 +146,60 @@ jobs:
       - name: Run ${{ matrix.test }}
         shell: pwsh
         run: pwsh -NoProfile -File "${{ matrix.test }}"
+
+  # Live keyless smoke test for Epic #267 AC3 #1: AGENT_RUNTIME=gemini +
+  # `claude-docker up` brings the gemini container to a running state. This
+  # goes one step beyond `compose-validate (gemini)` (static `docker compose
+  # config`) by actually building the image, starting the container, asserting
+  # it is running, and tearing it down. The gemini service command is
+  # ["sleep", "infinity"] and the boot path never references GEMINI_API_KEY, so
+  # this runs with no secret — a passing run is the automated discharge of
+  # AC3 #1. AC3 #2 (`claude-docker gemini` attach) and #3 (TUI account listing)
+  # remain key-gated, interactive, and are NOT covered here. Kept as a single,
+  # NUM_ACCOUNTS=1 dedicated job (not folded into the compose-validate matrix)
+  # so the heavy image build runs once for one runtime rather than per fixture.
+  gemini-up-smoke:
+    name: "Gemini up/down smoke (keyless, AC3 #1)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Stage gemini fixture (single account)
+        run: |
+          cp tests/env_fixtures/gemini.env .env
+          # Narrow to one account so the image build + boot runs once for
+          # gemini-a only. The caller env overrides the fixture's value.
+          echo "NUM_ACCOUNTS=1" >> .env
+      - name: Prepare host bind-mount directories
+        run: |
+          # The fixture sets HOME=/tmp/claude-test; create the per-account
+          # state dir, the read-only host config mount, the gh config mount,
+          # and the project dir so the keyless bind mounts resolve.
+          mkdir -p /tmp/claude-test/.gemini-state/account-a \
+                   /tmp/claude-test/.gemini-host \
+                   /tmp/claude-test/.config/gh \
+                   /tmp/claude-test/project
+      - name: Generate compose
+        run: NUM_ACCOUNTS=1 bash scripts/generate-compose.sh
+      - name: Build image and bring up gemini-a (keyless)
+        run: bash scripts/claude-docker up
+      - name: Assert gemini-a is running
+        run: |
+          set -euo pipefail
+          cid="$(bash scripts/claude-docker compose ps -q gemini-a)"
+          if [[ -z "$cid" ]]; then
+            echo "::error::gemini-a container was not created"
+            bash scripts/claude-docker ps || true
+            exit 1
+          fi
+          running="$(docker inspect -f '{{.State.Running}}' "$cid")"
+          restarting="$(docker inspect -f '{{.State.Restarting}}' "$cid")"
+          echo "gemini-a: Running=$running Restarting=$restarting"
+          if [[ "$running" != "true" || "$restarting" != "false" ]]; then
+            echo "::error::gemini-a is not in a stable running state"
+            docker inspect -f '{{json .State}}' "$cid"
+            bash scripts/claude-docker compose logs gemini-a || true
+            exit 1
+          fi
+      - name: Tear down
+        if: always()
+        run: bash scripts/claude-docker down -v --remove-orphans
