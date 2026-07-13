@@ -8,7 +8,7 @@
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
 #   3. Update BOTH the tag and the @sha256: suffix in the FROM line below
 #   4. Rebuild: docker compose build --no-cache
-FROM node:26.3.1-slim@sha256:191ef878ecb351d68b78219593de18bd8942afd59af59f29960dc4b24805a3f1
+FROM node:26.5.0-slim@sha256:ffc78385a788964bb3cbab5e434ff79a10bdc25b8ae6db03fe5fe6cb14053c09
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
