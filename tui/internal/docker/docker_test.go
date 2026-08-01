@@ -230,3 +230,79 @@ func TestUpRecreateArgs(t *testing.T) {
 		}
 	}
 }
+
+// execTail returns the argv tokens after "exec" — the service name followed by
+// the command. The compose plumbing before "exec" varies with the host (linux
+// overlay) and .env (worktree overlay), so attach assertions must not depend on
+// its length.
+func execTail(t *testing.T, args []string) []string {
+	t.Helper()
+	for i, a := range args {
+		if a == "exec" {
+			return args[i+1:]
+		}
+	}
+	t.Fatalf("args missing %q: %v", "exec", args)
+	return nil
+}
+
+// TestServiceNames_GeminiRuntime covers the "lists" half of Epic #267 AC3 #3
+// (#289): the dashboard derives account service names from the registry
+// servicePrefix, so a gemini session enumerates gemini-a/gemini-b rather than
+// falling back to claude-*.
+func TestServiceNames_GeminiRuntime(t *testing.T) {
+	env := config.NewEmptyEnv(filepath.Join(t.TempDir(), ".env"))
+	env.Set("AGENT_RUNTIME", "gemini")
+	env.Set("NUM_ACCOUNTS", "2")
+	c := NewClient("/tmp/proj", env)
+
+	got := c.ServiceNames()
+	want := []string{"gemini-a", "gemini-b"}
+	if len(got) != len(want) {
+		t.Fatalf("ServiceNames len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ServiceNames[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestExecArgs_GeminiAttach covers the "attaches" half of AC3 #3 by composing
+// the two calls the dashboard makes together (ui/dashboard/update.go):
+// ExecArgs(account service, env.RuntimeCommandArgs(skipPermissions)...). The
+// resulting argv must match what `claude-docker gemini` produces on the shell
+// side — the CLI equivalence is pinned by tests/test_agent_attach_argv.sh.
+func TestExecArgs_GeminiAttach(t *testing.T) {
+	env := config.NewEmptyEnv(filepath.Join(t.TempDir(), ".env"))
+	env.Set("AGENT_RUNTIME", "gemini")
+	env.Set("NUM_ACCOUNTS", "1")
+	c := NewClient("/tmp/proj", env)
+
+	cases := []struct {
+		name            string
+		skipPermissions bool
+		want            []string
+	}{
+		{"plain attach", false, []string{"gemini-a", "gemini"}},
+		{"skip permissions", true, []string{"gemini-a", "gemini", "--yolo"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, args := c.ExecArgs("gemini-a", env.RuntimeCommandArgs(tc.skipPermissions)...)
+			if bin != "docker" {
+				t.Errorf("bin = %q, want %q", bin, "docker")
+			}
+			got := execTail(t, args)
+			if len(got) != len(tc.want) {
+				t.Fatalf("exec tail = %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("exec tail[%d] = %q, want %q (full args=%v)", i, got[i], tc.want[i], args)
+				}
+			}
+		})
+	}
+}

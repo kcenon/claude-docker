@@ -271,3 +271,56 @@ func TestCodexRuntimeAPIKeyAndCommandArgs(t *testing.T) {
 		}
 	}
 }
+
+// TestGeminiRuntimeAPIKeyAndCommandArgs is the gemini counterpart of the codex
+// case above: every value the TUI needs to list and attach a gemini account
+// must come from the registry, not from a claude-shaped default. It covers the
+// non-interactive half of Epic #267 AC3 #3 (#289) — the command the dashboard
+// hands to `docker compose exec`, which no live smoke test can observe because
+// an attach needs a TTY and a credential.
+func TestGeminiRuntimeAPIKeyAndCommandArgs(t *testing.T) {
+	// The claude key is present but must be ignored: key selection follows
+	// the registry apiKeyVarPrefix, not the historical CLAUDE_ default.
+	path := writeTempEnv(t, "AGENT_RUNTIME=gemini\nGEMINI_API_KEY_A=gm-key\nCLAUDE_API_KEY_A=sk-ant\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if got := e.APIKey("a"); got != "gm-key" {
+		t.Errorf("APIKey(a) = %q, want gemini key", got)
+	}
+	// The state dir the dashboard scans for accounts — the #287 / #288 fix.
+	if got := e.StateDirName(); got != ".gemini-state" {
+		t.Errorf("StateDirName() = %q, want .gemini-state", got)
+	}
+	// Gemini has no Claude-style OAuth usage endpoint; usage must stay off so
+	// the dashboard degrades instead of querying api.anthropic.com.
+	if e.SupportsClaudeUsage() {
+		t.Error("SupportsClaudeUsage() = true, want false for gemini")
+	}
+
+	// Gemini's registry entry has an empty extraRunArgs, so the attach argv is
+	// the bare binary plus, on request, its own skip-permissions flag (--yolo).
+	// A claude-shaped fallback would emit --dangerously-skip-permissions here,
+	// which the gemini CLI does not accept.
+	cases := []struct {
+		skipPermissions bool
+		want            []string
+	}{
+		{false, []string{"gemini"}},
+		{true, []string{"gemini", "--yolo"}},
+	}
+	for _, c := range cases {
+		gotArgs := e.RuntimeCommandArgs(c.skipPermissions)
+		if len(gotArgs) != len(c.want) {
+			t.Fatalf("RuntimeCommandArgs(%v) len = %d, want %d (%v)",
+				c.skipPermissions, len(gotArgs), len(c.want), gotArgs)
+		}
+		for i := range c.want {
+			if gotArgs[i] != c.want[i] {
+				t.Errorf("RuntimeCommandArgs(%v)[%d] = %q, want %q",
+					c.skipPermissions, i, gotArgs[i], c.want[i])
+			}
+		}
+	}
+}
