@@ -158,17 +158,29 @@ jobs:
   # ["sleep", "infinity"], and neither the boot path nor `gemini --version`
   # references GEMINI_API_KEY, so this runs with no secret.
   #
-  # What stays manual after this job is only an authenticated interactive
-  # session — a real key plus a TTY. *Which* service and argv the attach
+  # A final, key-gated phase then covers the authenticated half of AC3 #2 when
+  # a GEMINI_API_KEY secret exists (#301). It runs strictly *after* every
+  # keyless assertion above, and only then introduces the key — so the AC3 #1
+  # checks keep being made in an environment that has no credential at all,
+  # which is the whole point of them. Without the secret (forks, Dependabot,
+  # or before the owner configures one) that phase emits a notice and passes.
+  #
+  # Folded into this job rather than split into a second one so the heavy image
+  # build happens once; a separate job would need a buildx layer cache to avoid
+  # paying for it twice, which the `claude-docker up` build path does not
+  # currently wire up.
+  #
+  # What stays manual after this job is the TUI screen check — accounts listed
+  # and attached from the dashboard (#289). *Which* service and argv an attach
   # resolves to is pinned daemon-free by tests/test_agent_attach_argv.sh, and
-  # the TUI's equivalent of both is covered by the Go tests in
-  # tui/internal/docker and tui/internal/config (AC3 #3).
+  # the TUI's equivalent is covered by the Go tests in tui/internal/docker and
+  # tui/internal/config (AC3 #3).
   #
   # Kept as a single, NUM_ACCOUNTS=1 dedicated job (not folded into the
   # compose-validate matrix) so the heavy image build runs once for one runtime
   # rather than per fixture.
   gemini-up-smoke:
-    name: "Gemini up/down smoke (keyless, AC3 #1 + #2)"
+    name: "Gemini up/down smoke (AC3 #1 + #2)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -225,6 +237,56 @@ jobs:
             echo "::error::gemini --version produced no output in gemini-a"
             exit 1
           fi
+      - name: "Authenticated round-trip when a key is available (AC3 #2)"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          # The `secrets` context is not available in a job-level `if:`, so the
+          # guard lives here: take the secret through env and no-op when empty.
+          # Fork and Dependabot PRs are never given secrets, so they take this
+          # path and pass rather than failing contributors who cannot supply a
+          # key. The same applies before the owner configures one at all.
+          if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+            echo "::notice::GEMINI_API_KEY not configured; skipping the authenticated gemini check"
+            exit 0
+          fi
+
+          # Everything above ran with no credential in the environment -- that
+          # is what makes the AC3 #1 assertions meaningful. The key enters only
+          # now, through the per-account variable the compose generator reads
+          # (it injects GEMINI_API_KEY into the service only for accounts whose
+          # key is non-empty), so the container must be recreated to see it.
+          echo "GEMINI_API_KEY_A=${GEMINI_API_KEY}" >> .env
+          NUM_ACCOUNTS=1 bash scripts/generate-compose.sh
+          bash scripts/claude-docker up
+
+          # Gemini CLI switches to headless mode under -p (and in any non-TTY
+          # environment such as this runner). --output-format json makes the
+          # result parseable, so the assertion is on response shape rather than
+          # on model wording, which would be brittle.
+          rc=0
+          out="$(bash scripts/claude-docker compose exec -T gemini-a \
+                   gemini -p 'Reply with the single word OK.' \
+                   --output-format json)" || rc=$?
+          if [[ "$rc" -ne 0 ]]; then
+            # Documented headless exit codes: 1 general/API failure,
+            # 42 input validation, 53 turn limit.
+            echo "::error::authenticated gemini call exited with status $rc"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+
+          # A successful headless run carries no .error and a non-empty
+          # .response string.
+          if ! printf '%s' "$out" \
+               | jq -e '.error == null and (.response | type) == "string" and (.response | length) > 0' \
+                 >/dev/null; then
+            echo "::error::gemini returned no usable response"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          echo "authenticated gemini round-trip OK: $(printf '%s' "$out" | jq -r '.response' | head -c 80)"
       - name: Tear down
         if: always()
         run: bash scripts/claude-docker down -v --remove-orphans
