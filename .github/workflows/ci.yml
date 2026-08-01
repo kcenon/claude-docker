@@ -125,6 +125,7 @@ jobs:
           - tests/test_parse_env.sh
           - tests/test_parse_env_equivalence.sh
           - tests/test_runtime_registry_equivalence.sh
+          - tests/test_agent_attach_argv.sh
           - tests/test_transform_syntax_check.sh
           - tests/test_cleanup_backups.sh
           - scripts/test-entrypoint-settings.sh
@@ -147,19 +148,27 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File "${{ matrix.test }}"
 
-  # Live keyless smoke test for Epic #267 AC3 #1: AGENT_RUNTIME=gemini +
-  # `claude-docker up` brings the gemini container to a running state. This
-  # goes one step beyond `compose-validate (gemini)` (static `docker compose
-  # config`) by actually building the image, starting the container, asserting
-  # it is running, and tearing it down. The gemini service command is
-  # ["sleep", "infinity"] and the boot path never references GEMINI_API_KEY, so
-  # this runs with no secret — a passing run is the automated discharge of
-  # AC3 #1. AC3 #2 (`claude-docker gemini` attach) and #3 (TUI account listing)
-  # remain key-gated, interactive, and are NOT covered here. Kept as a single,
-  # NUM_ACCOUNTS=1 dedicated job (not folded into the compose-validate matrix)
-  # so the heavy image build runs once for one runtime rather than per fixture.
+  # Live keyless smoke test for Epic #267 AC3 #1 and the keyless half of AC3 #2:
+  # AGENT_RUNTIME=gemini + `claude-docker up` brings the gemini container to a
+  # running state, and the service/binary pair that `claude-docker gemini`
+  # resolves to actually runs inside it. This goes one step beyond
+  # `compose-validate (gemini)` (static `docker compose config`) by building the
+  # image, starting the container, asserting it is running, exercising the
+  # attach target, and tearing it down. The gemini service command is
+  # ["sleep", "infinity"], and neither the boot path nor `gemini --version`
+  # references GEMINI_API_KEY, so this runs with no secret.
+  #
+  # What stays manual after this job is only an authenticated interactive
+  # session — a real key plus a TTY. *Which* service and argv the attach
+  # resolves to is pinned daemon-free by tests/test_agent_attach_argv.sh, and
+  # the TUI's equivalent of both is covered by the Go tests in
+  # tui/internal/docker and tui/internal/config (AC3 #3).
+  #
+  # Kept as a single, NUM_ACCOUNTS=1 dedicated job (not folded into the
+  # compose-validate matrix) so the heavy image build runs once for one runtime
+  # rather than per fixture.
   gemini-up-smoke:
-    name: "Gemini up/down smoke (keyless, AC3 #1)"
+    name: "Gemini up/down smoke (keyless, AC3 #1 + #2)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -198,6 +207,22 @@ jobs:
             echo "::error::gemini-a is not in a stable running state"
             docker inspect -f '{{json .State}}' "$cid"
             bash scripts/claude-docker compose logs gemini-a || true
+            exit 1
+          fi
+      - name: "Attach target runs inside the container (AC3 #2, keyless)"
+        run: |
+          set -euo pipefail
+          # `claude-docker gemini` resolves to `docker compose exec gemini-a
+          # gemini` — pinned without a daemon by tests/test_agent_attach_argv.sh.
+          # Here that same service/binary pair is executed for real: -T because
+          # the runner has no TTY, and `--version` because it is the one gemini
+          # invocation that needs no credential. A wrong service name, a binary
+          # missing from the image, or a PATH the runtime is not on all fail here
+          # rather than in a user's first attach.
+          version="$(bash scripts/claude-docker compose exec -T gemini-a gemini --version)"
+          echo "gemini --version -> $version"
+          if [[ -z "${version//[[:space:]]/}" ]]; then
+            echo "::error::gemini --version produced no output in gemini-a"
             exit 1
           fi
       - name: Tear down
