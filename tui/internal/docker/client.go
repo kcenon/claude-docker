@@ -135,7 +135,7 @@ func (c *Client) HasRunningContainers() bool {
 
 // ServiceNames returns the expected service names based on NUM_ACCOUNTS.
 func (c *Client) ServiceNames() []string {
-	n := 1
+	n := config.DefaultNumAccounts
 	prefix := config.RuntimeClaude
 	if c.env != nil {
 		n = c.env.NumAccounts()
