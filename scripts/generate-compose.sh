@@ -41,6 +41,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 load_env_file "$PROJECT_ROOT/.env"
 
 NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
+# Validate before any registry lookup so unusable input always reaches this
+# generator-owned diagnostic and cannot flow into arithmetic below.
+RAW_NUM_ACCOUNTS="$NUM_ACCOUNTS"
+if ! NUM_ACCOUNTS=$(normalize_account_count "$RAW_NUM_ACCOUNTS"); then
+    echo "Error: NUM_ACCOUNTS must be an integer between 1 and 702 (got: $RAW_NUM_ACCOUNTS)" >&2
+    exit 1
+fi
+
 AGENT_RUNTIME="$(agent_runtime)"
 SERVICE_PREFIX="$(agent_service_prefix)"
 PRIMARY_SERVICE="${SERVICE_PREFIX}-a"
@@ -80,13 +88,6 @@ if [[ -z "${IMAGE_TAG:-}" ]]; then
         IMAGE_TAG="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"
     fi
     IMAGE_TAG="${IMAGE_TAG:-latest}"
-fi
-
-# Validate. Practical upper bound is "zz" (702) from Excel-style letter
-# enumeration; keep the cap well below that to catch typos like 2600.
-if [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
-    echo "Error: NUM_ACCOUNTS must be between 1 and 702 (got: $NUM_ACCOUNTS)" >&2
-    exit 1
 fi
 
 # Container resource envelope (override via .env or host env). Defaults

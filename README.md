@@ -575,8 +575,9 @@ The `scale` command automatically:
 Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
 
 Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
-53→`ba`, ..., 702→`zz`. You can set `NUM_ACCOUNTS` up to 702, though host
-memory is usually the binding constraint well before then.
+53→`ba`, ..., 702→`zz`. The `scale` command and both compose generators accept
+`NUM_ACCOUNTS` values from 1 through 702, though host memory is usually the
+binding constraint well before then.
 
 On Windows (PowerShell):
 ```powershell
@@ -639,8 +640,10 @@ is the rule `scripts/lib/parse_env.sh` documents for `load_env_file`, and the on
 The first source holding a **non-empty** value wins even if that value is
 unusable: an exported `NUM_ACCOUNTS=abc` does not fall through to `.env`. What
 happens next differs by layer on purpose. The generators abort, because they
-write files that CI then checks. The CLI wrappers fall back to `2`, because
-listing the default pair beats refusing to print a service list.
+write files that CI then checks. The CLI wrappers warn and fall back to `2`,
+because listing the default pair beats refusing to print a service list. This
+applies to non-numeric values and integers outside the supported `1..702`
+range, so the wrappers never enumerate a topology the generators would reject.
 
 The TUI dashboard sits outside this rule by design. `Env.NumAccounts()` in
 `tui/internal/config/env.go` reads `.env` alone, because `Env` is the document

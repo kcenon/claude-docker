@@ -96,18 +96,24 @@ get_primary_service() {
 # that value is invalid, so an exported NUM_ACCOUNTS=abc does not silently
 # fall through to .env.
 #
-# An unusable value falls back to the default instead of aborting: this feeds
-# service enumeration for read-only commands like `help`, where printing the
-# default pair beats printing nothing. The generators do abort, because they
-# write files. Reading the environment is what makes the guard necessary --
-# until #317 only .env could reach this function.
+# An unusable value emits a warning and falls back to the default instead of
+# aborting: this feeds service enumeration for read-only commands like `help`,
+# where printing the default pair beats printing nothing. The generators do
+# abort, because they write files. Reading the environment is what makes the
+# guard necessary -- until #317 only .env could reach this function.
 get_num_accounts() {
-    local n="${NUM_ACCOUNTS:-}"
+    local n="${NUM_ACCOUNTS:-}" raw_n
     if [[ -z "$n" && -n "${PROJECT_ROOT:-}" ]]; then
         n=$(parse_env_value "${PROJECT_ROOT}/.env" "NUM_ACCOUNTS")
     fi
-    if [[ ! "$n" =~ ^[0-9]+$ ]] || (( n < 1 )); then
+    if [[ -z "$n" ]]; then
         n=2
+    else
+        raw_n="$n"
+        if ! n=$(normalize_account_count "$raw_n"); then
+            log_warn "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $raw_n); using default 2." >&2
+            n=2
+        fi
     fi
     printf '%s' "$n"
 }
@@ -507,11 +513,12 @@ cmd_update() {
 }
 
 cmd_scale() {
-    local new_count="${1:?Usage: claude-docker scale <N> (1-26)}"
+    local new_count="${1:?Usage: claude-docker scale <N> (1-702)}"
+    local raw_count="$new_count"
 
     # Validate
-    if ! [[ "$new_count" =~ ^[0-9]+$ ]] || [[ "$new_count" -lt 1 || "$new_count" -gt 26 ]]; then
-        log_error "Account count must be between 1 and 26 (got: $new_count)"
+    if ! new_count=$(normalize_account_count "$raw_count"); then
+        log_error "Account count must be between 1 and 702 (got: $raw_count)"
         exit 1
     fi
 
@@ -758,7 +765,7 @@ ${BOLD}USAGE TRACKING${NC}
   ${GREEN}build-tui${NC}             Rebuild TUI dashboard binary (requires Go 1.21+)
 
 ${BOLD}SCALING${NC}
-  ${GREEN}scale${NC} <N>             Set number of accounts (1-26) and regenerate
+  ${GREEN}scale${NC} <N>             Set number of accounts (1-702) and regenerate
 
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration

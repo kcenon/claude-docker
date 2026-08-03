@@ -307,22 +307,30 @@ function Get-NumAccounts {
 
     The first source holding a non-empty value wins even if that value is
     invalid, so an exported NUM_ACCOUNTS=abc does not fall through to .env.
-    An unusable value yields the default rather than an error, because the
-    callers enumerate services for display.
+    An unusable value emits a warning and yields the default rather than an
+    error, because the callers enumerate services for display.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
     $n = [Environment]::GetEnvironmentVariable('NUM_ACCOUNTS')
-    if ([string]::IsNullOrWhiteSpace($n)) {
+    if ([string]::IsNullOrEmpty($n)) {
         $envFile = Join-Path $ProjectRoot '.env'
         if (Test-Path $envFile) {
             $envData = Read-EnvFile -Path $envFile
             $n = $envData['NUM_ACCOUNTS']
         }
     }
-    if ($n -match '^\d+$' -and [int]$n -ge 1) { return [int]$n }
-    return 2
+    if ([string]::IsNullOrEmpty($n)) { return 2 }
+
+    $parsedNumAccounts = 0
+    if ($n -notmatch '^\d+$' -or
+        -not [int]::TryParse([string]$n, [ref]$parsedNumAccounts) -or
+        $parsedNumAccounts -lt 1 -or $parsedNumAccounts -gt 702) {
+        Write-Warning "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $n); using default 2."
+        return 2
+    }
+    return $parsedNumAccounts
 }
 
 # --- Runtime registry --------------------------------------------------------

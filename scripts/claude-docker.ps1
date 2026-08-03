@@ -384,13 +384,16 @@ function Invoke-Update {
 
 function Invoke-Scale {
     if ($Arguments.Count -eq 0) {
-        Write-LogError 'Usage: claude-docker scale <N> (1-26)'
+        Write-LogError 'Usage: claude-docker scale <N> (1-702)'
         exit 1
     }
 
-    $newCount = [int]$Arguments[0]
-    if ($newCount -lt 1 -or $newCount -gt 26) {
-        Write-LogError "Account count must be between 1 and 26 (got: $newCount)"
+    $rawCount = $Arguments[0]
+    $newCount = 0
+    if ($rawCount -notmatch '^\d+$' -or
+        -not [int]::TryParse($rawCount, [ref]$newCount) -or
+        $newCount -lt 1 -or $newCount -gt 702) {
+        Write-LogError "Account count must be between 1 and 702 (got: $rawCount)"
         exit 1
     }
 
@@ -564,7 +567,7 @@ function Show-Help {
     Write-Host '                        Types: daily, monthly, session, blocks, statusline'
     Write-Host ''
     Write-Host 'SCALING' -ForegroundColor White
-    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host 'Set number of accounts (1-26) and regenerate'
+    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host 'Set number of accounts (1-702) and regenerate'
     Write-Host ''
     Write-Host 'ADVANCED' -ForegroundColor White
     Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show resolved compose configuration'
