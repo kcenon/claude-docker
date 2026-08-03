@@ -33,9 +33,26 @@ if (Test-Path $envFile) {
     $envData = Read-EnvFile -Path $envFile
 }
 
+# Resolve a configuration value the way the bash generator does: a value already
+# present in the caller's environment wins over the .env entry, which wins over
+# the built-in default. parse_env.sh states that rule for load_env_file, and
+# generate-compose.sh inherits it for every value it reads.
+function Resolve-EnvOrDefault([string]$Key, [string]$Default) {
+    $val = [Environment]::GetEnvironmentVariable($Key)
+    if (-not [string]::IsNullOrEmpty($val)) { return $val }
+    if ($envData.ContainsKey($Key) -and -not [string]::IsNullOrEmpty($envData[$Key])) {
+        return $envData[$Key]
+    }
+    return $Default
+}
+
+# NUM_ACCOUNTS and IMAGE_TAG are also exposed as parameters, so an explicit
+# argument outranks that chain. Until #315 these two skipped the environment
+# step entirely and consulted .env alone, so NUM_ACCOUNTS=5 in the environment
+# produced two services here while generate-compose.sh produced five.
 if ($NumAccounts -eq 0) {
-    $fromEnv = $envData['NUM_ACCOUNTS']
-    if ($fromEnv -and $fromEnv -match '^\d+$') {
+    $fromEnv = Resolve-EnvOrDefault 'NUM_ACCOUNTS' ''
+    if ($fromEnv -match '^\d+$') {
         $NumAccounts = [int]$fromEnv
     } else {
         $NumAccounts = 2
@@ -43,10 +60,8 @@ if ($NumAccounts -eq 0) {
 }
 
 if ([string]::IsNullOrEmpty($ImageTag)) {
-    $fromEnv = $envData['IMAGE_TAG']
-    if ($fromEnv) {
-        $ImageTag = $fromEnv
-    } else {
+    $ImageTag = Resolve-EnvOrDefault 'IMAGE_TAG' ''
+    if ([string]::IsNullOrEmpty($ImageTag)) {
         # Fall back to the repo-root VERSION file — single source of truth
         # shared with install.ps1 and the "Bumping the Base Image" README
         # procedure. Final fallback is 'latest' if VERSION is absent.
@@ -101,14 +116,6 @@ $RtHostConfigBasename  = '.' + ($RtContainerConfigMount -split '\.')[-1]
 # Container resource envelope (override via .env or host env). Defaults
 # reproduce the historical hardcoded values so existing installs see no
 # behavior change after regenerating.
-function Resolve-EnvOrDefault([string]$Key, [string]$Default) {
-    $val = [Environment]::GetEnvironmentVariable($Key)
-    if (-not [string]::IsNullOrEmpty($val)) { return $val }
-    if ($envData.ContainsKey($Key) -and -not [string]::IsNullOrEmpty($envData[$Key])) {
-        return $envData[$Key]
-    }
-    return $Default
-}
 $CpuLimit       = Resolve-EnvOrDefault 'CONTAINER_CPU_LIMIT' '2'
 $CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
 $MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
