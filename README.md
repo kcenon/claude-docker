@@ -261,6 +261,25 @@ The TUI can list and attach to Gemini services; usage columns show `--`.
 Claude-specific usage aggregation and `scripts/claude-docker usage` remain
 Claude-only.
 
+#### Gemini verification coverage
+
+The Gemini runtime is exercised by CI rather than resting on a one-time manual
+check. What each layer proves:
+
+| Step | Covered by | Needs a key or a terminal |
+|------|------------|---------------------------|
+| `generate-compose` emits a valid gemini compose file | `compose-validate (gemini)` job | no |
+| `claude-docker up` brings `gemini-a` to a stable running state | `Gemini up/down smoke` job | no |
+| `claude-docker gemini` resolves to `exec gemini-a gemini` | `tests/test_agent_attach_argv.sh` | no |
+| the resolved binary runs inside the container | `gemini --version` step of the smoke job | no |
+| the TUI discovers accounts under `~/.gemini-state/account-*` | `TestDiscoverStateDirs_GeminiRuntime` | no |
+| the TUI dashboard renders those accounts on screen | Go tests in `tui/internal/ui/dashboard` | no |
+| an authenticated `gemini -p` round-trip inside the container | key-gated CI check | yes, a `GEMINI_API_KEY` repository secret |
+
+The key-gated check is inert until the repository owner configures a
+`GEMINI_API_KEY` secret; without it the job emits a notice and passes, so a
+green run is not by itself evidence that authenticated access works.
+
 ### Adding a runtime
 
 Claude, Codex, and Gemini are all defined the same way: a registry entry plus
@@ -799,13 +818,22 @@ claude-docker/
 |       +-- tui-release.ps1            Same, PowerShell port
 |       +-- parse_env.sh               Shared .env parser (bash)
 |       +-- index.sh / index.ps1       Excel-style account index helpers
+|       +-- runtime.sh                 Runtime registry reader (jq, awk fallback)
+|       +-- build-compose-cmd.sh       Compose overlay selection (bash)
+|       +-- bootstrap-common.sh        Shared entrypoint helpers
+|       +-- bootstrap-claude.sh        Per-runtime container bootstrap modules
+|       +-- bootstrap-codex.sh         (dispatched by entrypoint.sh via the registry)
+|       +-- bootstrap-gemini.sh
 +-- tui/                               Bubble Tea multi-account dashboard (Go module)
 |   +-- main.go
 |   +-- Makefile
 |   +-- go.mod / go.sum
 |   +-- internal/                      account, auth, config, docker, ui, usage subpackages
-+-- tests/                             Hadolint, parse_env, ccstatusline regression tests
+|       +-- config/runtimes.json       Runtime registry: cross-language single source of truth
++-- tests/                             Registry equivalence, parse_env, entrypoint, and
+    |                                  attach-argv regression tests
     +-- env_fixtures/
+    +-- entrypoint_fixtures/
 ```
 
 `sources/` contains local nested working directories that are gitignored
