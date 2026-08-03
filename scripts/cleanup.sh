@@ -13,6 +13,20 @@
 # PROJECT_ROOT_OVERRIDE to redirect the script root for tests.
 set -euo pipefail
 
+# Platform guard: same rationale as install.sh - refuse to run on native
+# Windows shells (Git Bash, MSYS, Cygwin). The state directories removed below
+# are addressed by MSYS-flavored paths that do not match what the PowerShell
+# installer created, so a run that appeared to succeed would leave the real
+# state in place. Placed ahead of the runtime-registry read for the same reason
+# as generate-compose.sh: on Windows that read misreports every registered
+# runtime as unknown (#306).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: cleanup.sh is not supported on native Windows shells." >&2
+        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\cleanup.ps1" >&2
+        exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${PROJECT_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 cd "$PROJECT_ROOT"
