@@ -599,6 +599,24 @@ All state is preserved across container restarts via Docker volume mounts:
 All compose files are **generated** by `scripts/generate-compose.sh` (or `.ps1`)
 based on `NUM_ACCOUNTS` in `.env`. Do not edit them manually.
 
+They are nonetheless **tracked in Git** as the committed source of truth, so
+what is committed has to match generator output. The committed copies represent
+the generator defaults with no `.env` present:
+
+| Setting | Value | Source |
+|---------|-------|--------|
+| `NUM_ACCOUNTS` | `2` | `scripts/generate-compose.sh` default |
+| `AGENT_RUNTIME` | `claude` | `scripts/lib/runtime.sh` default |
+| `IMAGE_TAG` | contents of `VERSION` | repo-root `VERSION` file |
+
+The `Compose files are current` CI job regenerates under exactly those defaults
+and fails on any difference. Regenerating with your own `.env` during local work
+is expected, but do not commit the result — restore the committed copies first:
+
+```bash
+git checkout -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml
+```
+
 | File | Purpose | When active |
 |------|---------|-------------|
 | `docker-compose.yml` | Base config (Tier A), incl. `user: ${UID:-1000}:${GID:-1000}` and `HOME=/home/node` | Always |
@@ -748,7 +766,10 @@ at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
    (e.g. `2026.04.17`). Both `scripts/generate-compose.sh`/`.ps1` and
    `scripts/install.sh`/`.ps1` read this file, so regenerating compose
    or running `install` picks up the new default automatically. Do not
-   hand-edit the generated `docker-compose.yml` — its header forbids it
+   hand-edit the generated `docker-compose.yml` — its header forbids it.
+   The committed compose files embed the tag as their default, so the bump
+   must carry a regeneration (`rm -f .env && scripts/generate-compose.sh`)
+   in the same change or the `Compose files are current` job fails
 5. Rebuild everything from scratch: `docker compose build --no-cache`
 6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
    and confirm it matches prior builds (unexpected changes may indicate an
