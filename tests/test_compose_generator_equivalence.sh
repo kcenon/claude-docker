@@ -73,6 +73,13 @@ if ! command -v pwsh >/dev/null 2>&1; then
     exit 0
 fi
 
+# The PowerShell entry point correctly refuses on this Linux runner. Its guard
+# is exercised against the real OS by test_powershell_platform_guard.ps1; this
+# content-parity test needs to reach the generator body, so its child process
+# presents a Windows OS value only for that invocation. There is no production
+# bypass flag for callers to inherit or enable accidentally.
+PWSH_GENERATOR_COMMAND="\$PSVersionTable.OS = 'Microsoft Windows'; & \$env:CLAUDE_DOCKER_PWSH_ENTRYPOINT"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -124,7 +131,8 @@ stage_and_run() {
     else
         # shellcheck disable=SC2086  # assigns is a deliberate word-split list
         env -u NUM_ACCOUNTS -u IMAGE_TAG $assigns \
-            pwsh -NoProfile -File "$dir/scripts/generate-compose.ps1" >"$dir/.gen.log" 2>&1 || rc=$?
+            CLAUDE_DOCKER_PWSH_ENTRYPOINT="$dir/scripts/generate-compose.ps1" \
+            pwsh -NoProfile -Command "$PWSH_GENERATOR_COMMAND" >"$dir/.gen.log" 2>&1 || rc=$?
     fi
     return "$rc"
 }

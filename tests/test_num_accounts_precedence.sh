@@ -54,6 +54,12 @@ if ! command -v pwsh >/dev/null 2>&1; then
     exit 0
 fi
 
+# The guarded PowerShell generator is Windows-only, while this Linux CI test
+# still needs to exercise its configuration logic. The dedicated platform
+# guard test uses the real OS value; generator probes below change it only in
+# their child process, avoiding a production bypass switch.
+PWSH_GENERATOR_COMMAND="\$PSVersionTable.OS = 'Microsoft Windows'; & \$env:CLAUDE_DOCKER_PWSH_ENTRYPOINT"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -136,7 +142,9 @@ read_bash_gen() {
 
 read_pwsh_gen() {
     local dir="$1" envval="$2"
-    run_with_env "$envval" pwsh -NoProfile -File "$dir/scripts/generate-compose.ps1" >/dev/null 2>&1 || return 0
+    run_with_env "$envval" env \
+        "CLAUDE_DOCKER_PWSH_ENTRYPOINT=$dir/scripts/generate-compose.ps1" \
+        pwsh -NoProfile -Command "$PWSH_GENERATOR_COMMAND" >/dev/null 2>&1 || return 0
     count_services "$dir"
 }
 
@@ -213,7 +221,9 @@ diag_bgen_dir=$(make_sandbox "diagnostic-gen-bash" "-")
 diag_pgen_dir=$(make_sandbox "diagnostic-gen-pwsh" "-")
 bash_gen_out=$(run_with_env abc bash "$diag_bgen_dir/scripts/generate-compose.sh" 2>&1)
 bash_gen_status=$?
-pwsh_gen_out=$(run_with_env abc pwsh -NoProfile -File "$diag_pgen_dir/scripts/generate-compose.ps1" 2>&1)
+pwsh_gen_out=$(run_with_env abc env \
+    "CLAUDE_DOCKER_PWSH_ENTRYPOINT=$diag_pgen_dir/scripts/generate-compose.ps1" \
+    pwsh -NoProfile -Command "$PWSH_GENERATOR_COMMAND" 2>&1)
 pwsh_gen_status=$?
 check "diagnostic" "bash-exit" "$bash_gen_status" "1"
 check "diagnostic" "pwsh-exit" "$pwsh_gen_status" "1"

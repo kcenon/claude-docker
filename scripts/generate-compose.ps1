@@ -19,6 +19,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this Windows port
+# can persist Windows host paths into compose files that the bash lifecycle
+# then reads as Unix paths. Refuse before reading configuration or writing any
+# compose file.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "generate-compose.ps1 is Windows-only. Use ./scripts/generate-compose.sh on macOS or Linux."
+    exit 1
+}
+
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = Split-Path -Parent $ScriptDir
 

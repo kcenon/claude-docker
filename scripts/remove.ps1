@@ -13,6 +13,16 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this remover searches
+# USERPROFILE and Windows-only tool locations and omits the Linux compose
+# overlay. On Unix it can leave state and resources behind while reporting a
+# completed removal.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "remove.ps1 is Windows-only. Use ./scripts/remove.sh on macOS or Linux."
+    exit 1
+}
+
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent

@@ -23,6 +23,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this helper emits
+# worktree paths for the Windows Docker Desktop workflow. Mixing those paths
+# into the Unix bash lifecycle can leave Tier B compose mounts unusable.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "setup-worktrees.ps1 is Windows-only. Use ./scripts/setup-worktrees.sh on macOS or Linux."
+    exit 1
+}
+
 $RepoDir = $RepoDir.TrimEnd('\', '/')
 
 # Validate
