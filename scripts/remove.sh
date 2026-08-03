@@ -4,6 +4,19 @@
 # worktrees, state directories, .env, and optionally host tools.
 set -euo pipefail
 
+# Platform guard: refuse to run on native Windows shells (Git Bash, MSYS,
+# Cygwin). This script reverses what install.sh set up, and install.sh already
+# refuses on those platforms - so there is no bash-created installation to
+# reverse there, only a PowerShell one that remove.ps1 owns. Running anyway
+# would walk MSYS-flavored paths and report success having removed nothing
+# (#306).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: remove.sh is not supported on native Windows shells." >&2
+        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\remove.ps1" >&2
+        exit 1 ;;
+esac
+
 # --- Constants & Colors -------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

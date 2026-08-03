@@ -11,6 +11,14 @@
 # it; this file finds it relative to PROJECT_ROOT. Reads use `jq` when it is
 # available (guaranteed inside the container image) and an `awk` state-machine
 # fallback otherwise (the host is not guaranteed to have `jq`).
+#
+# Registry reads are deliberately NOT made CR-tolerant (#306). A trailing CR
+# would make agent_runtime reject a correctly-registered runtime, but both ways
+# one could arrive are closed: Windows `jq` emits CRLF only in a native Windows
+# shell, and every bash entry point that reads this registry now refuses to run
+# on one; the registry file itself cannot carry CR because .gitattributes pins
+# *.json to eol=lf. A `tr -d '\r'` here would therefore defend against nothing
+# reachable, while masking the signal that a caller is on an unsupported path.
 
 if [[ -n "${_CLAUDE_DOCKER_RUNTIME_SH_SOURCED:-}" ]]; then
     return 0 2>/dev/null || exit 0

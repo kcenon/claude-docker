@@ -11,6 +11,20 @@
 #   NUM_ACCOUNTS=4 scripts/generate-compose.sh  # Override via env
 set -euo pipefail
 
+# Platform guard: same rationale as install.sh - refuse to run on native
+# Windows shells (Git Bash, MSYS, Cygwin), where this script fails twice over.
+# The paths it bakes into the compose files are MSYS-flavored, and Windows `jq`
+# writes stdout in text mode, so the runtime-registry reads come back with a
+# trailing CR and a correctly-registered runtime is rejected as unknown. The
+# guard sits ahead of the first registry read specifically so that misleading
+# "AGENT_RUNTIME is not a known runtime" error is never reached (#306).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: generate-compose.sh is not supported on native Windows shells." >&2
+        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\generate-compose.ps1" >&2
+        exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
