@@ -170,6 +170,22 @@ func TestServiceNames_CodexRuntime(t *testing.T) {
 	}
 }
 
+func TestServiceNames_DefaultMatchesGenerator(t *testing.T) {
+	env := config.NewEmptyEnv(filepath.Join(t.TempDir(), ".env"))
+	c := NewClient("/tmp/proj", env)
+
+	got := c.ServiceNames()
+	want := []string{"claude-a", "claude-b"}
+	if len(got) != len(want) {
+		t.Fatalf("ServiceNames len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ServiceNames[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 // TestBuildArgs verifies the binary is "docker", "build" is always present,
 // and "--no-cache" is added only when noCache is true.
 func TestBuildArgs(t *testing.T) {

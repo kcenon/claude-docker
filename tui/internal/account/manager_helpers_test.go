@@ -66,14 +66,14 @@ func TestDiscoverStateDirs(t *testing.T) {
 	}
 }
 
-// TestDiscoverStateDirs_EmptyHome covers the first-run case where the user
-// has no .claude-state directory yet. NUM_ACCOUNTS still drives the count.
-func TestDiscoverStateDirs_EmptyHome(t *testing.T) {
+// TestDiscoverStateDirs_EmptyHomeUsesGeneratorDefault covers the first-run
+// case where the user has no .claude-state directory or NUM_ACCOUNTS yet. The
+// generator default still drives the count.
+func TestDiscoverStateDirs_EmptyHomeUsesGeneratorDefault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
 	env := config.NewEmptyEnv(filepath.Join(tmp, ".env"))
-	env.Set("NUM_ACCOUNTS", "2")
 	m := newTestManager(t, env)
 
 	stateDirs, n := m.discoverStateDirs()

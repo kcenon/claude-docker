@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	RuntimeClaude = "claude"
-	RuntimeCodex  = "codex"
-	RuntimeGemini = "gemini"
+	// DefaultNumAccounts matches the compose generator fallback.
+	DefaultNumAccounts = 2
+	RuntimeClaude      = "claude"
+	RuntimeCodex       = "codex"
+	RuntimeGemini      = "gemini"
 )
 
 // Env holds parsed .env configuration with order-preserving entries.
@@ -135,15 +137,15 @@ func (e *Env) Save() error {
 	return nil
 }
 
-// NumAccounts returns the NUM_ACCOUNTS value from .env (default 1).
+// NumAccounts returns the NUM_ACCOUNTS value from .env (default 2).
 func (e *Env) NumAccounts() int {
 	v := e.Get("NUM_ACCOUNTS")
 	if v == "" {
-		return 1
+		return DefaultNumAccounts
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 {
-		return 1
+		return DefaultNumAccounts
 	}
 	return n
 }

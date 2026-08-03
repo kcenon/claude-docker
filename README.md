@@ -648,7 +648,8 @@ range, so the wrappers never enumerate a topology the generators would reject.
 The TUI dashboard sits outside this rule by design. `Env.NumAccounts()` in
 `tui/internal/config/env.go` reads `.env` alone, because `Env` is the document
 the TUI edits and writes back, and it treats the value as a floor rather than an
-exact count: `discoverStateDirs` raises it to cover any account state directory
+exact count. Missing or unusable values start from the generator default of `2`,
+and `discoverStateDirs` raises that floor to cover any account state directory
 it finds on disk.
 
 `tests/test_num_accounts_precedence.sh` pins all four shell-side readers to the

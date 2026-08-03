@@ -186,14 +186,14 @@ func TestNewEmptyEnv_SetGetSave(t *testing.T) {
 
 func TestNumAccounts_Fallback(t *testing.T) {
 	// Missing key, non-numeric, and negative all fall back to the
-	// documented default (1).
+	// generator default (2).
 	cases := []struct {
 		content string
 		want    int
 	}{
-		{"", 1},
-		{"NUM_ACCOUNTS=abc\n", 1},
-		{"NUM_ACCOUNTS=-3\n", 1},
+		{"", 2},
+		{"NUM_ACCOUNTS=abc\n", 2},
+		{"NUM_ACCOUNTS=-3\n", 2},
 		{"NUM_ACCOUNTS=4\n", 4},
 	}
 	for _, c := range cases {
