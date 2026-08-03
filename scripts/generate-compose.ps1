@@ -52,10 +52,17 @@ function Resolve-EnvOrDefault([string]$Key, [string]$Default) {
 # produced two services here while generate-compose.sh produced five.
 if ($NumAccounts -eq 0) {
     $fromEnv = Resolve-EnvOrDefault 'NUM_ACCOUNTS' ''
-    if ($fromEnv -match '^\d+$') {
-        $NumAccounts = [int]$fromEnv
-    } else {
+    if ([string]::IsNullOrEmpty($fromEnv)) {
         $NumAccounts = 2
+    }
+    else {
+        $parsedNumAccounts = 0
+        if ($fromEnv -notmatch '^\d+$' -or
+            -not [int]::TryParse([string]$fromEnv, [ref]$parsedNumAccounts)) {
+            Write-Error "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $fromEnv)"
+            exit 1
+        }
+        $NumAccounts = $parsedNumAccounts
     }
 }
 
@@ -76,7 +83,7 @@ if ([string]::IsNullOrEmpty($ImageTag)) {
 }
 
 if ($NumAccounts -lt 1 -or $NumAccounts -gt 702) {
-    Write-Error "NUM_ACCOUNTS must be between 1 and 702 (got: $NumAccounts)"
+    Write-Error "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $NumAccounts)"
     exit 1
 }
 
