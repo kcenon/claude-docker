@@ -97,6 +97,22 @@ jobs:
       - name: Run Go unit tests
         working-directory: ./tui
         run: go test ./...
+      # Formatting is checked here rather than in a separate job because the Go
+      # toolchain is already provisioned. The job name stays "Go tests (TUI)"
+      # so any branch-protection rule referencing it keeps matching; the step
+      # name is what identifies a formatting failure.
+      - name: Check gofmt
+        working-directory: ./tui
+        # `gofmt -l` lists offending files but still exits 0, so the emptiness
+        # of its output is the assertion. Asserting on its exit status instead
+        # would leave the gate permanently green (issue #305).
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt violations found. Fix with: gofmt -w <file>"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
 
   compose-validate:
     name: Compose validate (${{ matrix.fixture }})
@@ -113,6 +129,37 @@ jobs:
         run: bash scripts/generate-compose.sh
       - name: Validate compose
         run: docker compose config > /dev/null
+
+  # `compose-validate` above only ever inspects compose files it has just
+  # generated from a fixture, so it cannot observe drift in the copies that are
+  # actually committed. This job closes that gap: it regenerates in place and
+  # asserts the working tree is unchanged.
+  #
+  # The committed compose files represent the generator's built-in defaults
+  # with no `.env` present:
+  #   NUM_ACCOUNTS=2      (scripts/generate-compose.sh default)
+  #   AGENT_RUNTIME=claude (scripts/lib/runtime.sh default)
+  #   IMAGE_TAG           read from the repo-root VERSION file
+  # A VERSION bump therefore requires regenerating the compose files in the
+  # same change, because the committed files embed the tag as a default.
+  compose-freshness:
+    name: Compose files are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Regenerate from generator defaults
+        # `.env` is gitignored and absent on a fresh checkout; removing it
+        # anyway pins the job to the documented defaults rather than to
+        # whatever a future change might leave in the working tree.
+        run: |
+          rm -f .env
+          bash scripts/generate-compose.sh
+      - name: Assert no drift
+        run: |
+          if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml; then
+            echo "::error::Committed compose files differ from generator output. Regenerate with: rm -f .env && bash scripts/generate-compose.sh"
+            exit 1
+          fi
 
   bash-tests:
     name: Bash Tests (${{ matrix.test }})
