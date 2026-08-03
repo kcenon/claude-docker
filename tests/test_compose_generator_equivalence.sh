@@ -42,13 +42,17 @@ OUTPUTS=(docker-compose.yml docker-compose.worktree.yml docker-compose.linux.yml
 # minimal/codex/gemini cover the runtime-conditional branches (the claude
 # baseline with its CLAUDE_NORMALIZE_CRLF line, the codex mountsAgentsSkills
 # extra volume, and gemini's configDirEnvValue decoupled from
-# containerConfigMount). n5 covers multi-account letter enumeration.
-# env-override covers the environment path that #315 fixed.
+# containerConfigMount). n5 covers multi-account letter enumeration and n30 its
+# two-letter regime -- scripts/lib/index.ps1 says it "mirrors" index.sh, so the
+# Excel-style enumeration added by #178 is two independent implementations and
+# n5 alone would only ever compare single letters. env-override covers the
+# environment path that #315 fixed.
 FIXTURES=(
     "minimal|minimal.env|"
     "codex|codex.env|"
     "gemini|gemini.env|"
     "n5|n5.env|"
+    "n30|n30.env|"
     "env-override|-|NUM_ACCOUNTS=5 IMAGE_TAG=probe-tag"
 )
 
