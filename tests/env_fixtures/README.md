@@ -4,6 +4,12 @@ Used by `.github/workflows/ci.yml` `compose-validate` matrix. Each `*.env` file
 is copied to the repo root as `.env`, then `scripts/generate-compose.sh` and
 `docker compose config` run against it.
 
+`tests/test_compose_generator_equivalence.sh` is a second consumer: it stages
+`minimal`, `codex`, `gemini` and `n5` into throwaway sandboxes and asserts the
+bash and PowerShell generators produce the same files. It adds one input the
+table below cannot express — `NUM_ACCOUNTS` and `IMAGE_TAG` supplied through the
+environment instead of a `.env` file, which is the path #315 fixed.
+
 | Fixture | Exercises |
 |---------|-----------|
 | `minimal.env` | Default 2-account Tier A setup without API keys |
