@@ -40,14 +40,14 @@ fail() {
 # Deliberately absent:
 #   scripts/entrypoint.sh                runs only inside the container
 #   scripts/test-entrypoint-settings.sh  no .ps1 counterpart to redirect to
-#   scripts/setup-worktrees.sh           counterpart exists, guard pending (#310)
-#   scripts/test-concurrent-git.sh       counterpart exists, guard pending (#310)
 GUARDED=(
     "scripts/install.sh|install.ps1"
     "scripts/claude-docker|claude-docker.ps1"
     "scripts/generate-compose.sh|generate-compose.ps1"
     "scripts/cleanup.sh|cleanup.ps1"
     "scripts/remove.sh|remove.ps1"
+    "scripts/setup-worktrees.sh|setup-worktrees.ps1"
+    "scripts/test-concurrent-git.sh|test-concurrent-git.ps1"
 )
 
 STUB_ROOT="$(mktemp -d)"
