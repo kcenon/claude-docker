@@ -600,8 +600,9 @@ All state is preserved across container restarts via Docker volume mounts:
 ## Compose Overrides
 
 All compose files are **generated** by `scripts/generate-compose.sh` (or `.ps1`)
-based on `NUM_ACCOUNTS`, which both generators read from the environment first
-and then from `.env`. Do not edit them manually.
+based on `NUM_ACCOUNTS`, resolved as described under
+[`NUM_ACCOUNTS` precedence](#num_accounts-precedence) below. Do not edit them
+manually.
 
 They are nonetheless **tracked in Git** as the committed source of truth, so
 what is committed has to match generator output. The committed copies represent
@@ -621,6 +622,34 @@ is expected, but do not commit the result — restore the committed copies first
 ```bash
 git checkout -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml
 ```
+
+### `NUM_ACCOUNTS` precedence
+
+Every shell-side reader resolves `NUM_ACCOUNTS` the same way: **an exported
+environment variable wins, then `.env`, then the built-in default of `2`.** This
+is the rule `scripts/lib/parse_env.sh` documents for `load_env_file`, and the one
+`AGENT_RUNTIME` has always followed in both languages.
+
+| Reader | Decides |
+|--------|---------|
+| `scripts/generate-compose.sh`, `scripts/generate-compose.ps1` | how many services get written |
+| `get_num_accounts` in `scripts/claude-docker` | which services the CLI acts on |
+| `Get-NumAccounts` in `scripts/ClaudeDocker.psm1` | the same, on Windows |
+
+The first source holding a **non-empty** value wins even if that value is
+unusable: an exported `NUM_ACCOUNTS=abc` does not fall through to `.env`. What
+happens next differs by layer on purpose. The generators abort, because they
+write files that CI then checks. The CLI wrappers fall back to `2`, because
+listing the default pair beats refusing to print a service list.
+
+The TUI dashboard sits outside this rule by design. `Env.NumAccounts()` in
+`tui/internal/config/env.go` reads `.env` alone, because `Env` is the document
+the TUI edits and writes back, and it treats the value as a floor rather than an
+exact count: `discoverStateDirs` raises it to cover any account state directory
+it finds on disk.
+
+`tests/test_num_accounts_precedence.sh` pins all four shell-side readers to the
+table above and runs in the `Bash Tests` CI matrix.
 
 | File | Purpose | When active |
 |------|---------|-------------|

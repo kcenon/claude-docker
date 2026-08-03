@@ -89,11 +89,27 @@ get_primary_service() {
 
 # --- Account Helpers ----------------------------------------------------------
 
-# Read NUM_ACCOUNTS from .env (default: 2)
+# Resolve NUM_ACCOUNTS: environment, then .env, then 2.
+#
+# Same order as agent_runtime() in lib/runtime.sh and as both compose
+# generators (#317). The first source holding a non-empty value wins even if
+# that value is invalid, so an exported NUM_ACCOUNTS=abc does not silently
+# fall through to .env.
+#
+# An unusable value falls back to the default instead of aborting: this feeds
+# service enumeration for read-only commands like `help`, where printing the
+# default pair beats printing nothing. The generators do abort, because they
+# write files. Reading the environment is what makes the guard necessary --
+# until #317 only .env could reach this function.
 get_num_accounts() {
-    local n
-    n=$(parse_env_value "${PROJECT_ROOT}/.env" "NUM_ACCOUNTS")
-    echo "${n:-2}"
+    local n="${NUM_ACCOUNTS:-}"
+    if [[ -z "$n" && -n "${PROJECT_ROOT:-}" ]]; then
+        n=$(parse_env_value "${PROJECT_ROOT}/.env" "NUM_ACCOUNTS")
+    fi
+    if [[ ! "$n" =~ ^[0-9]+$ ]] || (( n < 1 )); then
+        n=2
+    fi
+    printf '%s' "$n"
 }
 
 # Back-compat alias: claude-docker historically exposed the underscore

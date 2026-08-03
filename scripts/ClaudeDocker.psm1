@@ -299,17 +299,29 @@ function Set-EnvValue {
 function Get-NumAccounts {
     <#
     .SYNOPSIS
-    Read NUM_ACCOUNTS from .env (default: 2).
+    Resolve NUM_ACCOUNTS: environment, then .env, then 2.
+    .DESCRIPTION
+    Mirrors get_num_accounts in scripts/claude-docker and the order both
+    compose generators use (#317). Get-AgentRuntime below already resolved
+    AGENT_RUNTIME this way; NUM_ACCOUNTS was the one value that did not.
+
+    The first source holding a non-empty value wins even if that value is
+    invalid, so an exported NUM_ACCOUNTS=abc does not fall through to .env.
+    An unusable value yields the default rather than an error, because the
+    callers enumerate services for display.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
-    $envFile = Join-Path $ProjectRoot '.env'
-    if (Test-Path $envFile) {
-        $envData = Read-EnvFile -Path $envFile
-        $n = $envData['NUM_ACCOUNTS']
-        if ($n -and $n -match '^\d+$') { return [int]$n }
+    $n = [Environment]::GetEnvironmentVariable('NUM_ACCOUNTS')
+    if ([string]::IsNullOrWhiteSpace($n)) {
+        $envFile = Join-Path $ProjectRoot '.env'
+        if (Test-Path $envFile) {
+            $envData = Read-EnvFile -Path $envFile
+            $n = $envData['NUM_ACCOUNTS']
+        }
     }
+    if ($n -match '^\d+$' -and [int]$n -ge 1) { return [int]$n }
     return 2
 }
 
