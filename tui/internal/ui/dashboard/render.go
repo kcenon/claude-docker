@@ -31,7 +31,7 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 		Render(header) + "\n")
 
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#374151")).
-		Render("  " + strings.Repeat("─", min(76, width-4))) + "\n")
+		Render("  "+strings.Repeat("─", min(76, width-4))) + "\n")
 
 	// Styles
 	styleGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E"))
