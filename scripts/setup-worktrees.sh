@@ -7,6 +7,16 @@
 # If no branch names are provided, defaults to worktree-a and worktree-b.
 set -euo pipefail
 
+# Platform guard: refuse to run on native Windows shells (Git Bash, MSYS,
+# Cygwin). `git worktree add` receives MSYS-flavored /c/... paths there, which
+# compose volume mounts cannot resolve, leaving Tier B worktrees unusable.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: setup-worktrees.sh is not supported on native Windows shells." >&2
+        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\setup-worktrees.ps1" >&2
+        exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"

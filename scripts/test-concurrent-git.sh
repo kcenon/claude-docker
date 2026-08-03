@@ -7,6 +7,17 @@
 #   NUM_TEST_ACCOUNTS=3 scripts/test-concurrent-git.sh
 set -euo pipefail
 
+# Platform guard: refuse to run on native Windows shells (Git Bash, MSYS,
+# Cygwin). This harness drives the worktree compose override directly, where
+# MSYS path conversion exercises paths the PowerShell setup never produces and
+# makes a passing result misleading.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: test-concurrent-git.sh is not supported on native Windows shells." >&2
+        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\test-concurrent-git.ps1" >&2
+        exit 1 ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMP_DIR="$(mktemp -d)"
