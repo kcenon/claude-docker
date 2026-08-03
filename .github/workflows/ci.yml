@@ -172,6 +172,7 @@ jobs:
           - tests/test_parse_env.sh
           - tests/test_parse_env_equivalence.sh
           - tests/test_runtime_registry_equivalence.sh
+          - tests/test_compose_generator_equivalence.sh
           - tests/test_agent_attach_argv.sh
           - tests/test_transform_syntax_check.sh
           - tests/test_cleanup_backups.sh
