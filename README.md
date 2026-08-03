@@ -600,11 +600,13 @@ All state is preserved across container restarts via Docker volume mounts:
 ## Compose Overrides
 
 All compose files are **generated** by `scripts/generate-compose.sh` (or `.ps1`)
-based on `NUM_ACCOUNTS` in `.env`. Do not edit them manually.
+based on `NUM_ACCOUNTS`, which both generators read from the environment first
+and then from `.env`. Do not edit them manually.
 
 They are nonetheless **tracked in Git** as the committed source of truth, so
 what is committed has to match generator output. The committed copies represent
-the generator defaults with no `.env` present:
+the generator defaults with no `.env` present and none of these set in the
+environment:
 
 | Setting | Value | Source |
 |---------|-------|--------|
