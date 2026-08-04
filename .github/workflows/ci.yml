@@ -196,13 +196,21 @@ jobs:
       matrix:
         test:
           - tests/test_parse_env.ps1
-          - tests/test_github_account_selection.ps1
           - tests/test_powershell_platform_guard.ps1
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Run ${{ matrix.test }}
         shell: pwsh
         run: pwsh -NoProfile -File "${{ matrix.test }}"
+
+  pwsh-windows-tests:
+    name: PowerShell Windows Tests (GitHub account selection)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Run GitHub account selection test
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_github_account_selection.ps1
 
   # Live keyless smoke test for Epic #267 AC3 #1 and the keyless half of AC3 #2:
   # AGENT_RUNTIME=gemini + `claude-docker up` brings the gemini container to a
