@@ -42,12 +42,10 @@ installer and CLI wrapper that match your host platform:
 | Windows (native) | `scripts/install.ps1` | `scripts/claude-docker.ps1` or `.cmd` | Docker Desktop (WSL2 backend) | Run from PowerShell 5.1+ or PowerShell 7 |
 | Windows (WSL2) | `scripts/install.sh` (**inside** WSL2) | `scripts/claude-docker` | Docker Desktop (WSL2 integration) | Keep project files inside the WSL2 filesystem for performance |
 
-**Do not cross platforms.** Running a script from the wrong shell fails fast
-with an error naming the counterpart to use instead. On the bash side that
-covers `install.sh`, `claude-docker`, `generate-compose.sh`, `cleanup.sh`, and
-`remove.sh` when invoked from a native Windows shell (Git Bash / MSYS /
-Cygwin); on the PowerShell side, `install.ps1` and `claude-docker.ps1` when
-invoked from PowerShell 7 on Linux or macOS.
+**Do not cross platforms.** Every bash entry point with a PowerShell
+counterpart, and every PowerShell entry point with a bash counterpart, validates
+the host platform before doing any work. Running one on the wrong platform
+fails fast with an error naming the counterpart to use instead.
 
 ## Quick Start
 
