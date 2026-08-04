@@ -5,7 +5,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -16,6 +18,8 @@ const (
 	RuntimeClaude      = "claude"
 	RuntimeCodex       = "codex"
 	RuntimeGemini      = "gemini"
+	GHAuthShared       = "shared"
+	GHAuthPerAccount   = "per-account"
 )
 
 // Env holds parsed .env configuration with order-preserving entries.
@@ -134,6 +138,29 @@ func (e *Env) Save() error {
 	if err := os.Rename(tmpName, e.path); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
+	if err := hardenSecretFile(e.path); err != nil {
+		return err
+	}
+	return nil
+}
+
+// hardenSecretFile preserves the Unix 0600 contract and applies the Windows
+// ACL equivalent after the atomic rename. Command arguments are passed as an
+// argv slice so user/path values are never shell-evaluated.
+func hardenSecretFile(path string) error {
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("chmod env file: %w", err)
+	}
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	user := os.Getenv("USERNAME")
+	if user == "" {
+		return fmt.Errorf("restrict env ACL: USERNAME is not set")
+	}
+	if err := exec.Command("icacls", path, "/inheritance:r", "/grant:r", user+":(M)").Run(); err != nil {
+		return fmt.Errorf("restrict env ACL: %w", err)
+	}
 	return nil
 }
 
@@ -214,6 +241,43 @@ func (e *Env) APIKey(letter string) string {
 		return ""
 	}
 	return e.Get(e.RuntimeSpec().APIKeyVarPrefix + strings.ToUpper(letter))
+}
+
+// GitHubAuthMode returns the normalized configured mode. An omitted mode uses
+// the backward-compatible shared default; invalid explicit values are retained
+// so mutating callers can reject them instead of falling back silently.
+func (e *Env) GitHubAuthMode() string {
+	if e == nil {
+		return GHAuthShared
+	}
+	mode := strings.ToLower(strings.TrimSpace(e.Get("GH_AUTH_MODE")))
+	if mode == "" {
+		return GHAuthShared
+	}
+	return mode
+}
+
+// GHUser returns the expected GitHub login for an account in per-account mode.
+func (e *Env) GHUser(letter string) string {
+	if e == nil || e.GitHubAuthMode() != GHAuthPerAccount {
+		return ""
+	}
+	return e.Get("GH_USER_" + strings.ToUpper(letter))
+}
+
+// GHTokenKey returns the host .env key updated by the TUI for an account.
+func (e *Env) GHTokenKey(letter string) string {
+	if e == nil {
+		return "GH_TOKEN"
+	}
+	switch e.GitHubAuthMode() {
+	case GHAuthPerAccount:
+		return "GH_TOKEN_" + strings.ToUpper(letter)
+	case GHAuthShared:
+		return "GH_TOKEN"
+	default:
+		return ""
+	}
 }
 
 // HasWorktrees returns true if PROJECT_DIR_A is set (worktree mode).

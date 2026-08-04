@@ -106,8 +106,9 @@ func (c *Client) BuildArgs(noCache bool) (string, []string) {
 
 // UpRecreateArgs returns (bin, args) for `docker compose up -d --force-recreate`.
 // Used after image rebuild or .env change so containers pick up new config.
-func (c *Client) UpRecreateArgs() (string, []string) {
+func (c *Client) UpRecreateArgs(services ...string) (string, []string) {
 	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d", "--force-recreate")
+	args = append(args, services...)
 	return "docker", args
 }
 

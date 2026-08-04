@@ -226,6 +226,50 @@ func TestAPIKey_CaseInsensitiveLetter(t *testing.T) {
 	}
 }
 
+func TestGitHubPerAccountConfiguration(t *testing.T) {
+	path := writeTempEnv(t,
+		"GH_AUTH_MODE=per-account\n"+
+			"GH_USER_A=fixture-user-a\n"+
+			"GH_TOKEN_A=fixture-token-a\n"+
+			"GH_USER_AA=fixture-user-aa\n")
+	e, err := LoadEnv(path)
+	if err != nil {
+		t.Fatalf("LoadEnv: %v", err)
+	}
+	if got := e.GitHubAuthMode(); got != GHAuthPerAccount {
+		t.Errorf("GitHubAuthMode = %q, want %q", got, GHAuthPerAccount)
+	}
+	if got := e.GHUser("a"); got != "fixture-user-a" {
+		t.Errorf("GHUser(a) = %q", got)
+	}
+	if got := e.GHUser("aa"); got != "fixture-user-aa" {
+		t.Errorf("GHUser(aa) = %q", got)
+	}
+	if got := e.GHTokenKey("aa"); got != "GH_TOKEN_AA" {
+		t.Errorf("GHTokenKey(aa) = %q", got)
+	}
+
+	shared := NewEmptyEnv(filepath.Join(t.TempDir(), ".env"))
+	if got := shared.GitHubAuthMode(); got != GHAuthShared {
+		t.Errorf("default GitHubAuthMode = %q, want %q", got, GHAuthShared)
+	}
+	if got := shared.GHTokenKey("a"); got != "GH_TOKEN" {
+		t.Errorf("shared GHTokenKey(a) = %q", got)
+	}
+
+	invalidPath := writeTempEnv(t, "GH_AUTH_MODE=unexpected\n")
+	invalid, err := LoadEnv(invalidPath)
+	if err != nil {
+		t.Fatalf("LoadEnv invalid mode: %v", err)
+	}
+	if got := invalid.GitHubAuthMode(); got != "unexpected" {
+		t.Errorf("invalid GitHubAuthMode = %q, want unexpected", got)
+	}
+	if got := invalid.GHTokenKey("a"); got != "" {
+		t.Errorf("invalid-mode GHTokenKey(a) = %q, want empty", got)
+	}
+}
+
 func TestAgentRuntime_DefaultAndCodex(t *testing.T) {
 	cases := []struct {
 		content string

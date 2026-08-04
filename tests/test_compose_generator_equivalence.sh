@@ -51,6 +51,7 @@ FIXTURES=(
     "minimal|minimal.env|"
     "codex|codex.env|"
     "gemini|gemini.env|"
+    "github-per-account|github-per-account.env|"
     "n5|n5.env|"
     "n30|n30.env|"
     "env-override|-|NUM_ACCOUNTS=5 IMAGE_TAG=probe-tag"

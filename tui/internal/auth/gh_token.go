@@ -7,26 +7,29 @@ import (
 	"strings"
 )
 
-// HostGHToken returns the GitHub token from the host's gh CLI.
-// Two-step verification (status → token) gives clearer error messages
-// than relying on `gh auth token` exit codes alone.
-func HostGHToken() (string, error) {
+// HostGHToken returns the GitHub token from the host's gh CLI. A non-empty
+// user selects that stored github.com account explicitly without changing the
+// active host account. An empty user preserves the legacy active-account flow.
+func HostGHToken(user string) (string, error) {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return "", fmt.Errorf("gh CLI not found on host (install via https://cli.github.com)")
 	}
 
-	var stderr bytes.Buffer
-	check := exec.Command("gh", "auth", "status")
-	check.Stderr = &stderr
-	if err := check.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+	if user == "" {
+		var stderr bytes.Buffer
+		check := exec.Command("gh", "auth", "status")
+		check.Stderr = &stderr
+		if err := check.Run(); err != nil {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", fmt.Errorf("gh not authenticated: %s", msg)
 		}
-		return "", fmt.Errorf("gh not authenticated: %s", msg)
 	}
 
-	out, err := exec.Command("gh", "auth", "token").Output()
+	args := ghTokenArgs(user)
+	out, err := exec.Command("gh", args...).Output()
 	if err != nil {
 		return "", fmt.Errorf("gh auth token: %w", err)
 	}
@@ -35,4 +38,12 @@ func HostGHToken() (string, error) {
 		return "", fmt.Errorf("gh returned empty token")
 	}
 	return token, nil
+}
+
+func ghTokenArgs(user string) []string {
+	args := []string{"auth", "token"}
+	if user != "" {
+		args = append(args, "--hostname", "github.com", "--user", user)
+	}
+	return args
 }

@@ -98,6 +98,34 @@ CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
 MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
 MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
 
+# GitHub authentication is shared by default for backward compatibility.
+# Per-account mode is validated before any compose file is opened so a missing
+# mapping cannot leave a partially regenerated output behind.
+GH_AUTH_MODE="${GH_AUTH_MODE:-shared}"
+case "$GH_AUTH_MODE" in
+    shared|per-account) ;;
+    *)
+        echo "Error: GH_AUTH_MODE must be shared or per-account (got: $GH_AUTH_MODE)" >&2
+        exit 1
+        ;;
+esac
+
+if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        upper=$(index_to_upper "$i")
+        user_var="GH_USER_${upper}"
+        token_var="GH_TOKEN_${upper}"
+        if [[ -z "${!user_var:-}" ]]; then
+            echo "Error: $user_var is required when GH_AUTH_MODE=per-account" >&2
+            exit 1
+        fi
+        if [[ -z "${!token_var:-}" ]]; then
+            echo "Error: $token_var is required when GH_AUTH_MODE=per-account" >&2
+            exit 1
+        fi
+    done
+fi
+
 # index_to_letter and index_to_upper provided by scripts/lib/index.sh.
 
 # --- Generate docker-compose.yml ---------------------------------------------
@@ -154,7 +182,9 @@ generate_base() {
             if [[ "$RT_MOUNTS_AGENTS_SKILLS" == "true" ]]; then
                 echo '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
             fi
-            echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
+            if [[ "$GH_AUTH_MODE" == "shared" ]]; then
+                echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
+            fi
             echo "      - node_modules_${letter}:\${CONTAINER_PROJECT_DIR:-/project}/node_modules"
             echo "    environment:"
             echo "      - TERM=xterm-256color"
@@ -185,9 +215,21 @@ generate_base() {
             if [[ -n "${!key_var:-}" ]]; then
                 echo "      - ${RT_SDK_API_KEY_VAR}=\${${key_var}}"
             fi
-            echo "      - GH_TOKEN=\${GH_TOKEN:-}"
-            echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
-            echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
+            if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+                local gh_user_var="GH_USER_${upper}"
+                local gh_token_var="GH_TOKEN_${upper}"
+                local git_name_var="GIT_USER_NAME_${upper}"
+                local git_email_var="GIT_USER_EMAIL_${upper}"
+                echo "      - GH_AUTH_MODE=per-account"
+                echo "      - GH_USER=\${${gh_user_var}}"
+                echo "      - GH_TOKEN=\${${gh_token_var}}"
+                echo "      - GIT_USER_NAME=\${${git_name_var}:-\${GIT_USER_NAME:-}}"
+                echo "      - GIT_USER_EMAIL=\${${git_email_var}:-\${GIT_USER_EMAIL:-}}"
+            else
+                echo "      - GH_TOKEN=\${GH_TOKEN:-}"
+                echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
+                echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
+            fi
             echo "    deploy:"
             echo "      resources:"
             echo "        limits:"

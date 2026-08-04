@@ -139,6 +139,53 @@ get_service_names() {
     echo "${names[@]}"
 }
 
+# Resolve GitHub auth mode from the caller environment, then .env, then the
+# backward-compatible shared default.
+get_gh_auth_mode() {
+    local mode="${GH_AUTH_MODE:-}"
+    if [[ -z "$mode" ]]; then
+        mode=$(parse_env_value "$PROJECT_ROOT/.env" "GH_AUTH_MODE")
+    fi
+    mode="${mode:-shared}"
+    case "$mode" in
+        shared|per-account) printf '%s' "$mode" ;;
+        *)
+            log_error "GH_AUTH_MODE must be shared or per-account (got: $mode)" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Resolve a CLI target (account letter or full service name) to a configured
+# lowercase Excel-style account suffix. Enumeration avoids accepting a suffix
+# beyond NUM_ACCOUNTS while reusing the canonical index implementation.
+target_to_account_letter() {
+    local target
+    target=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    local prefix
+    prefix=$(agent_service_prefix)
+    target="${target#"${prefix}"-}"
+
+    local n i letter
+    n=$(get_num_accounts)
+    for i in $(seq 1 "$n"); do
+        letter=$(index_to_letter "$i")
+        if [[ "$target" == "$letter" ]]; then
+            printf '%s' "$letter"
+            return 0
+        fi
+    done
+    return 1
+}
+
+account_service_name() {
+    printf '%s-%s' "$(agent_service_prefix)" "$1"
+}
+
+account_env_suffix() {
+    printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 # --- Config Dir Path Builder ---------------------------------------------------
 
 # List account state directories under ~/.claude-state/account-*.
@@ -193,13 +240,11 @@ cmd_up() {
 
     # Lightweight post-start GitHub auth check (non-blocking)
     echo ""
-    local cid
     local primary
     primary=$(get_primary_service)
-    cid=$(get_container_id "$primary")
-    if [[ -n "$cid" ]]; then
+    if [[ -n "$(get_container_id "$primary")" ]]; then
         sleep 2  # wait for entrypoint gh auth setup
-        verify_container_gh_auth "$primary" || true
+        verify_all_container_gh_auth || true
     fi
 }
 
@@ -315,10 +360,20 @@ get_container_id() {
 
 # --- GitHub Auth Helpers -------------------------------------------------------
 
-# Refresh GH_TOKEN in .env from the host's gh CLI.
-# Returns 0 if token was verified/refreshed, 1 if gh is unavailable or unauthenticated.
-# Non-blocking: callers should treat return 1 as a warning, not an error.
-refresh_gh_token() {
+# Return the stored host token for a specific login without changing the
+# active host account. Passing an empty login preserves the legacy active-
+# account lookup.
+host_gh_token() {
+    local login="${1:-}"
+    if [[ -n "$login" ]]; then
+        gh auth token --hostname github.com --user "$login" 2>/dev/null
+    else
+        gh auth token 2>/dev/null
+    fi
+}
+
+# Refresh shared GH_TOKEN in .env from the host's active gh account.
+refresh_shared_gh_token() {
     local env_file="$PROJECT_ROOT/.env"
 
     if ! command -v gh &>/dev/null; then
@@ -334,7 +389,7 @@ refresh_gh_token() {
     fi
 
     local fresh_token
-    fresh_token=$(gh auth token 2>/dev/null)
+    fresh_token=$(host_gh_token "")
     if [[ -z "$fresh_token" ]]; then
         log_warn "Could not extract GitHub token from host gh CLI."
         return 1
@@ -367,6 +422,66 @@ refresh_gh_token() {
     return 0
 }
 
+# Refresh every configured per-account token using its explicit host login.
+# Tokens are collected before any write, so a missing host account cannot
+# leave only a prefix of the mappings updated.
+refresh_per_account_gh_tokens() {
+    local env_file="$PROJECT_ROOT/.env"
+    if ! command -v gh &>/dev/null; then
+        log_info "gh CLI not found on host — skipping GitHub token refresh."
+        return 1
+    fi
+    if [[ ! -f "$env_file" ]]; then
+        log_warn ".env not found — cannot refresh per-account GitHub tokens."
+        return 1
+    fi
+
+    local n i letter upper user token
+    local users=() tokens=() suffixes=()
+    n=$(get_num_accounts)
+    for i in $(seq 1 "$n"); do
+        letter=$(index_to_letter "$i")
+        upper=$(account_env_suffix "$letter")
+        user=$(parse_env_value "$env_file" "GH_USER_${upper}")
+        if [[ -z "$user" ]]; then
+            log_warn "GH_USER_${upper} is missing; per-account token refresh skipped."
+            return 1
+        fi
+        if ! token=$(host_gh_token "$user") || [[ -z "$token" ]]; then
+            log_warn "Could not extract a GitHub token for configured login '$user' (Account $upper)."
+            return 1
+        fi
+        users+=("$user")
+        tokens+=("$token")
+        suffixes+=("$upper")
+    done
+
+    local changed=0 current
+    for i in "${!suffixes[@]}"; do
+        upper="${suffixes[$i]}"
+        current=$(parse_env_value "$env_file" "GH_TOKEN_${upper}")
+        if [[ "$current" != "${tokens[$i]}" ]]; then
+            set_env_value "$env_file" "GH_TOKEN_${upper}" "${tokens[$i]}"
+            changed=$((changed + 1))
+        fi
+    done
+    chmod 600 "$env_file"
+    echo -e "  ${GREEN}*${NC} Per-account GitHub tokens verified (${#users[@]} account(s), $changed updated)."
+    return 0
+}
+
+# Refresh whichever token model the installation uses. Non-blocking callers
+# should treat a non-zero result as a warning.
+refresh_gh_token() {
+    local mode
+    mode=$(get_gh_auth_mode) || return 1
+    if [[ "$mode" == "per-account" ]]; then
+        refresh_per_account_gh_tokens
+    else
+        refresh_shared_gh_token
+    fi
+}
+
 # Verify GitHub auth inside a running container.
 # Uses `gh api user` rather than `gh auth status`: when GH_TOKEN coexists with
 # a mounted host gh config, `gh auth status` also evaluates the unusable
@@ -381,49 +496,72 @@ verify_container_gh_auth() {
         return 1
     fi
 
-    if docker exec "$cid" gh api user --jq .login >/dev/null 2>&1; then
-        echo -e "  ${GREEN}*${NC} GitHub auth: OK ($svc)"
-        return 0
-    else
+    local actual
+    if ! actual=$(docker exec "$cid" gh api user --jq .login 2>/dev/null) || [[ -z "$actual" ]]; then
         echo -e "  ${YELLOW}!${NC} GitHub auth: not configured ($svc)"
         echo -e "    ${DIM}git push/pull and gh commands may fail.${NC}"
         echo -e "    Fix: ${DIM}scripts/claude-docker gh-auth${NC}"
         return 1
     fi
+
+    local mode expected="" letter upper actual_lower expected_lower
+    mode=$(get_gh_auth_mode) || return 1
+    if [[ "$mode" == "per-account" ]]; then
+        letter="${svc#"$(agent_service_prefix)"-}"
+        upper=$(account_env_suffix "$letter")
+        expected=$(parse_env_value "$PROJECT_ROOT/.env" "GH_USER_${upper}")
+        actual_lower=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
+        expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
+        if [[ -n "$expected" && "$actual_lower" != "$expected_lower" ]]; then
+            echo -e "  ${YELLOW}!${NC} GitHub auth: MISMATCH ($svc)"
+            echo -e "    actual: ${BOLD}${actual}${NC}"
+            echo -e "    expected: ${BOLD}${expected}${NC} (GH_USER_${upper})"
+            return 2
+        fi
+    fi
+
+    echo -e "  ${GREEN}*${NC} GitHub auth: ${BOLD}${actual}${NC} ($svc)"
+    return 0
 }
 
-cmd_gh_auth() {
-    # Extract GitHub token from host's gh CLI and inject as GH_TOKEN in .env
+# Verify every configured service that currently has a running container.
+verify_all_container_gh_auth() {
+    local failed=0 svc
+    read -ra services <<< "$(get_service_names)"
+    for svc in "${services[@]}"; do
+        if [[ -n "$(get_container_id "$svc")" ]]; then
+            verify_container_gh_auth "$svc" || failed=1
+        fi
+    done
+    return "$failed"
+}
+
+cmd_gh_auth_shared() {
     if ! command -v gh &>/dev/null; then
         log_error "gh CLI not found on host."
-        exit 1
+        return 1
     fi
 
     if ! gh auth status >/dev/null 2>&1; then
         log_error "GitHub CLI not authenticated on host."
         echo -e "  Run first: ${DIM}gh auth login -h github.com${NC}"
-        exit 1
+        return 1
     fi
 
     local token
-    token=$(gh auth token 2>/dev/null)
+    token=$(host_gh_token "")
     if [[ -z "$token" ]]; then
         log_error "Could not extract GitHub token from gh CLI."
-        exit 1
+        return 1
     fi
 
     local env_file="$PROJECT_ROOT/.env"
     if [[ ! -f "$env_file" ]]; then
         log_error ".env file not found at $env_file"
-        exit 1
+        return 1
     fi
 
-    # Update or append GH_TOKEN in .env
-    if grep -q '^GH_TOKEN=' "$env_file" 2>/dev/null; then
-        perl -i -pe "s|^GH_TOKEN=.*|GH_TOKEN=${token}|" "$env_file"
-    else
-        echo "GH_TOKEN=${token}" >> "$env_file"
-    fi
+    set_env_value "$env_file" "GH_TOKEN" "$token"
     chmod 600 "$env_file"
 
     echo -e "${GREEN}GitHub token injected into .env${NC}"
@@ -433,8 +571,8 @@ cmd_gh_auth() {
     local running
     running=$("${COMPOSE_CMD[@]}" ps -q 2>/dev/null | head -1)
     if [[ -n "$running" ]]; then
-        echo -e "${CYAN}Restarting containers to apply...${NC}"
-        "${COMPOSE_CMD[@]}" down && "${COMPOSE_CMD[@]}" up -d
+        echo -e "${CYAN}Recreating containers to apply...${NC}"
+        "${COMPOSE_CMD[@]}" up -d --force-recreate
 
         # Verify inside container
         sleep 2
@@ -445,10 +583,137 @@ cmd_gh_auth() {
         if [[ -n "$cid" ]]; then
             echo ""
             echo -e "${BOLD}Verifying GitHub auth in ${primary}:${NC}"
-            docker exec "$cid" gh auth status 2>&1 || true
+            verify_all_container_gh_auth || true
         fi
     else
         log_info "Containers not running. Token will be available on next start."
+    fi
+}
+
+cmd_gh_auth_per_account() {
+    if ! command -v gh &>/dev/null; then
+        log_error "gh CLI not found on host."
+        return 1
+    fi
+
+    local all=false target="" login=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) all=true; shift ;;
+            --user)
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    log_error "--user requires a GitHub login."
+                    return 1
+                fi
+                login="$2"
+                shift 2
+                ;;
+            --*)
+                log_error "Unknown gh-auth option: $1"
+                return 1
+                ;;
+            *)
+                if [[ -n "$target" ]]; then
+                    log_error "Only one service or account letter may be selected."
+                    return 1
+                fi
+                target="$1"
+                shift
+                ;;
+        esac
+    done
+
+    local env_file="$PROJECT_ROOT/.env"
+    if [[ ! -f "$env_file" ]]; then
+        log_error ".env file not found at $env_file"
+        return 1
+    fi
+
+    local letters=() users=() tokens=() services=()
+    local letter upper token i n user
+    if [[ "$all" == true ]]; then
+        if [[ -n "$target" || -n "$login" ]]; then
+            log_error "gh-auth --all cannot be combined with a target or --user."
+            return 1
+        fi
+        n=$(get_num_accounts)
+        for i in $(seq 1 "$n"); do
+            letter=$(index_to_letter "$i")
+            upper=$(account_env_suffix "$letter")
+            user=$(parse_env_value "$env_file" "GH_USER_${upper}")
+            if [[ -z "$user" ]]; then
+                log_error "GH_USER_${upper} is required for gh-auth --all."
+                return 1
+            fi
+            if ! token=$(host_gh_token "$user") || [[ -z "$token" ]]; then
+                log_error "Could not extract a GitHub token for login '$user' (Account $upper)."
+                return 1
+            fi
+            letters+=("$letter")
+            users+=("$user")
+            tokens+=("$token")
+            services+=("$(account_service_name "$letter")")
+        done
+    else
+        if [[ -z "$target" || -z "$login" ]]; then
+            log_error "Usage: claude-docker gh-auth <service-or-letter> --user <login>"
+            return 1
+        fi
+        if ! letter=$(target_to_account_letter "$target"); then
+            log_error "Unknown or unconfigured account target: $target"
+            return 1
+        fi
+        upper=$(account_env_suffix "$letter")
+        if ! token=$(host_gh_token "$login") || [[ -z "$token" ]]; then
+            log_error "Could not extract a GitHub token for login '$login' (Account $upper)."
+            return 1
+        fi
+        letters+=("$letter")
+        users+=("$login")
+        tokens+=("$token")
+        services+=("$(account_service_name "$letter")")
+    fi
+
+    # Persist only after every requested host token has been retrieved.
+    for i in "${!letters[@]}"; do
+        upper=$(account_env_suffix "${letters[$i]}")
+        set_env_value "$env_file" "GH_USER_${upper}" "${users[$i]}"
+        set_env_value "$env_file" "GH_TOKEN_${upper}" "${tokens[$i]}"
+        echo -e "  ${GREEN}*${NC} Account $upper mapped to GitHub login '${users[$i]}'."
+    done
+    chmod 600 "$env_file"
+
+    ensure_compose_cmd
+    local running_services=()
+    for i in "${!services[@]}"; do
+        if [[ -n "$(get_container_id "${services[$i]}")" ]]; then
+            running_services+=("${services[$i]}")
+        fi
+    done
+    if [[ ${#running_services[@]} -eq 0 ]]; then
+        log_info "Selected containers are not running. Tokens will be available on next start."
+        return 0
+    fi
+
+    echo -e "${CYAN}Recreating selected container(s) to apply...${NC}"
+    "${COMPOSE_CMD[@]}" up -d --force-recreate "${running_services[@]}"
+    sleep 2
+    for i in "${!running_services[@]}"; do
+        verify_container_gh_auth "${running_services[$i]}" || true
+    done
+}
+
+cmd_gh_auth() {
+    local mode
+    mode=$(get_gh_auth_mode) || return 1
+    if [[ "$mode" == "per-account" ]]; then
+        cmd_gh_auth_per_account "$@"
+    else
+        if [[ $# -gt 0 && "$1" != "--all" ]]; then
+            log_error "Targeted gh-auth requires GH_AUTH_MODE=per-account."
+            return 1
+        fi
+        cmd_gh_auth_shared
     fi
 }
 
@@ -502,7 +767,7 @@ cmd_update() {
 
         # Wait briefly for entrypoint to complete gh auth setup
         sleep 2
-        verify_container_gh_auth "$primary" || true
+        verify_all_container_gh_auth || true
 
         echo ""
         echo -e "${GREEN}Update complete.${NC}"
@@ -755,7 +1020,8 @@ ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
   ${GREEN}codex${NC} [service]       Start OpenAI Codex CLI (default: codex-a)
   ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
-  ${GREEN}gh-auth${NC}               Inject GitHub token from host gh CLI into containers
+  ${GREEN}gh-auth${NC} [target]      Import shared or per-account host gh credentials
+                        Per-account: <service-or-letter> --user <login> | --all
   ${GREEN}exec${NC} <service>        Open shell in a service
 
 ${BOLD}USAGE TRACKING${NC}
@@ -780,7 +1046,7 @@ HELP
     prefix=$(agent_service_prefix)
     for idx in "${!svc_names[@]}"; do
         local svc="${svc_names[$idx]}"
-        local suffix="${svc#${prefix}-}"
+        local suffix="${svc#"${prefix}"-}"
         local label
         label="Account $(printf '%s' "$suffix" | tr '[:lower:]' '[:upper:]')"
         if [[ "$idx" -eq 0 ]]; then

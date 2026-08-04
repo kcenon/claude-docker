@@ -3,7 +3,6 @@ package account
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -180,29 +179,30 @@ func TestEnrichGHAuth_NotRunning(t *testing.T) {
 	}
 }
 
-// TestGHAuthVerdict covers the auth verdict logic used by enrichGHAuth. The
-// container check switched from `gh auth status` to `gh api user` because
-// `gh auth status` exits non-zero when the mounted host gh config exposes an
-// unusable `default` account alongside a working GH_TOKEN. The verdict must
-// follow the command exit code: `gh api user` succeeding (exit 0) means the
-// credential is valid even in that mixed-config case where `gh auth status`
-// would fail.
-func TestGHAuthVerdict(t *testing.T) {
-	// A real exit-0 command stands in for `gh api user` succeeding.
-	if err := exec.Command("true").Run(); err != nil {
-		t.Fatalf("setup: `true` should exit 0: %v", err)
-	} else if !ghAuthVerdict(err) {
-		t.Error("ghAuthVerdict(nil) = false, want true (gh api user succeeded)")
+func TestGHAuthResult(t *testing.T) {
+	cases := []struct {
+		name         string
+		output       string
+		err          error
+		expected     string
+		wantLogin    string
+		wantOK       bool
+		wantMismatch bool
+	}{
+		{"shared success", "Fixture-User\n", nil, "", "Fixture-User", true, false},
+		{"case-insensitive expected", "Fixture-User\n", nil, "fixture-user", "Fixture-User", true, false},
+		{"mismatch", "actual-user\n", nil, "expected-user", "actual-user", false, true},
+		{"command failure", "", fmt.Errorf("exit 1"), "expected-user", "", false, false},
+		{"empty login", "\n", nil, "", "", false, false},
 	}
-
-	// A real non-zero exit stands in for `gh auth status` style failure:
-	// the verdict must be false so a failed check is not reported as OK.
-	failErr := exec.Command("false").Run()
-	if failErr == nil {
-		t.Fatal("setup: `false` should exit non-zero")
-	}
-	if ghAuthVerdict(failErr) {
-		t.Error("ghAuthVerdict(exit-error) = true, want false (command exited non-zero)")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			login, ok, mismatch := ghAuthResult([]byte(tc.output), tc.err, tc.expected)
+			if login != tc.wantLogin || ok != tc.wantOK || mismatch != tc.wantMismatch {
+				t.Errorf("ghAuthResult = (%q, %v, %v), want (%q, %v, %v)",
+					login, ok, mismatch, tc.wantLogin, tc.wantOK, tc.wantMismatch)
+			}
+		})
 	}
 }
 

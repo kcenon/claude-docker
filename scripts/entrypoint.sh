@@ -58,11 +58,16 @@ fi
 runtime_bootstrap
 
 # --- Git identity ----------------------------------------------------------------
-# Set git user from environment variables (if not already configured)
-if [ -n "${GIT_USER_NAME:-}" ] && [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+# Shared mode preserves the existing initialize-once behavior. Per-account
+# mode reapplies the selected account identity on each start so changing an
+# account-specific override cannot be masked by an older value in persistent
+# runtime state.
+if [ -n "${GIT_USER_NAME:-}" ] && \
+   { [ "${GH_AUTH_MODE:-shared}" = "per-account" ] || [ -z "$(git config --global user.name 2>/dev/null)" ]; }; then
     git config --global user.name "$GIT_USER_NAME"
 fi
-if [ -n "${GIT_USER_EMAIL:-}" ] && [ -z "$(git config --global user.email 2>/dev/null)" ]; then
+if [ -n "${GIT_USER_EMAIL:-}" ] && \
+   { [ "${GH_AUTH_MODE:-shared}" = "per-account" ] || [ -z "$(git config --global user.email 2>/dev/null)" ]; }; then
     git config --global user.email "$GIT_USER_EMAIL"
 fi
 
@@ -86,12 +91,37 @@ if [ -d /project ] && [ "${CLAUDE_NORMALIZE_CRLF:-0}" = "1" ]; then
 fi
 
 # --- Git credential helper (gh) -------------------------------------------------
-# Wire gh as git credential helper so git push/pull uses the mounted gh token
+# Validate the credential used for API calls and, when configured, compare its
+# canonical login with the account expected by the host configuration.
+verify_github_login() {
+    local actual actual_lower expected_lower
+    if ! actual=$(gh api user --jq .login 2>/dev/null) || [ -z "$actual" ]; then
+        echo "[entrypoint] WARNING: GitHub token is invalid or missing."
+        return 1
+    fi
+
+    if [ -n "${GH_USER:-}" ]; then
+        actual_lower=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
+        expected_lower=$(printf '%s' "$GH_USER" | tr '[:upper:]' '[:lower:]')
+        if [ "$actual_lower" != "$expected_lower" ]; then
+            echo "[entrypoint] WARNING: GitHub login mismatch."
+            echo "  actual: $actual"
+            echo "  expected: $GH_USER"
+            return 2
+        fi
+    fi
+
+    echo "[entrypoint] GitHub auth: authenticated as $actual"
+    return 0
+}
+
+# Wire gh as git credential helper so git push/pull uses the selected token.
 if command -v gh >/dev/null 2>&1; then
     if [ -n "${GH_TOKEN:-}" ]; then
         # GH_TOKEN env var takes precedence — no hosts.yml needed
         gh auth setup-git 2>/dev/null || true
         echo "[entrypoint] GitHub auth: using GH_TOKEN environment variable"
+        verify_github_login || true
     elif [ -f /home/node/.config/gh/hosts.yml ]; then
         gh auth setup-git 2>/dev/null || true
         # Validate the credential gh actually uses for API calls. `gh api user`
@@ -99,8 +129,7 @@ if command -v gh >/dev/null 2>&1; then
         # evaluates the unusable mounted `default` account and exits non-zero.
         # macOS Keychain / Windows Credential Manager tokens are NOT in
         # hosts.yml — only the host config structure is present.
-        if ! gh api user --jq .login >/dev/null 2>&1; then
-            echo "[entrypoint] WARNING: GitHub token is invalid or missing."
+        if ! verify_github_login; then
             echo "  On macOS/Windows, gh stores tokens in OS credential stores"
             echo "  (Keychain / Credential Manager), not in hosts.yml."
             echo "  The read-only bind mount cannot access these tokens."

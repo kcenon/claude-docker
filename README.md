@@ -343,20 +343,80 @@ limitations, switch to API keys in `.env`.
 > it with an empty string would otherwise make the SDK ignore the
 > `.credentials.json` from OAuth.
 
-**GitHub CLI (`gh`)** is automatically available inside containers. The
-preferred container auth path is the `GH_TOKEN` environment variable:
-`scripts/claude-docker gh-auth` extracts a token from the host `gh` CLI and
-injects it into `.env`, and the installer auto-detects one on first run.
+**GitHub CLI (`gh`)** is automatically available inside containers. Shared
+authentication remains the default: all services receive the same `GH_TOKEN`,
+and the host's `GH_CONFIG_DIR` is mounted read-only as a Linux fallback. On
+Windows and macOS, `gh` normally stores tokens in the OS credential store,
+which the Linux container cannot read, so importing `GH_TOKEN` is required.
 
-The host's `~/.config/gh/` is still bind-mounted read-only as a fallback for
-Linux hosts that keep their token in `hosts.yml`. On **Windows and macOS**,
-`gh` stores the token in the OS credential store (Credential Manager /
-Keychain), not in `hosts.yml` — the Linux container cannot read those stores,
-so `GH_TOKEN` is required there.
+To isolate GitHub identities by container, configure every account explicitly:
 
-Because the mounted host config can expose an unusable `default` account
-alongside a working `GH_TOKEN`, verify auth with `gh api user` (which checks
-the credential `gh` actually uses for API calls) rather than `gh auth status`:
+```dotenv
+GH_AUTH_MODE=per-account
+
+GH_USER_A=github-login-a
+GH_TOKEN_A=...
+GH_USER_B=github-login-b
+GH_TOKEN_B=...
+
+# Optional commit identity overrides; global values remain the fallback.
+GIT_USER_NAME_A=Account A Name
+GIT_USER_EMAIL_A=account-a@example.com
+```
+
+Per-account mode has fail-closed behavior:
+
+- both `GH_USER_<LETTER>` and `GH_TOKEN_<LETTER>` are required through the
+  configured `NUM_ACCOUNTS` range (`A` through `ZZ`);
+- each service receives only its matching token as the standard in-container
+  `GH_TOKEN` variable, never the global token as a fallback;
+- the shared `GH_CONFIG_DIR` mount is omitted, so one service cannot read a
+  different account's `hosts.yml` credential; and
+- startup, update, and the TUI compare `gh api user --jq .login` with the
+  configured login and show the actual login or a distinct mismatch.
+
+Import a named account already stored by the host `gh` CLI without changing
+which host account is active:
+
+```bash
+# Bash / macOS / Linux
+scripts/claude-docker gh-auth a --user github-login-a
+scripts/claude-docker gh-auth claude-b --user github-login-b
+scripts/claude-docker gh-auth --all
+
+# Windows PowerShell equivalents
+.\scripts\claude-docker.ps1 gh-auth a --user github-login-a
+.\scripts\claude-docker.ps1 gh-auth --all
+```
+
+The targeted form recreates only that service when it is running. `--all` and
+`update` retrieve each token with
+`gh auth token --hostname github.com --user <login>`; they never call
+`gh auth switch`. The TUI's `g` action applies the same operation to the
+selected row.
+
+To migrate an existing installation, add the per-account mappings, set
+`GH_AUTH_MODE=per-account`, regenerate compose files, then recreate services:
+
+```bash
+scripts/generate-compose.sh       # use generate-compose.ps1 on Windows
+scripts/claude-docker up --force-recreate
+```
+
+Rotate a single credential by re-authenticating that login on the host and
+running targeted `gh-auth`; rotate all configured mappings with
+`gh-auth --all`. Tokens remain plaintext in the host `.env`, which is
+permission-hardened but should still be backed up, retained, and rotated as a
+secret.
+
+This feature covers `gh` and **HTTPS Git operations only** through `gh auth
+setup-git`; it does not isolate SSH keys or SSH agents. It protects accounts
+from other account containers by removing shared credential sources, but not
+from host administrators or anyone with Docker daemon access, who can inspect
+container environments.
+
+Verify auth with `gh api user` (which checks the credential `gh` actually uses
+for API calls) rather than `gh auth status`:
 
 ```bash
 # Verify gh auth inside container
@@ -500,7 +560,10 @@ scripts/claude-docker usage daily --since 20260301 --json    # Date filter + JSO
 ### Multi-account dashboard (TUI)
 
 A Bubble Tea-based terminal dashboard surfaces per-account container state,
-authentication status, recent activity, and live token usage in one view.
+authentication status, the actual GitHub login (including mismatch state),
+recent activity, and live token usage in one view. In per-account GitHub mode,
+the `g` action refreshes only the selected account and recreates only that
+service when it is running.
 
 ```bash
 scripts/claude-docker tui            # Launch dashboard (auto-fetches binary if missing)
@@ -592,7 +655,7 @@ All state is preserved across container restarts via Docker volume mounts:
 | Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` | Read-write |
 | Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` | Read-write |
 | Host config (claude-config) | `~/.claude/` | `/home/node/.claude-host/` (symlinked) | Read-only |
-| GitHub CLI auth | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
+| GitHub CLI auth (shared mode only) | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
 | node_modules | Named volume `node_modules_a` | `${PROJECT_DIR}/node_modules/` | Read-write |
 | Project files | `${PROJECT_DIR}` bind mount | `${PROJECT_DIR}/` (mirrors host path) | Read-write |
 

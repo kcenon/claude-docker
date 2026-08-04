@@ -26,6 +26,8 @@ type dockerOpDoneMsg struct {
 type ghAuthAppliedMsg struct {
 	err            error
 	recreateNeeded bool
+	services       []string
+	label          string
 }
 
 // statusExpiredMsg clears any stale toast once its TTL has passed.

@@ -247,6 +247,14 @@ func TestUpRecreateArgs(t *testing.T) {
 	}
 }
 
+func TestUpRecreateArgsSelectedService(t *testing.T) {
+	c := NewClient("/tmp/proj", nil)
+	_, args := c.UpRecreateArgs("claude-b")
+	if got := args[len(args)-1]; got != "claude-b" {
+		t.Errorf("last arg = %q, want claude-b (args=%v)", got, args)
+	}
+}
+
 // execTail returns the argv tokens after "exec" — the service name followed by
 // the command. The compose plumbing before "exec" varies with the host (linux
 // overlay) and .env (worktree overlay), so attach assertions must not depend on
