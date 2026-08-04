@@ -132,7 +132,8 @@ func (m *Manager) enrichAccounts(accounts []Account) map[string]apiResult {
 }
 
 // enrichGHAuth runs `gh api user` inside the account's running container
-// and sets GHAuthOK on success. No-op when the container is not running.
+// and stores the actual login plus any configured mismatch state. No-op when
+// the container is not running.
 //
 // `gh api user` is used instead of `gh auth status` because the latter
 // evaluates every configured account — including the unusable `default`
@@ -144,19 +145,27 @@ func (m *Manager) enrichGHAuth(a *Account, wg *sync.WaitGroup) {
 		return
 	}
 	wg.Add(1)
+	a.GHExpectedLogin = m.env.GHUser(a.Letter)
 	go func() {
 		defer wg.Done()
 		cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "api", "user", "--jq", ".login")
-		err := cmd.Run()
-		a.GHAuthOK = ghAuthVerdict(err)
+		out, err := cmd.Output()
+		a.GHLogin, a.GHAuthOK, a.GHLoginMismatch = ghAuthResult(out, err, a.GHExpectedLogin)
 	}()
 }
 
-// ghAuthVerdict maps the exit status of the in-container `gh api user`
-// command to a GitHub auth verdict: a nil error (exit code 0) means the
-// credential gh uses for API calls is valid.
-func ghAuthVerdict(runErr error) bool {
-	return runErr == nil
+// ghAuthResult maps an in-container `gh api user` result to display state.
+// GitHub logins are case-insensitive, while the API may return canonical case.
+func ghAuthResult(output []byte, runErr error, expected string) (string, bool, bool) {
+	if runErr != nil {
+		return "", false, false
+	}
+	actual := strings.TrimSpace(string(output))
+	if actual == "" {
+		return "", false, false
+	}
+	mismatch := expected != "" && !strings.EqualFold(actual, expected)
+	return actual, !mismatch, mismatch
 }
 
 // enrichAPIUsage fetches usage from the limitline API for OAuth accounts

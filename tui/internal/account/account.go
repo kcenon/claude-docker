@@ -74,6 +74,9 @@ type Account struct {
 	ContainerStatus ContainerStatus
 	ContainerID     string
 	GHAuthOK        bool
+	GHLogin         string
+	GHExpectedLogin string
+	GHLoginMismatch bool
 
 	// Claude-only fields. These stay zero/nil for runtimes that do not
 	// expose a Claude-style OAuth usage endpoint; the dashboard then

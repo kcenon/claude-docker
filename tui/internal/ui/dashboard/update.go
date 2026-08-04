@@ -106,11 +106,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if !msg.recreateNeeded {
 			m.busy = false
-			m = m.toast("GitHub token written to .env (no running containers)", statusOK)
+			m = m.toast("GitHub token written for "+msg.label+" (container not running)", statusOK)
 			return m, tea.Batch(m.Refresh(), m.toastExpireCmd())
 		}
 		// Containers are running — recreate them so the new GH_TOKEN takes effect.
-		bin, args := m.client.UpRecreateArgs()
+		bin, args := m.client.UpRecreateArgs(msg.services...)
 		cmd := exec.Command(bin, args...)
 		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 			return dockerOpDoneMsg{kind: opGHAuthRecreate, err: err}

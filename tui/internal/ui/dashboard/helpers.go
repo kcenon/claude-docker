@@ -2,34 +2,68 @@ package dashboard
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kcenon/claude-docker/tui/internal/auth"
+	"github.com/kcenon/claude-docker/tui/internal/config"
 )
 
-// startGHAuth reads the host gh token, writes it to .env, and — if any
-// container is running — queues a recreate handoff so containers pick up
-// the new GH_TOKEN. Synchronous .env write is fine (no blocking I/O beyond
-// a single file); the slow container restart is done via tea.ExecProcess.
+var hostGHToken = auth.HostGHToken
+
+// startGHAuth reads the selected host gh token, writes only its matching .env
+// key, and queues the narrowest recreate needed for running containers.
 func (m Model) startGHAuth() (Model, tea.Cmd) {
 	if m.env == nil {
 		m = m.toast("gh-auth: .env not loaded", statusErr)
 		return m, m.toastExpireCmd()
 	}
+	mode := m.env.GitHubAuthMode()
+	if mode != config.GHAuthShared && mode != config.GHAuthPerAccount {
+		m = m.toast("gh-auth: GH_AUTH_MODE must be shared or per-account", statusErr)
+		return m, m.toastExpireCmd()
+	}
 	m.busy = true
 	client := m.client
 	env := m.env
+	user := ""
+	key := "GH_TOKEN"
+	label := "shared"
+	var services []string
+	if mode == config.GHAuthPerAccount {
+		if m.cursor >= len(m.accounts) {
+			m.busy = false
+			m = m.toast("gh-auth: no account selected", statusErr)
+			return m, m.toastExpireCmd()
+		}
+		acct := m.accounts[m.cursor]
+		user = env.GHUser(acct.Letter)
+		if user == "" {
+			m.busy = false
+			m = m.toast("gh-auth: GH_USER_"+strings.ToUpper(acct.Letter)+" is not configured", statusErr)
+			return m, m.toastExpireCmd()
+		}
+		key = env.GHTokenKey(acct.Letter)
+		label = acct.ServiceName + " (" + user + ")"
+		if acct.IsRunning() {
+			services = []string{acct.ServiceName}
+		}
+	}
 	return m, func() tea.Msg {
-		token, err := auth.HostGHToken()
+		token, err := hostGHToken(user)
 		if err != nil {
 			return ghAuthAppliedMsg{err: err}
 		}
-		env.Set("GH_TOKEN", token)
+		env.Set(key, token)
 		if err := env.Save(); err != nil {
 			return ghAuthAppliedMsg{err: fmt.Errorf("write .env: %w", err)}
 		}
-		return ghAuthAppliedMsg{recreateNeeded: client.HasRunningContainers()}
+		recreate := len(services) > 0
+		if mode == config.GHAuthShared {
+			recreate = client.HasRunningContainers()
+		}
+		return ghAuthAppliedMsg{recreateNeeded: recreate, services: services, label: label}
 	}
 }
 

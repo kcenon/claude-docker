@@ -137,6 +137,26 @@ $CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
 $MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
 $MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
 
+# GitHub authentication is shared by default for backward compatibility.
+# Validate per-account mappings before opening any output file so failures do
+# not leave partially regenerated compose files behind.
+$GhAuthMode = (Resolve-EnvOrDefault 'GH_AUTH_MODE' 'shared').ToLowerInvariant()
+if ($GhAuthMode -notin @('shared', 'per-account')) {
+    Write-Error "GH_AUTH_MODE must be shared or per-account (got: $GhAuthMode)"
+    exit 1
+}
+if ($GhAuthMode -eq 'per-account') {
+    for ($i = 1; $i -le $NumAccounts; $i++) {
+        $upper = Get-AccountLetterUpper -Index $i
+        foreach ($key in @("GH_USER_${upper}", "GH_TOKEN_${upper}")) {
+            if ([string]::IsNullOrEmpty((Resolve-EnvOrDefault $key ''))) {
+                Write-Error "$key is required when GH_AUTH_MODE=per-account"
+                exit 1
+            }
+        }
+    }
+}
+
 # Thin wrappers around the shared helpers in lib/index.ps1 so legacy call
 # sites below keep working without rewriting each loop. Both helpers accept
 # indices 1..702 and throw out-of-range otherwise.
@@ -201,7 +221,9 @@ function New-BaseCompose {
         if ($RtMountsAgentsSkills -eq $true) {
             [void]$sb.AppendLine('      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro')
         }
-        [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
+        if ($GhAuthMode -eq 'shared') {
+            [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
+        }
         [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
         [void]$sb.AppendLine('    environment:')
         [void]$sb.AppendLine('      - TERM=xterm-256color')
@@ -235,9 +257,22 @@ function New-BaseCompose {
         if (-not [string]::IsNullOrEmpty($keyValue)) {
             [void]$sb.AppendLine("      - ${RtSdkApiKeyVar}=`${${keyVarName}}")
         }
-        [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
-        [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
-        [void]$sb.AppendLine('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
+        if ($GhAuthMode -eq 'per-account') {
+            $ghUserVar = "GH_USER_${upper}"
+            $ghTokenVar = "GH_TOKEN_${upper}"
+            $gitNameVar = "GIT_USER_NAME_${upper}"
+            $gitEmailVar = "GIT_USER_EMAIL_${upper}"
+            [void]$sb.AppendLine('      - GH_AUTH_MODE=per-account')
+            [void]$sb.AppendLine("      - GH_USER=`${${ghUserVar}}")
+            [void]$sb.AppendLine("      - GH_TOKEN=`${${ghTokenVar}}")
+            [void]$sb.AppendLine("      - GIT_USER_NAME=`${${gitNameVar}:-`${GIT_USER_NAME:-}}")
+            [void]$sb.AppendLine("      - GIT_USER_EMAIL=`${${gitEmailVar}:-`${GIT_USER_EMAIL:-}}")
+        }
+        else {
+            [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
+            [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
+            [void]$sb.AppendLine('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
+        }
         [void]$sb.AppendLine('    deploy:')
         [void]$sb.AppendLine('      resources:')
         [void]$sb.AppendLine('        limits:')

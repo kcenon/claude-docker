@@ -15,7 +15,7 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 		colService  = 12
 		colStatus   = 10
 		colAuth     = 8
-		colGH       = 10
+		colGH       = 24
 		colFiveHour = 22
 		colSevenDay = 22
 	)
@@ -24,7 +24,7 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 		padPlain("SERVICE", colService) +
 		padPlain("STATUS", colStatus) +
 		padPlain("AUTH", colAuth) +
-		padPlain("GH AUTH", colGH) +
+		padPlain("GITHUB LOGIN", colGH) +
 		padPlain("5h USED / LEFT", colFiveHour) +
 		padPlain("7d USED / LEFT", colSevenDay)
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9CA3AF")).
@@ -63,8 +63,10 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 		var ghCell string
 		if !acct.IsRunning() {
 			ghCell = padStyled("--", colGH, styleMuted)
+		} else if acct.GHLoginMismatch {
+			ghCell = padStyled(acct.GHLogin+" != "+acct.GHExpectedLogin, colGH, styleYellow)
 		} else if acct.GHAuthOK {
-			ghCell = padStyled("OK", colGH, styleGreen)
+			ghCell = padStyled(acct.GHLogin, colGH, styleGreen)
 		} else {
 			ghCell = padStyled("FAIL", colGH, styleRed)
 		}

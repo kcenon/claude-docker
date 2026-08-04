@@ -246,6 +246,24 @@ function Write-EnvContent {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+function Protect-EnvFile {
+    <#
+    .SYNOPSIS
+    Restrict a secret-bearing env file to the current Windows user.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
+        -not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    & icacls $Path /inheritance:r /grant:r "${env:USERNAME}:(M)" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to restrict permissions on $Path"
+    }
+}
+
 function Set-EnvValue {
     <#
     .SYNOPSIS
@@ -272,6 +290,7 @@ function Set-EnvValue {
 
     if (-not (Test-Path $Path)) {
         Write-EnvContent -Path $Path -Content "$line`n"
+        Protect-EnvFile -Path $Path
         return
     }
 
@@ -292,6 +311,7 @@ function Set-EnvValue {
     }
 
     Write-EnvContent -Path $Path -Content (($lines -join "`n") + "`n")
+    Protect-EnvFile -Path $Path
 }
 
 # --- Account Helpers ---------------------------------------------------------
@@ -586,7 +606,7 @@ Export-ModuleMember -Function @(
     # Prompts
     'Read-Selection', 'Read-Input', 'Read-Secret', 'Read-Confirmation',
     # Utilities
-    'Test-Command', 'ConvertTo-ForwardSlash',
+    'Test-Command', 'ConvertTo-ForwardSlash', 'Protect-EnvFile',
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',

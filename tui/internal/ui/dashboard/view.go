@@ -109,6 +109,10 @@ func renderHelp(env *config.Env) string {
 	runtime := env.RuntimeBinary()
 	skipFlag := env.SkipPermissionsFlag()
 
+	ghDescription := "Inject the active host gh token into .env (+ recreate)"
+	if env.GitHubAuthMode() == config.GHAuthPerAccount {
+		ghDescription = "Refresh selected account's configured host gh login"
+	}
 	rows := [][2]string{
 		{"j / k", "Move cursor down / up"},
 		{"Enter / c", "Attach to selected account's " + runtime + " session"},
@@ -119,7 +123,7 @@ func renderHelp(env *config.Env) string {
 		{"B", "docker compose build --no-cache"},
 		{"U", "Full update: rebuild --no-cache + force-recreate"},
 		{"R", "Restart the selected container"},
-		{"g", "Inject host gh token into .env (+ recreate)"},
+		{"g", ghDescription},
 		{"?", "Toggle this help"},
 		{"q / Ctrl+C", "Quit"},
 	}

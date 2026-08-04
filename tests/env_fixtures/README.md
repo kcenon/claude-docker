@@ -5,10 +5,11 @@ is copied to the repo root as `.env`, then `scripts/generate-compose.sh` and
 `docker compose config` run against it.
 
 `tests/test_compose_generator_equivalence.sh` is a second consumer: it stages
-`minimal`, `codex`, `gemini` and `n5` into throwaway sandboxes and asserts the
-bash and PowerShell generators produce the same files. It adds one input the
-table below cannot express — `NUM_ACCOUNTS` and `IMAGE_TAG` supplied through the
-environment instead of a `.env` file, which is the path #315 fixed.
+`minimal`, `codex`, `gemini`, `github-per-account`, and `n5` into throwaway
+sandboxes and asserts the bash and PowerShell generators produce the same
+files. It adds one input the table below cannot express — `NUM_ACCOUNTS` and
+`IMAGE_TAG` supplied through the environment instead of a `.env` file, which
+is the path #315 fixed.
 
 | Fixture | Exercises |
 |---------|-----------|
@@ -19,6 +20,7 @@ environment instead of a `.env` file, which is the path #315 fixed.
 | `with-special-chars.env` | Values containing `#`, `=`, quotes, whitespace — exercises the #170 parser |
 | `codex.env` | `AGENT_RUNTIME=codex` runtime selection (codex-a/codex-b services) |
 | `gemini.env` | `AGENT_RUNTIME=gemini` runtime selection (gemini-a/gemini-b services, #272) |
+| `github-per-account.env` | Two isolated GitHub logins/tokens and account A Git identity overrides |
 
 ## Running locally
 

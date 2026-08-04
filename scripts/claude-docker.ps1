@@ -42,6 +42,40 @@ $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
 # --- Account Directory Helpers -----------------------------------------------
 
+function Get-GhAuthMode {
+    $mode = [Environment]::GetEnvironmentVariable('GH_AUTH_MODE')
+    if ([string]::IsNullOrEmpty($mode)) {
+        $mode = Get-EnvValue -Path (Join-Path $ProjectRoot '.env') -Key 'GH_AUTH_MODE'
+    }
+    if ([string]::IsNullOrEmpty($mode)) { $mode = 'shared' }
+    $mode = $mode.ToLowerInvariant()
+    if ($mode -notin @('shared', 'per-account')) {
+        throw "GH_AUTH_MODE must be shared or per-account (got: $mode)"
+    }
+    return $mode
+}
+
+function Resolve-AccountLetter {
+    param([Parameter(Mandatory)][string]$Target)
+
+    $candidate = $Target.ToLowerInvariant()
+    $prefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
+    if ($candidate.StartsWith("${prefix}-")) {
+        $candidate = $candidate.Substring($prefix.Length + 1)
+    }
+    $count = Get-NumAccounts -ProjectRoot $ProjectRoot
+    for ($i = 1; $i -le $count; $i++) {
+        $letter = ConvertTo-AccountLetter -Index $i
+        if ($candidate -eq $letter) { return $letter }
+    }
+    return $null
+}
+
+function Get-AccountEnvSuffix {
+    param([Parameter(Mandatory)][string]$Letter)
+    return $Letter.ToUpperInvariant()
+}
+
 function Get-AccountDirs {
     $stateBase = Get-AgentStateRoot -ProjectRoot $ProjectRoot
     if (-not (Test-Path $stateBase)) { return @() }
@@ -89,7 +123,7 @@ function Invoke-Up {
     $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($cid) {
         Start-Sleep -Seconds 2  # wait for entrypoint gh auth setup
-        Test-ContainerGhAuth -Service $primary | Out-Null
+        Test-AllContainerGhAuth | Out-Null
     }
 }
 
@@ -189,7 +223,20 @@ function Invoke-Agent {
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service @agentArgs
 }
 
-function Invoke-GhAuth {
+function Get-HostGhToken {
+    param([string]$User = '')
+
+    if ($User) {
+        $token = & gh auth token --hostname github.com --user $User 2>$null
+    }
+    else {
+        $token = & gh auth token 2>$null
+    }
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ([string]($token | Select-Object -First 1)).Trim()
+}
+
+function Invoke-GhAuthShared {
     if (-not (Test-Command 'gh')) {
         Write-LogError 'gh CLI not found on host.'
         exit 1
@@ -202,7 +249,7 @@ function Invoke-GhAuth {
         exit 1
     }
 
-    $token = & gh auth token 2>$null
+    $token = Get-HostGhToken
     if (-not $token) {
         Write-LogError 'Could not extract GitHub token from gh CLI.'
         exit 1
@@ -221,16 +268,15 @@ function Invoke-GhAuth {
     $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
     $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($running) {
-        Write-Host 'Restarting containers to apply...' -ForegroundColor Cyan
-        Invoke-Compose -ProjectRoot $ProjectRoot down
-        Invoke-Compose -ProjectRoot $ProjectRoot up --detach
+        Write-Host 'Recreating containers to apply...' -ForegroundColor Cyan
+        Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
 
         Start-Sleep -Seconds 2
         $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
         if ($cid) {
             Write-Host ''
             Write-Host "Verifying GitHub auth in ${primary}:" -ForegroundColor White
-            & docker exec $cid gh auth status 2>&1
+            Test-AllContainerGhAuth | Out-Null
         }
     }
     else {
@@ -238,9 +284,141 @@ function Invoke-GhAuth {
     }
 }
 
+function Invoke-GhAuthPerAccount {
+    if (-not (Test-Command 'gh')) {
+        Write-LogError 'gh CLI not found on host.'
+        exit 1
+    }
+
+    $all = $false
+    $target = ''
+    $login = ''
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        switch ($Arguments[$i]) {
+            '--all' { $all = $true; break }
+            '--user' {
+                if ($i + 1 -ge $Arguments.Count -or [string]::IsNullOrEmpty($Arguments[$i + 1])) {
+                    Write-LogError '--user requires a GitHub login.'
+                    exit 1
+                }
+                $i++
+                $login = $Arguments[$i]
+                break
+            }
+            { $_.StartsWith('--') } {
+                Write-LogError "Unknown gh-auth option: $_"
+                exit 1
+            }
+            default {
+                if ($target) {
+                    Write-LogError 'Only one service or account letter may be selected.'
+                    exit 1
+                }
+                $target = $Arguments[$i]
+            }
+        }
+    }
+
+    $envFile = Join-Path $ProjectRoot '.env'
+    if (-not (Test-Path $envFile)) {
+        Write-LogError ".env file not found at $envFile"
+        exit 1
+    }
+
+    $letters = @()
+    $users = @()
+    $tokens = @()
+    $services = @()
+    if ($all) {
+        if ($target -or $login) {
+            Write-LogError 'gh-auth --all cannot be combined with a target or --user.'
+            exit 1
+        }
+        $count = Get-NumAccounts -ProjectRoot $ProjectRoot
+        for ($i = 1; $i -le $count; $i++) {
+            $letter = ConvertTo-AccountLetter -Index $i
+            $upper = Get-AccountEnvSuffix -Letter $letter
+            $user = Get-EnvValue -Path $envFile -Key "GH_USER_${upper}"
+            if (-not $user) {
+                Write-LogError "GH_USER_${upper} is required for gh-auth --all."
+                exit 1
+            }
+            $token = Get-HostGhToken -User $user
+            if (-not $token) {
+                Write-LogError "Could not extract a GitHub token for login '$user' (Account $upper)."
+                exit 1
+            }
+            $letters += $letter
+            $users += $user
+            $tokens += $token
+            $services += "$(Get-ServicePrefix -ProjectRoot $ProjectRoot)-$letter"
+        }
+    }
+    else {
+        if (-not $target -or -not $login) {
+            Write-LogError 'Usage: claude-docker gh-auth <service-or-letter> --user <login>'
+            exit 1
+        }
+        $letter = Resolve-AccountLetter -Target $target
+        if (-not $letter) {
+            Write-LogError "Unknown or unconfigured account target: $target"
+            exit 1
+        }
+        $upper = Get-AccountEnvSuffix -Letter $letter
+        $token = Get-HostGhToken -User $login
+        if (-not $token) {
+            Write-LogError "Could not extract a GitHub token for login '$login' (Account $upper)."
+            exit 1
+        }
+        $letters += $letter
+        $users += $login
+        $tokens += $token
+        $services += "$(Get-ServicePrefix -ProjectRoot $ProjectRoot)-$letter"
+    }
+
+    # Persist only after every requested token was retrieved successfully.
+    for ($i = 0; $i -lt $letters.Count; $i++) {
+        $upper = Get-AccountEnvSuffix -Letter $letters[$i]
+        Set-EnvValue -Path $envFile -Key "GH_USER_${upper}" -Value $users[$i]
+        Set-EnvValue -Path $envFile -Key "GH_TOKEN_${upper}" -Value $tokens[$i]
+        Write-Host "  * Account $upper mapped to GitHub login '$($users[$i])'." -ForegroundColor Green
+    }
+
+    $runningServices = @()
+    foreach ($service in $services) {
+        if (Get-ContainerId -ProjectRoot $ProjectRoot -Service $service) {
+            $runningServices += $service
+        }
+    }
+    if ($runningServices.Count -eq 0) {
+        Write-LogInfo 'Selected containers are not running. Tokens will be available on next start.'
+        return
+    }
+
+    Write-Host 'Recreating selected container(s) to apply...' -ForegroundColor Cyan
+    Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate @runningServices
+    Start-Sleep -Seconds 2
+    foreach ($service in $runningServices) {
+        Test-ContainerGhAuth -Service $service | Out-Null
+    }
+}
+
+function Invoke-GhAuth {
+    $mode = Get-GhAuthMode
+    if ($mode -eq 'per-account') {
+        Invoke-GhAuthPerAccount
+        return
+    }
+    if ($Arguments.Count -gt 0 -and $Arguments[0] -ne '--all') {
+        Write-LogError 'Targeted gh-auth requires GH_AUTH_MODE=per-account.'
+        exit 1
+    }
+    Invoke-GhAuthShared
+}
+
 # --- GitHub Auth Helpers ------------------------------------------------------
 
-function Update-GhToken {
+function Update-SharedGhToken {
     <#
     .SYNOPSIS
     Refresh GH_TOKEN in .env from the host's gh CLI.
@@ -264,7 +442,7 @@ function Update-GhToken {
         return $false
     }
 
-    $freshToken = & gh auth token 2>$null
+    $freshToken = Get-HostGhToken
     if (-not $freshToken) {
         Write-LogWarn 'Could not extract GitHub token from host gh CLI.'
         return $false
@@ -298,6 +476,55 @@ function Update-GhToken {
     return $true
 }
 
+function Update-PerAccountGhTokens {
+    $envFile = Join-Path $ProjectRoot '.env'
+    if (-not (Test-Command 'gh')) {
+        Write-LogInfo 'gh CLI not found on host — skipping GitHub token refresh.'
+        return $false
+    }
+    if (-not (Test-Path $envFile)) {
+        Write-LogWarn '.env not found — cannot refresh per-account GitHub tokens.'
+        return $false
+    }
+
+    $suffixes = @()
+    $tokens = @()
+    $count = Get-NumAccounts -ProjectRoot $ProjectRoot
+    for ($i = 1; $i -le $count; $i++) {
+        $upper = (ConvertTo-AccountLetter -Index $i).ToUpperInvariant()
+        $user = Get-EnvValue -Path $envFile -Key "GH_USER_${upper}"
+        if (-not $user) {
+            Write-LogWarn "GH_USER_${upper} is missing; per-account token refresh skipped."
+            return $false
+        }
+        $token = Get-HostGhToken -User $user
+        if (-not $token) {
+            Write-LogWarn "Could not extract a GitHub token for configured login '$user' (Account $upper)."
+            return $false
+        }
+        $suffixes += $upper
+        $tokens += $token
+    }
+
+    $changed = 0
+    for ($i = 0; $i -lt $suffixes.Count; $i++) {
+        $key = "GH_TOKEN_$($suffixes[$i])"
+        if ((Get-EnvValue -Path $envFile -Key $key) -ne $tokens[$i]) {
+            Set-EnvValue -Path $envFile -Key $key -Value $tokens[$i]
+            $changed++
+        }
+    }
+    Write-Host "  * Per-account GitHub tokens verified ($($suffixes.Count) account(s), $changed updated)." -ForegroundColor Green
+    return $true
+}
+
+function Update-GhToken {
+    if ((Get-GhAuthMode) -eq 'per-account') {
+        return (Update-PerAccountGhTokens)
+    }
+    return (Update-SharedGhToken)
+}
+
 function Test-ContainerGhAuth {
     <#
     .SYNOPSIS
@@ -316,17 +543,41 @@ function Test-ContainerGhAuth {
     $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $Service
     if (-not $cid) { return $false }
 
-    $null = & docker exec $cid gh api user --jq .login 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  * GitHub auth: OK ($Service)" -ForegroundColor Green
-        return $true
-    }
-    else {
+    $output = @(& docker exec $cid gh api user --jq .login 2>$null)
+    $exitCode = $LASTEXITCODE
+    $actual = ($output -join '').Trim()
+    if ($exitCode -ne 0 -or -not $actual) {
         Write-Host "  ! GitHub auth: not configured ($Service)" -ForegroundColor Yellow
         Write-Host '    git push/pull and gh commands may fail.' -ForegroundColor DarkGray
         Write-Host '    Fix: .\scripts\claude-docker.ps1 gh-auth' -ForegroundColor DarkGray
         return $false
     }
+
+    if ((Get-GhAuthMode) -eq 'per-account') {
+        $prefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
+        $letter = $Service.Substring($prefix.Length + 1)
+        $upper = $letter.ToUpperInvariant()
+        $expected = Get-EnvValue -Path (Join-Path $ProjectRoot '.env') -Key "GH_USER_${upper}"
+        if ($expected -and -not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "  ! GitHub auth: MISMATCH ($Service)" -ForegroundColor Yellow
+            Write-Host "    actual: $actual"
+            Write-Host "    expected: $expected (GH_USER_${upper})"
+            return $false
+        }
+    }
+
+    Write-Host "  * GitHub auth: $actual ($Service)" -ForegroundColor Green
+    return $true
+}
+
+function Test-AllContainerGhAuth {
+    $ok = $true
+    foreach ($service in (Get-ServiceNames -ProjectRoot $ProjectRoot)) {
+        if (Get-ContainerId -ProjectRoot $ProjectRoot -Service $service) {
+            if (-not (Test-ContainerGhAuth -Service $service)) { $ok = $false }
+        }
+    }
+    return $ok
 }
 
 function Invoke-Build {
@@ -370,7 +621,7 @@ function Invoke-Update {
 
         # Wait briefly for entrypoint to complete gh auth setup
         Start-Sleep -Seconds 2
-        Test-ContainerGhAuth -Service $primary | Out-Null
+        Test-AllContainerGhAuth | Out-Null
 
         Write-Host ''
         Write-Host 'Update complete.' -ForegroundColor Green
@@ -559,7 +810,8 @@ function Show-Help {
     Write-Host 'INTERACTIVE' -ForegroundColor White
     Write-Host '  claude [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Claude Code (default: claude-a)'
     Write-Host '  codex [service]       ' -ForegroundColor Green -NoNewline; Write-Host 'Start OpenAI Codex CLI (default: codex-a)'
-    Write-Host '  gh-auth               ' -ForegroundColor Green -NoNewline; Write-Host 'Inject GitHub token from host gh CLI'
+    Write-Host '  gh-auth [target]      ' -ForegroundColor Green -NoNewline; Write-Host 'Import shared or per-account host gh credentials'
+    Write-Host '                        Per-account: <service-or-letter> --user <login> | --all'
     Write-Host '  exec <service>        ' -ForegroundColor Green -NoNewline; Write-Host 'Open shell in a service'
     Write-Host ''
     Write-Host 'USAGE TRACKING' -ForegroundColor White

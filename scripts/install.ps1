@@ -30,8 +30,8 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 #   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
 #   GIT_USER_NAME, GIT_USER_EMAIL (optional),
-#   GH_TOKEN (optional — auto-detected from gh CLI),
-#   GH_CONFIG_DIR (optional — platform-specific gh config path for volume mount)
+#   GH_AUTH_MODE + GH_USER_<LETTER>/GH_TOKEN_<LETTER> (per-account only),
+#   GH_TOKEN + GH_CONFIG_DIR (optional shared-mode host gh configuration)
 #
 # Windows note: UID/GID are intentionally NOT written. Windows has no POSIX
 # UID/GID concept, and docker-compose.linux.yml (which consumes them) is not
@@ -56,6 +56,9 @@ $Script:ApiKeyB = ''
 # Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
 # non-interactive or default install behaves exactly as before (see #273).
 $Script:Runtime = 'claude'
+$Script:GhAuthMode = 'shared'
+$Script:GhUsers = @()
+$Script:GhTokens = @()
 
 # --- I/O Latency Benchmark ---------------------------------------------------
 
@@ -350,6 +353,41 @@ function Get-Configuration {
     }
     Write-LogInfo "Accounts: $($Script:NumAccounts)"
 
+    # GitHub authentication mode. Per-account setup reads each explicitly
+    # named stored login without changing the active host account.
+    $ghChoice = Read-Selection `
+        -Question 'How should containers authenticate to GitHub?' `
+        -Options @(
+            "Shared account - use the host's active gh account in every container",
+            'Per-account - map a different stored gh login to each container'
+        )
+    if ($ghChoice -like 'Per-account*') {
+        $Script:GhAuthMode = 'per-account'
+        if (-not (Test-Command 'gh')) {
+            Write-LogError 'Per-account GitHub setup requires the host gh CLI.'
+            exit 1
+        }
+        Write-Host ''
+        Write-Host 'Enter host GitHub logins already stored by gh:' -ForegroundColor Cyan
+        for ($i = 1; $i -le $Script:NumAccounts; $i++) {
+            $upper = Get-AccountLetterUpper -Index $i
+            $login = Read-Input -Question "GitHub login for Account $upper"
+            $token = & gh auth token --hostname github.com --user $login 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not $token) {
+                Write-LogError "Could not read a stored github.com token for '$login'."
+                Write-LogInfo 'Authenticate it first with: gh auth login --hostname github.com'
+                exit 1
+            }
+            $Script:GhUsers += $login
+            $Script:GhTokens += ([string]($token | Select-Object -First 1)).Trim()
+        }
+        Write-LogSuccess "Per-account GitHub mappings collected ($($Script:NumAccounts) accounts)"
+    }
+    else {
+        $Script:GhAuthMode = 'shared'
+        Write-LogInfo 'GitHub authentication: shared account'
+    }
+
     # API keys (Path B). The .env variable prefix is resolved from the runtime
     # registry (CLAUDE_API_KEY_ / CODEX_API_KEY_ / GEMINI_API_KEY_ / ...).
     $Script:ApiKeys = @()
@@ -506,25 +544,37 @@ function New-EnvFile {
         $lines += ''
     }
 
-    # GitHub CLI token and config directory (auto-detect from host)
-    if (Test-Command 'gh') {
-        $null = & gh auth status 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $ghToken = & gh auth token 2>$null
-            if ($ghToken) {
-                $lines += '# ==== GitHub CLI ===='
-                $lines += "GH_TOKEN=$ghToken"
-                $lines += ''
+    if ($Script:GhAuthMode -eq 'per-account') {
+        $lines += '# ==== GitHub CLI (per account) ===='
+        $lines += 'GH_AUTH_MODE=per-account'
+        for ($i = 1; $i -le $Script:NumAccounts; $i++) {
+            $upper = Get-AccountLetterUpper -Index $i
+            $lines += "GH_USER_${upper}=$($Script:GhUsers[$i - 1])"
+            $lines += "GH_TOKEN_${upper}=$($Script:GhTokens[$i - 1])"
+        }
+        $lines += ''
+    }
+    else {
+        # Shared GitHub CLI token (auto-detect from the active host account)
+        if (Test-Command 'gh') {
+            $null = & gh auth status 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $ghToken = & gh auth token 2>$null
+                if ($ghToken) {
+                    $lines += '# ==== GitHub CLI ===='
+                    $lines += "GH_TOKEN=$ghToken"
+                    $lines += ''
+                }
             }
         }
-    }
 
-    # GitHub CLI config directory for volume mount
-    # Windows: %APPDATA%\GitHub CLI (not ~/.config/gh)
-    $ghConfigDir = Join-Path $env:APPDATA 'GitHub CLI'
-    if (Test-Path $ghConfigDir) {
-        $lines += "GH_CONFIG_DIR=$(ConvertTo-ForwardSlash -Path $ghConfigDir)"
-        $lines += ''
+        # Shared GitHub CLI config directory for read-only volume mount.
+        # Windows: %APPDATA%\GitHub CLI (not ~/.config/gh)
+        $ghConfigDir = Join-Path $env:APPDATA 'GitHub CLI'
+        if (Test-Path $ghConfigDir) {
+            $lines += "GH_CONFIG_DIR=$(ConvertTo-ForwardSlash -Path $ghConfigDir)"
+            $lines += ''
+        }
     }
 
     $content = ($lines -join "`n") + "`n"
@@ -533,7 +583,7 @@ function New-EnvFile {
     # Restrict file permissions (Windows ACL equivalent of chmod 600).
     # Modify (M) = R,W,D — needed so remove.ps1 can delete the .env later.
     # R,W alone blocks deletion because DELETE is a separate Windows ACL bit.
-    & icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(M)" 2>$null | Out-Null
+    Protect-EnvFile -Path $envFile
 
     Write-LogSuccess ".env generated at $envFile"
 
@@ -861,6 +911,31 @@ function Invoke-Verification {
     else {
         Write-LogWarn 'Authentication not verified (may need browser login or API key check)'
     }
+
+    # Verify GitHub independently in every running service. A missing or
+    # mismatched login remains non-blocking but is rendered explicitly.
+    for ($i = 1; $i -le $Script:NumAccounts; $i++) {
+        $letter = Get-AccountLetter -Index $i
+        $upper = Get-AccountLetterUpper -Index $i
+        $svc = "$servicePrefix-$letter"
+        if (-not (Get-ContainerId -ProjectRoot $ProjectRoot -Service $svc)) { continue }
+
+        $output = @(Invoke-Compose -ProjectRoot $ProjectRoot exec -T $svc gh api user --jq .login 2>$null)
+        $ghExit = $LASTEXITCODE
+        $actual = ($output -join '').Trim()
+        if ($ghExit -ne 0 -or -not $actual) {
+            Write-LogWarn "${svc}: GitHub authentication is not configured"
+            continue
+        }
+        if ($Script:GhAuthMode -eq 'per-account') {
+            $expected = $Script:GhUsers[$i - 1]
+            if (-not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
+                Write-LogWarn "${svc}: GitHub login mismatch (actual: $actual, expected: $expected)"
+                continue
+            }
+        }
+        Write-LogSuccess "${svc}: GitHub login verified ($actual)"
+    }
 }
 
 # --- Summary ------------------------------------------------------------------
@@ -922,6 +997,10 @@ function Show-Summary {
 }
 
 # --- Main ---------------------------------------------------------------------
+
+if ($env:CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY -eq '1') {
+    return
+}
 
 Write-Host ''
 Write-Host '============================================' -ForegroundColor Cyan

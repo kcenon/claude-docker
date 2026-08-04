@@ -26,6 +26,27 @@ func TestRateLimitErrorError(t *testing.T) {
 	}
 }
 
+func TestGHTokenArgsSelectsNamedAccount(t *testing.T) {
+	cases := []struct {
+		user string
+		want []string
+	}{
+		{"", []string{"auth", "token"}},
+		{"fixture-user-b", []string{"auth", "token", "--hostname", "github.com", "--user", "fixture-user-b"}},
+	}
+	for _, tc := range cases {
+		got := ghTokenArgs(tc.user)
+		if len(got) != len(tc.want) {
+			t.Fatalf("ghTokenArgs(%q) = %v, want %v", tc.user, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("ghTokenArgs(%q)[%d] = %q, want %q", tc.user, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
 // TestReadOAuthTokenSuccess writes a valid .credentials.json into a temp
 // dir and verifies ReadOAuthToken returns the embedded access token.
 func TestReadOAuthTokenSuccess(t *testing.T) {

@@ -29,8 +29,8 @@ fi
 #   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
 #   GIT_USER_NAME, GIT_USER_EMAIL (optional),
-#   GH_TOKEN (optional — auto-detected from gh CLI),
-#   GH_CONFIG_DIR (optional — platform-specific gh config path for volume mount)
+#   GH_AUTH_MODE + GH_USER_<LETTER>/GH_TOKEN_<LETTER> (per-account only),
+#   GH_TOKEN + GH_CONFIG_DIR (optional shared-mode host gh configuration)
 #
 # Linux-only keys (bash installer adds):
 #   UID, GID (consumed by docker-compose.linux.yml)
@@ -60,6 +60,9 @@ CLAUDE_VERSION=""
 # Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
 # non-interactive or default install behaves exactly as before (see #273).
 RUNTIME="claude"
+GH_AUTH_MODE="shared"
+GH_USERS=()
+GH_TOKENS=()
 
 # --- Utility Functions --------------------------------------------------------
 
@@ -569,6 +572,39 @@ collect_configuration() {
     fi
     log_info "Accounts: $NUM_ACCOUNTS"
 
+    # GitHub authentication mode. Shared preserves the existing active-account
+    # import and read-only host config mount. Per-account mode requires every
+    # selected host login up front so compose generation can remain fail-closed.
+    local gh_choice
+    gh_choice=$(prompt_select \
+        "How should containers authenticate to GitHub?" \
+        "Shared account — use the host's active gh account in every container" \
+        "Per-account — map a different stored gh login to each container")
+    if [[ "$gh_choice" == Per-account* ]]; then
+        GH_AUTH_MODE="per-account"
+        if ! command -v gh >/dev/null 2>&1; then
+            log_error "Per-account GitHub setup requires the host gh CLI."
+            exit 1
+        fi
+        echo -e "\n${CYAN}Enter host GitHub logins already stored by gh:${NC}"
+        for i in $(seq 1 "$NUM_ACCOUNTS"); do
+            local upper login token
+            upper=$(index_to_upper "$i")
+            login=$(prompt_input "GitHub login for Account $upper")
+            if ! token=$(gh auth token --hostname github.com --user "$login" 2>/dev/null) || [[ -z "$token" ]]; then
+                log_error "Could not read a stored github.com token for '$login'."
+                log_info "Authenticate it first with: gh auth login --hostname github.com"
+                exit 1
+            fi
+            GH_USERS+=("$login")
+            GH_TOKENS+=("$token")
+        done
+        log_success "Per-account GitHub mappings collected ($NUM_ACCOUNTS accounts)"
+    else
+        GH_AUTH_MODE="shared"
+        log_info "GitHub authentication: shared account"
+    fi
+
     # API keys (Path B). The .env variable prefix is resolved from the runtime
     # registry (CLAUDE_API_KEY_ / CODEX_API_KEY_ / GEMINI_API_KEY_ / ...).
     API_KEYS=()
@@ -708,21 +744,33 @@ generate_env() {
             echo ""
         fi
 
-        # GitHub CLI token (auto-detect from host)
-        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-            local gh_token
-            gh_token=$(gh auth token 2>/dev/null || true)
-            if [[ -n "$gh_token" ]]; then
-                echo "# ==== GitHub CLI ===="
-                echo "GH_TOKEN=$gh_token"
+        if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+            echo "# ==== GitHub CLI (per account) ===="
+            echo "GH_AUTH_MODE=per-account"
+            for i in $(seq 1 "$NUM_ACCOUNTS"); do
+                local upper
+                upper=$(index_to_upper "$i")
+                echo "GH_USER_${upper}=${GH_USERS[$((i-1))]}"
+                echo "GH_TOKEN_${upper}=${GH_TOKENS[$((i-1))]}"
+            done
+            echo ""
+        else
+            # Shared GitHub CLI token (auto-detect from the active host account)
+            if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+                local gh_token
+                gh_token=$(gh auth token 2>/dev/null || true)
+                if [[ -n "$gh_token" ]]; then
+                    echo "# ==== GitHub CLI ===="
+                    echo "GH_TOKEN=$gh_token"
+                    echo ""
+                fi
+            fi
+
+            # Shared GitHub CLI config directory (for read-only volume mount)
+            if [[ -d "$HOME/.config/gh" ]]; then
+                echo "GH_CONFIG_DIR=$HOME/.config/gh"
                 echo ""
             fi
-        fi
-
-        # GitHub CLI config directory (for volume mount)
-        if [[ -d "$HOME/.config/gh" ]]; then
-            echo "GH_CONFIG_DIR=$HOME/.config/gh"
-            echo ""
         fi
 
         if [[ "$PLATFORM" == "linux" ]]; then
@@ -1076,6 +1124,31 @@ run_verification() {
     else
         log_warn "Authentication not verified (may need browser login or API key check)"
     fi
+
+    # Verify the GitHub login independently in every running service. Login
+    # mismatches are warnings so normal startup remains non-blocking.
+    local i letter upper svc actual expected
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        letter=$(index_to_letter "$i")
+        upper=$(index_to_upper "$i")
+        svc="${service_prefix}-${letter}"
+        if [[ -z "$("${COMPOSE_CMD[@]}" ps -q "$svc" 2>/dev/null)" ]]; then
+            continue
+        fi
+        if ! actual=$("${COMPOSE_CMD[@]}" exec -T "$svc" gh api user --jq .login 2>/dev/null) || [[ -z "$actual" ]]; then
+            log_warn "$svc: GitHub authentication is not configured"
+            continue
+        fi
+        if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+            expected="${GH_USERS[$((i-1))]}"
+            if [[ "$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')" != \
+                  "$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')" ]]; then
+                log_warn "$svc: GitHub login mismatch (actual: $actual, expected: $expected)"
+                continue
+            fi
+        fi
+        log_success "$svc: GitHub login verified ($actual)"
+    done
 }
 
 # --- Summary ------------------------------------------------------------------
@@ -1198,4 +1271,6 @@ main() {
     print_summary
 }
 
-main "$@"
+if [[ "${CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY:-0}" != "1" ]]; then
+    main "$@"
+fi
