@@ -25,9 +25,9 @@ function Write-TestFile([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8)
 }
 
-# Keep executable shims under the checked-out workspace. Some hosted Linux
-# runners mount the system temporary directory with noexec, which causes
-# command discovery to skip these mocks and fall through to the real gh CLI.
+# Keep executable shims under the checked-out workspace and bind aliases to
+# their absolute paths below. Hosted runners also provide real gh and docker
+# commands, which must never win command discovery in this isolated test.
 $work = Join-Path $ProjectRoot ".test-github-account-selection-$PID"
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $originalPath = $env:PATH
@@ -142,6 +142,9 @@ function Invoke-TestCLI([string]$Dir, [string[]]$CLIArgs) {
     $env:GH_MOCK_LOG = Join-Path $Dir 'gh.log'
     $env:DOCKER_MOCK_LOG = Join-Path $Dir 'docker.log'
     $env:PATH = (Join-Path $Dir 'bin') + [System.IO.Path]::PathSeparator + $originalPath
+    $mockExtension = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { '.cmd' } else { '' }
+    Set-Alias -Name gh -Value (Join-Path $Dir "bin/gh$mockExtension") -Scope Global -Force
+    Set-Alias -Name docker -Value (Join-Path $Dir "bin/docker$mockExtension") -Scope Global -Force
     if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and
         $PSVersionTable.OS -notlike '*Windows*') {
         $PSVersionTable.OS = 'Microsoft Windows'
@@ -195,6 +198,7 @@ finally {
     $env:PATH = $originalPath
     $env:GH_MOCK_LOG = $null
     $env:DOCKER_MOCK_LOG = $null
+    Remove-Item Alias:gh, Alias:docker -Force -ErrorAction SilentlyContinue
     if ($null -ne $originalOS -and $PSVersionTable.ContainsKey('OS')) {
         $PSVersionTable.OS = $originalOS
     }
