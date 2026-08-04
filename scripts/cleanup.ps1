@@ -31,6 +31,15 @@ param(
     [int]$BackupAgeDays = 7
 )
 
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this script resolves
+# runtime state through USERPROFILE. That is not the state root created by the
+# bash installer, so cleanup can report success while leaving the real state
+# behind.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "cleanup.ps1 is Windows-only. Use ./scripts/cleanup.sh on macOS or Linux."
+    exit 1
+}
+
 if ($Force -and $SkipState) {
     Write-Error '-Force and -SkipState are mutually exclusive.'
     exit 2
