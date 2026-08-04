@@ -1,8 +1,10 @@
 # Base: node:20.18.1-slim (Debian/glibc)
-# Pinned to a specific patch version AND content digest so rebuilds are
-# byte-for-byte reproducible and any upstream repush of the tag is caught
-# at build time as a digest mismatch. To bump:
-#   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
+# Pinned to a specific patch version AND content digest so upstream tag
+# movement cannot silently change the base layers. The full image is not
+# byte-for-byte reproducible because later apt/npm installs may track current
+# repository contents. To bump:
+#   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest
+#      patch in the pinned 20.x line
 #   2. Capture the digest on a trusted host (REQUIRED, not optional):
 #        docker pull node:<new-version>-slim \
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim

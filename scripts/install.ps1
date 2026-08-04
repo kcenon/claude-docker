@@ -676,7 +676,7 @@ function Invoke-TUIBuild {
             }
             Write-LogWarn 'Prebuilt download failed.'
         }
-        Write-LogInfo "Install Go 1.21+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
+        Write-LogInfo "Install Go 1.24+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
         if (Read-Confirmation -Question 'Install Go automatically now?' -Default 'y') {
             if (-not (Install-Prerequisite -Tool 'go')) {
                 Write-LogWarn 'Failed to install Go. Skipping TUI build.'

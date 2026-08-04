@@ -5,14 +5,16 @@
 # Usage:  scripts/claude-docker <command> [args...]
 #
 # Commands:
-#   up/down/restart   Manage containers
-#   claude [svc]      Start Claude Code (default: claude-a)
-#   codex [svc]       Start OpenAI Codex CLI (default: codex-a)
-#   exec <svc>        Open shell in a service
-#   usage [type]      Token usage report
-#   build             Build/rebuild Docker image
-#   config/compose    Advanced compose operations
-#   help              Show help
+#   up/down/restart      Manage containers
+#   claude/codex/gemini  Start a registered agent runtime
+#   exec <svc>           Open a shell or run a command in a service
+#   gh-auth              Import host GitHub credentials
+#   usage [type]         Token usage report (Claude only)
+#   tui/build-tui        Launch or build the dashboard
+#   build/update         Build or fully update the image
+#   scale <N>            Regenerate for 1-702 accounts
+#   config/compose       Advanced compose operations
+#   help                 Show help
 set -euo pipefail
 
 # Platform guard: same rationale as install.sh — refuse to run on native
@@ -947,7 +949,7 @@ cmd_tui() {
         fi
         log_error "Could not install TUI binary automatically."
         echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build from source."
-        echo -e "  Requires Go 1.21+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
+        echo -e "  Requires Go 1.24+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
         exit 1
     fi
     exec "$tui_bin" "$@"
@@ -966,7 +968,7 @@ cmd_build_tui() {
             return 0
         fi
         log_error "Release download failed and Go toolchain is unavailable."
-        echo -e "  Install Go 1.21+ to build from source:"
+        echo -e "  Install Go 1.24+ to build from source:"
         echo -e "  macOS:  ${DIM}brew install go${NC}"
         echo -e "  Linux:  ${DIM}sudo apt install golang-go${NC}"
         exit 1
@@ -1019,16 +1021,20 @@ ${BOLD}LIFECYCLE${NC}
 ${BOLD}INTERACTIVE${NC}
   ${GREEN}claude${NC} [service]      Start Claude Code (default: claude-a)
   ${GREEN}codex${NC} [service]       Start OpenAI Codex CLI (default: codex-a)
-  ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
+  ${GREEN}gemini${NC} [service]      Start Google Gemini CLI (default: gemini-a)
   ${GREEN}gh-auth${NC} [target]      Import shared or per-account host gh credentials
                         Per-account: <service-or-letter> --user <login> | --all
-  ${GREEN}exec${NC} <service>        Open shell in a service
+  ${GREEN}exec${NC} <service> [cmd]  Open a shell or run a command in a service
 
 ${BOLD}USAGE TRACKING${NC}
   ${GREEN}usage${NC} [type] [flags]  Token usage report (default: daily)
                         Types: daily, monthly, session, blocks, statusline
                         Flags: --since, --until, --json, --breakdown, --compact
-  ${GREEN}build-tui${NC}             Rebuild TUI dashboard binary (requires Go 1.21+)
+
+${BOLD}DASHBOARD${NC}
+  ${GREEN}tui${NC}                   Launch multi-account dashboard TUI
+  ${GREEN}dashboard${NC}             Alias of tui
+  ${GREEN}build-tui${NC}             Build TUI; download a release if Go is unavailable
 
 ${BOLD}SCALING${NC}
   ${GREEN}scale${NC} <N>             Set number of accounts (1-702) and regenerate
@@ -1036,6 +1042,7 @@ ${BOLD}SCALING${NC}
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration
   ${GREEN}compose${NC} ...           Pass raw args to docker compose
+  ${GREEN}help${NC}                  Show this help
 
 ${BOLD}SERVICES ($(get_num_accounts) configured)${NC}
 HELP

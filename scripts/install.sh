@@ -883,7 +883,7 @@ build_tui() {
             fi
             log_warn "Prebuilt download failed."
         fi
-        log_info "Install Go 1.21+ and re-run 'scripts/claude-docker build-tui' later."
+        log_info "Install Go 1.24+ and re-run 'scripts/claude-docker build-tui' later."
         if prompt_confirm "Install Go automatically now?" "y"; then
             install_prerequisite go || {
                 log_warn "Failed to install Go. Skipping TUI build."
