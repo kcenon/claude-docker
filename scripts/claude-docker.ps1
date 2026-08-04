@@ -810,13 +810,20 @@ function Show-Help {
     Write-Host 'INTERACTIVE' -ForegroundColor White
     Write-Host '  claude [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Claude Code (default: claude-a)'
     Write-Host '  codex [service]       ' -ForegroundColor Green -NoNewline; Write-Host 'Start OpenAI Codex CLI (default: codex-a)'
+    Write-Host '  gemini [service]      ' -ForegroundColor Green -NoNewline; Write-Host 'Start Google Gemini CLI (default: gemini-a)'
     Write-Host '  gh-auth [target]      ' -ForegroundColor Green -NoNewline; Write-Host 'Import shared or per-account host gh credentials'
     Write-Host '                        Per-account: <service-or-letter> --user <login> | --all'
-    Write-Host '  exec <service>        ' -ForegroundColor Green -NoNewline; Write-Host 'Open shell in a service'
+    Write-Host '  exec <service> [cmd]  ' -ForegroundColor Green -NoNewline; Write-Host 'Open a shell or run a command in a service'
     Write-Host ''
     Write-Host 'USAGE TRACKING' -ForegroundColor White
     Write-Host '  usage [type] [flags]  ' -ForegroundColor Green -NoNewline; Write-Host 'Token usage report (default: daily)'
     Write-Host '                        Types: daily, monthly, session, blocks, statusline'
+    Write-Host '                        Flags: --since, --until, --json, --breakdown, --compact'
+    Write-Host ''
+    Write-Host 'DASHBOARD' -ForegroundColor White
+    Write-Host '  tui                   ' -ForegroundColor Green -NoNewline; Write-Host 'Launch multi-account dashboard TUI'
+    Write-Host '  dashboard             ' -ForegroundColor Green -NoNewline; Write-Host 'Alias of tui'
+    Write-Host '  build-tui             ' -ForegroundColor Green -NoNewline; Write-Host 'Rebuild TUI dashboard binary (requires Go 1.24+)'
     Write-Host ''
     Write-Host 'SCALING' -ForegroundColor White
     Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host 'Set number of accounts (1-702) and regenerate'
@@ -824,6 +831,7 @@ function Show-Help {
     Write-Host 'ADVANCED' -ForegroundColor White
     Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show resolved compose configuration'
     Write-Host '  compose ...           ' -ForegroundColor Green -NoNewline; Write-Host 'Pass raw args to docker compose'
+    Write-Host '  help                  ' -ForegroundColor Green -NoNewline; Write-Host 'Show this help'
     Write-Host ''
     $numAccts = Get-NumAccounts -ProjectRoot $ProjectRoot
     Write-Host "SERVICES ($numAccts configured)" -ForegroundColor White
@@ -849,7 +857,7 @@ function Invoke-Tui {
     if (-not (Test-Path $tuiBin)) {
         Write-Host "TUI binary not found at $tuiBin" -ForegroundColor Red
         Write-Host "  Run 'scripts\claude-docker.ps1 build-tui' to build it." -ForegroundColor White
-        Write-Host "  Requires Go 1.21+ toolchain. Install with 'winget install GoLang.Go' or from https://go.dev/dl/" -ForegroundColor DarkGray
+        Write-Host "  Requires Go 1.24+ toolchain. Install with 'winget install GoLang.Go' or from https://go.dev/dl/" -ForegroundColor DarkGray
         exit 1
     }
     & $tuiBin @Arguments
@@ -863,7 +871,7 @@ function Invoke-BuildTui {
         exit 1
     }
     if (-not (Get-Command 'go' -ErrorAction SilentlyContinue)) {
-        Write-Host 'Go toolchain not found. Install Go 1.21+ first:' -ForegroundColor Red
+        Write-Host 'Go toolchain not found. Install Go 1.24+ first:' -ForegroundColor Red
         Write-Host '  winget install GoLang.Go' -ForegroundColor DarkGray
         Write-Host '  or: https://go.dev/dl/' -ForegroundColor DarkGray
         exit 1

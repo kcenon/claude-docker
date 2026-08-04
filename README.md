@@ -1,24 +1,26 @@
 # Claude Docker
 
-Run multiple Claude Code instances simultaneously on a single host with
-isolated accounts and shared source code.
+Run multiple isolated accounts for Claude Code, OpenAI Codex CLI, or Google
+Gemini CLI on a single host while sharing source code and one Docker image.
 
 Each additional instance adds only **20-70 MB** of disk overhead (vs 4-10 GB
 per VM) by sharing a single Docker image and bind-mounting the project source.
 
 ## Features
 
+- **Multi-runtime support** -- Select Claude Code, Codex CLI, or Gemini CLI for the generated stack
 - **Multi-account isolation** -- Each container has its own credentials, settings, and history
 - **Shared source code** -- Bind mount (Tier A) or git worktree (Tier B) for concurrent editing
 - **Cross-platform** -- Linux, macOS, Windows (WSL2 or native PowerShell)
-- **Flexible authentication** -- OAuth for Pro/Max/Team subscriptions, or API key for Console
-- **Scalable to N instances** -- Add accounts by copying a compose service block (up to 702 via Excel-style suffixes)
-- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; auto-downloads a signed prebuilt binary from GitHub Releases or builds from source when Go 1.24+ is available
+- **Flexible authentication** -- Runtime-specific OAuth or API keys, plus shared or per-container GitHub identities
+- **Scalable to N instances** -- Use `scale` or `NUM_ACCOUNTS`; generators support up to 702 Excel-style suffixes
+- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; use a checksum-verified release binary or build from source with Go 1.24+
 
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) 24.0+ (Linux) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS / Windows)
 - [Node.js](https://nodejs.org/) 20+ (optional -- needed for `usage` subcommand token reports)
+- [Go](https://go.dev/dl/) 1.24+ (optional -- needed only to build the TUI from source)
 - Git
 
 **Platform-specific:**
@@ -89,7 +91,7 @@ Edit `.env`:
 PROJECT_DIR=/absolute/path/to/your/project
 ```
 
-### 2. Authenticate
+#### 2. Authenticate
 
 Choose **OAuth** (subscription) or **API key** (Anthropic Console):
 
@@ -121,7 +123,7 @@ Re-run `scripts/generate-compose.sh` after editing so the generator emits
 `ANTHROPIC_API_KEY` only for slots that actually have a key (see
 [Switching between OAuth and API key](#authentication) below).
 
-### 3. Build and run
+#### 3. Build and run
 
 ```bash
 scripts/claude-docker build
@@ -131,7 +133,7 @@ scripts/claude-docker up
 The CLI wrapper auto-detects your platform and applies the correct
 compose overrides (Linux UID/GID, worktree).
 
-### 4. Start Claude Code
+#### 4. Start Claude Code
 
 ```bash
 # Primary account
@@ -155,15 +157,18 @@ scripts/claude-docker help       # Show all available commands
 | | `down` | Stop all containers |
 | | `restart` | Restart all containers |
 | | `build` | Build/rebuild Docker image |
+| | `update` | Attempt a GitHub credential refresh, rebuild without cache, and recreate containers |
 | | `ps` | Show container status |
 | | `logs` | Follow container logs |
 | **Interactive** | `claude [service]` | Start Claude Code (default: claude-a) |
 | | `codex [service]` | Start OpenAI Codex CLI (default: codex-a) |
 | | `gemini [service]` | Start Google Gemini CLI (default: gemini-a) |
-| | `exec <service>` | Open shell in a container |
+| | `exec <service> [command...]` | Open a shell or run a command in a container |
+| | `gh-auth [target]` | Import shared or per-account host `gh` credentials |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
-| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; auto-downloads a prebuilt binary if missing |
-| | `build-tui` | Rebuild the TUI dashboard binary from source (requires Go 1.24+) |
+| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; the bash wrapper auto-downloads if missing |
+| | `build-tui` | Build the TUI from source; the bash wrapper downloads a release when Go is unavailable |
+| **Scaling** | `scale <N>` | Set 1-702 accounts and regenerate Compose files |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
 
@@ -252,10 +257,17 @@ directory. `settings.json`, `GEMINI.md`, `commands/`, and `extensions/` are
 linked; OAuth credentials, sessions, and logs stay in the writable account
 state directory.
 
-Gemini OAuth credentials ("Login with Google") are stored in the host
-system keychain, which a Linux container cannot read — the same limitation
-as the `gh` token caveat. The primary in-container auth path is therefore an
-API key: set per-account keys such as `GEMINI_API_KEY_A`, and the generator
+Gemini CLI stores its user-level configuration and cached authentication under
+`~/.gemini/`, with `GEMINI_CLI_HOME` selecting the parent directory. The host
+OAuth cache is intentionally not linked into a container: `oauth_creds.json`,
+`google_accounts.json`, sessions, and logs remain in that account's writable
+`~/.gemini-state/account-*/` mount. To use **Sign in with Google**, start
+Gemini inside each account container and complete the interactive flow there;
+the resulting state persists for that account. See the official
+[Gemini CLI authentication guide](https://geminicli.com/docs/get-started/authentication/).
+
+For headless environments or when the browser flow cannot return to the
+container, use per-account API keys such as `GEMINI_API_KEY_A`. The generator
 injects `GEMINI_API_KEY` only for accounts that have a non-empty key.
 
 The TUI can list and attach to Gemini services; usage columns show `--`.
@@ -283,40 +295,49 @@ green run is not by itself evidence that authenticated access works.
 
 ### Adding a runtime
 
-Claude, Codex, and Gemini are all defined the same way: a registry entry plus
-a bootstrap module. No installer, lifecycle script, or compose generator code
-is runtime-specific — they all resolve per-runtime values from the registry.
-To add a new runtime:
+The runtime registry centralizes service names, paths, environment variables,
+and TUI behavior, but it is **not** a package manager. A registry entry and a
+bootstrap module alone do not install a new executable in the image. Add a
+runtime with this checklist:
 
-1. **Add a registry entry.** Append an object under `runtimes` in
-   `tui/internal/config/runtimes.json`, keyed by the runtime name. Populate
-   every field that the existing entries declare (the registry is the single
-   source of truth read by Go, bash, PowerShell, and the container
-   entrypoint). The fields the lifecycle scripts depend on are:
+1. **Add a complete registry entry.** Append an object under `runtimes` in
+   `tui/internal/config/runtimes.json`, keyed by the runtime name, and populate
+   every field used by the existing entries. Go, bash, PowerShell, and the
+   container entrypoint all read this file.
 
-   | Field | Used for |
-   |-------|----------|
-   | `binary` | CLI executable verified inside the container |
-   | `servicePrefix` | compose service names (`<prefix>-a`, `<prefix>-b`, ...) |
-   | `stateDir` | per-account host state directory (`~/<stateDir>/account-*`) |
-   | `containerHome` | its basename is the host config directory (`~/<basename>`) |
-   | `apiKeyVarPrefix` | `.env` API-key variable prefix (`<PREFIX><LETTER>`) |
-   | `sdkApiKeyVar` | SDK key variable the API key is mapped to at runtime |
-   | `buildArg` | Docker build argument for the version pin |
-   | `bootstrapModule` | bootstrap script sourced by the entrypoint |
-   | `credentialFiles` | credential filename hardened to `600` by the installer |
+   | Field group | Used for |
+   |-------------|----------|
+   | `binary`, `displayName`, `servicePrefix` | CLI dispatch, labels, and Compose service names |
+   | `stateDir`, `containerHome`, `hostConfigMount`, `containerConfigMount` | Per-account state and host-config mounts |
+   | `configDirEnv`, `configDirEnvValue`, `configSourceEnv` | Runtime-specific configuration discovery |
+   | `apiKeyVarPrefix`, `sdkApiKeyVar` | Per-account API-key mapping |
+   | `buildArg` | Build argument emitted by the Compose generators; the Dockerfile must also declare and use it |
+   | `bootstrapModule` | Module sourced by `entrypoint.sh` |
+   | `skipPermissionsFlag`, `extraRunArgs`, `supportsUsage`, `mountsAgentsSkills` | CLI and TUI capabilities |
+   | `credentialFiles`, `oauthCredentialFile` | Permission hardening and authentication detection |
 
-2. **Add a bootstrap module.** Create `scripts/lib/bootstrap-<runtime>.sh`
-   matching the name in the registry's `bootstrapModule` field. It must
-   expose a single `runtime_bootstrap` entry point; the container entrypoint
-   sources it via the registry and runs it after the runtime-agnostic common
-   steps. Use `scripts/lib/bootstrap-codex.sh` as a template — shared logic
-   lives in `scripts/lib/bootstrap-common.sh`.
+   `installMethod` is descriptive metadata today; no code dynamically installs
+   a package from this value.
 
-Once both exist, `install`, `remove`, and `cleanup` (bash and PowerShell)
-pick up the new runtime automatically: the installer offers it in the
-runtime-selection prompt, and `remove`/`cleanup` iterate every registered
-runtime when removing state directories.
+2. **Install the runtime in `Dockerfile`.** Add the package or native installer
+   that provides the registry's `binary`. If the runtime supports a version
+   pin, declare and consume the same argument named by `buildArg`.
+
+3. **Add a bootstrap module.** Create `scripts/lib/bootstrap-<runtime>.sh`
+   matching `bootstrapModule`. It must expose `runtime_bootstrap`; shared
+   copy/link helpers live in `scripts/lib/bootstrap-common.sh`.
+
+4. **Audit installer and authentication assumptions.** Registry-driven service
+   naming, Compose generation, state creation, removal, and cleanup work
+   automatically. The installers still include Claude-specific version/config
+   prompts and verify authentication with `<binary> auth status`; add explicit
+   handling when the new CLI uses a different contract.
+
+5. **Add verification and documentation.** At minimum, add a Compose fixture,
+   bash/PowerShell generator-equivalence coverage, attach-argv coverage, and Go
+   tests for runtime parsing, account discovery, and dashboard rendering. Add
+   a keyless smoke test and a separate key-gated check when authenticated
+   behavior cannot be exercised without a secret.
 
 ### Authentication
 
@@ -435,8 +456,8 @@ Claude Code settings, containers automatically inherit your host configuration.
 > `install.ps1`, or `bootstrap.sh`) on the host **before** starting any
 > claude-docker container. Containers are pure consumers — they do not run
 > the installer. Without a populated `~/.claude/` tree on the host, the
-> entrypoint symlinks below resolve to missing targets and Claude Code
-> falls back to its built-in defaults.
+> entrypoint has no shared files to copy or link and Claude Code falls back
+> to its built-in defaults.
 >
 > **Compatibility**: Tested against claude-config v1.10+. The contract
 > claude-docker relies on (directory layout, hook command grammar,
@@ -445,33 +466,42 @@ Claude Code settings, containers automatically inherit your host configuration.
 > in the claude-config repo. Older claude-config installs may work but are
 > not gate-tested.
 
-The host's `~/.claude/` is mounted read-only at `/home/node/.claude-host/` inside
-each container. On startup, the entrypoint script creates symlinks from the
-account state directory to the shared config:
+The host's `~/.claude/` is mounted read-only at `/home/node/.claude-host/`
+inside each container. Startup uses different synchronization strategies by
+content type:
 
-| Config | Host Path | Symlinked From |
-|--------|-----------|---------------|
-| Hooks | `~/.claude/hooks/` | `/home/node/.claude/hooks` -> `.claude-host/hooks` |
-| Skills | `~/.claude/skills/` | `/home/node/.claude/skills` -> `.claude-host/skills` |
-| Commands | `~/.claude/commands/` | `/home/node/.claude/commands` -> `.claude-host/commands` |
-| Scripts | `~/.claude/scripts/` | `/home/node/.claude/scripts` -> `.claude-host/scripts` |
-| Statusline | `~/.claude/ccstatusline/` | `/home/node/.claude/ccstatusline` -> `.claude-host/ccstatusline` |
-| Global instructions | `~/.claude/CLAUDE.md` | `/home/node/.claude/CLAUDE.md` -> `.claude-host/CLAUDE.md` |
-| Commit settings | `~/.claude/commit-settings.md` | `/home/node/.claude/commit-settings.md` -> `.claude-host/commit-settings.md` |
-| Hook config | `~/.claude/settings.json` | `/home/node/.claude/settings.json` -> `.claude-host/settings.json` |
-| Full-suite probe | `~/.claude/.full-suite-active` (optional) | `/home/node/.claude/.full-suite-active` -> `.claude-host/.full-suite-active` |
+| Shared content | Default container behavior |
+|----------------|----------------------------|
+| `hooks/`, `scripts/` | Clean-copy into `/home/node/.claude/` and normalize `.sh` files to LF |
+| `skills/`, `commands/`, `ccstatusline/` | Symlink into the per-account state directory |
+| `CLAUDE.md`, `commit-settings.md`, `.claudeignore`, `.full-suite-active` | Symlink when the source exists |
+| `settings.json` | Generate `settings.container.json`, then point the account's `settings.json` at that transformed copy |
+| `ccstatusline/settings.json` | Also link into `/home/node/.config/ccstatusline/settings.json` |
 
-The host config is read-only. Account-specific state (credentials, memory,
-sessions) remains writable and per-container. Symlinks are created when the
-target does not exist or is an empty file, so per-account overrides with
-real content are preserved.
+The default read-only host mount is never modified. Account credentials,
+memory, sessions, and logs remain writable and per-container. The managed
+`hooks/` and `scripts/` destinations are clean mirrors and replace existing
+same-named account directories on startup. For `skills/`, `commands/`, and
+`ccstatusline/`, an existing plain target is moved to `<name>.stale.<epoch>`
+before linking. Non-empty per-account instruction files are preserved, but do
+not use the managed directories for persistent per-account overrides.
+
+`CLAUDE_CONFIG_SOURCE` changes this behavior. An explicit source is treated as
+writable, force-linked on every startup, and its `.sh` files are normalized to
+LF **in place** before linking. If that source is under the project bind mount,
+the normalization can therefore appear as host-side Git changes. The
+`settings.json` transform described below still runs.
 
 ### Container-side settings transformation
 
-The entrypoint does not use your host `settings.json` verbatim. It rewrites a
-working copy at `~/.claude/settings.json` (inside the container) before Claude
-Code starts. Two of those transforms are load-bearing but easy to miss from
-the code alone:
+The entrypoint does not use `settings.json` verbatim. For both the default host
+mount and an explicit `CLAUDE_CONFIG_SOURCE`, it writes a container-local
+working copy before Claude Code starts. The transform performs four operations:
+
+1. sets `sandbox.enabled` to `false`;
+2. removes wildcard entries from `permissions.deny`;
+3. replaces a PowerShell `statusLine.command` with the Linux statusline script;
+4. rewrites PowerShell hook commands to their bash equivalents.
 
 **1. `sandbox.enabled` is forced to `false`.**
 
@@ -480,25 +510,38 @@ container it would re-confine already-confined code and, more importantly,
 break hooks and skills that `exec` into `/usr/bin`. The entrypoint relies on
 the container itself being the isolation boundary.
 
-This assumption holds for the **default** Docker isolation (cgroups +
-namespaces + read-only bind mounts). It does **not** hold when:
+This assumption relies on the **default** profile: cgroups/namespaces, a
+non-root process, no Docker socket, no privileged mode, read-only host-config
+mounts, and only the documented writable project/state mounts. It does **not**
+hold when:
 
 - the container runs with `--privileged`,
-- Docker-in-Docker is used so nested containers share the parent's kernel
-  namespace,
-- a skill uses `docker run` on the host socket to spawn a sibling container.
+- the host Docker socket or another privileged daemon is mounted, or
+- additional host paths or devices are exposed with broader permissions.
 
 If you run claude-docker in any of those modes you lose the host sandbox
 without warning. Either keep the outer Docker isolation strict or edit the
 entrypoint to leave `sandbox.enabled` untouched for that profile.
 
-**2. PowerShell hook commands are rewritten to bash.**
+**2. Wildcard deny rules are removed.**
+
+Entries in `permissions.deny` containing `*` are stripped. The claude-config
+integration expects `sensitive-file-guard.sh` to provide the corresponding
+sensitive-file protection. If a custom config source does not ship and enable
+that hook, those wildcard restrictions are not replaced; do not assume the
+host deny list remains effective inside the container.
+
+**3. A PowerShell statusline command is replaced.**
+
+If `statusLine.command` contains `pwsh`, it is replaced with
+`~/.claude/scripts/statusline-command.sh` before the general hook rewrite.
+
+**4. PowerShell hook commands are rewritten for Linux.**
 
 Host `settings.json` entries that invoke `pwsh -NoProfile -File ...` are
 transformed so they work inside the Linux-native container image. This is
-best-effort: trivial single-call hooks are rewritten cleanly, but the
-following patterns fail **silently** (transformed command is produced but
-never fires):
+best-effort: trivial single-call hooks are rewritten cleanly, but the following
+patterns are not supported reliably:
 
 | Pattern | Example | Status |
 |---------|---------|--------|
@@ -508,11 +551,14 @@ never fires):
 | Quoted paths with spaces | `pwsh -File "C:\\Program Files\\..."` | not supported |
 | `Join-Path` outside the statusLine slot | inside a hook array | not supported |
 
-If a hook works on the host but never fires in the container, check whether
-its command matches one of the unsupported patterns above. The workaround is
-to ship a Linux-native shell alternative via `CLAUDE_CONFIG_SOURCE` (which
-bypasses the transform entirely — the container reads the config tree you
-point at without rewriting it).
+After transformation, startup runs `bash -n -c` against every generated command
+and logs a warning for invalid shell syntax. A syntactically valid but
+semantically incorrect rewrite can still fail only when the hook runs. If a
+hook works on the host but not in the container, check the startup logs and the
+patterns above. The workaround is to provide Linux-native commands through
+`CLAUDE_CONFIG_SOURCE`, so the PowerShell rewriter has nothing to change. The
+sandbox and wildcard-deny transforms still apply, and `.sh` files in that
+explicit source are CRLF-normalized in place.
 
 ### Running Commands Inside Containers
 
@@ -568,35 +614,62 @@ service when it is running.
 ```bash
 scripts/claude-docker tui            # Launch dashboard (auto-fetches binary if missing)
 scripts/claude-docker dashboard      # Alias of tui
-scripts/claude-docker build-tui      # Rebuild from source (Go 1.24+)
+scripts/claude-docker build-tui      # Build from source (Go 1.24+) or fetch a release
 ```
 
-`tui` first looks for `tui/claude-docker-tui` in the project tree. If it is
-missing, the wrapper calls `download_tui_release` (`scripts/lib/tui-release.sh`)
-to fetch the matching `claude-docker-tui-<os>-<arch>` asset from the latest
-GitHub Release, verifies its `.sha256`, and installs it in place. If neither
-the binary nor `curl` is available, the command falls back to a clear error
-that points operators to `build-tui`. PowerShell users can run
-`.\scripts\claude-docker.ps1 tui` for the same flow.
+On Linux and macOS, `tui` first looks for `tui/claude-docker-tui`. If it is
+missing, the bash wrapper calls `download_tui_release`
+(`scripts/lib/tui-release.sh`) to fetch the matching
+`claude-docker-tui-<os>-<arch>` asset from the latest GitHub Release, verifies
+its `.sha256`, and installs it in place. The asset and checksum come from the
+same release: this detects corruption or an incomplete download, but it is not
+an independent cryptographic signature.
+
+On native Windows, the interactive PowerShell installer offers the same
+checksum-verified release download. The PowerShell `tui` command itself does
+not auto-download a missing binary; rerun `install.ps1` and accept the prebuilt
+download, or install Go 1.24+ and run
+`.\scripts\claude-docker.ps1 build-tui`.
+
+Release automation currently publishes Linux `amd64`/`arm64`, macOS
+`amd64`/`arm64`, and Windows `amd64` assets. Other targets must build from
+source.
 
 ### Rebuilding the Image
 
 ```bash
-scripts/claude-docker build --no-cache                # Rebuild with latest Claude Code
+scripts/claude-docker build --no-cache                # Rebuild all installed agent CLIs
 scripts/claude-docker up --force-recreate             # Recreate containers
+scripts/claude-docker update                          # Perform both steps and refresh gh credentials
 ```
+
+`update` refreshes the configured shared or per-account GitHub token(s) from
+the host when `gh` is available, then runs a no-cache build and force-recreates
+the containers. Use `.\scripts\claude-docker.ps1 update` on native Windows.
 
 ### Cleanup and Removal
 
 ```bash
-scripts/claude-docker down -v    # Stop + remove named volumes
-scripts/cleanup.sh               # Quick cleanup (bash)
-scripts/remove.sh                # Complete removal (bash)
+scripts/claude-docker down -v          # Stop + remove named volumes
+scripts/cleanup.sh --no                # Containers/volumes only; preserve runtime state
+scripts/cleanup.sh --backups           # Also offer to delete backups older than 7 days
+scripts/remove.sh                      # Interactive complete removal
 
 # Windows PowerShell equivalents
-.\scripts\cleanup.ps1            # Quick cleanup
-.\scripts\remove.ps1             # Complete removal
+.\scripts\cleanup.ps1 -SkipState      # Containers/volumes only
+.\scripts\cleanup.ps1 -Backups        # Remove stale backups, then prompt for state
+.\scripts\remove.ps1                  # Interactive complete removal
 ```
+
+`cleanup` always stops containers and removes named volumes. If given a project
+repository path, it also removes that repository's additional worktrees. It
+then prompts before deleting **every registered runtime's** state root
+(`~/.claude-state`, `~/.codex-state`, and `~/.gemini-state`); use `--no` or
+`-SkipState` to preserve them. `remove` additionally offers to remove the image,
+worktrees, state, `.env`, and host-installed tools. The PowerShell remover also
+sweeps rotated `.env.backup.*` files after confirmed `.env` removal. Read each
+prompt before confirming because credentials and session history live in the
+state directories.
 
 ## Configuration Tiers
 
@@ -614,6 +687,10 @@ No `.git/index.lock` contention.
 scripts/setup-worktrees.sh ~/work/project    # Create worktrees
 scripts/claude-docker up                     # Auto-detects worktree overlay
 ```
+
+On native Windows, use
+`.\scripts\setup-worktrees.ps1 C:\path\to\project`, then start with
+`.\scripts\claude-docker.ps1 up`.
 
 ## Scaling Accounts
 
@@ -634,6 +711,9 @@ The `scale` command automatically:
 4. Restarts containers if running
 
 Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
+Scaling down does not delete account state directories, credentials, or
+history; remove retained state explicitly only after confirming it is no
+longer needed.
 
 Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
 53→`ba`, ..., 702→`zz`. The `scale` command and both compose generators accept
@@ -647,17 +727,27 @@ On Windows (PowerShell):
 
 ## State and Memory Persistence
 
-All state is preserved across container restarts via Docker volume mounts:
+State is preserved across container restarts through bind mounts and named
+volumes. The selected runtime determines the account and host-config paths:
 
-| State | Host Path | Container Path | Mode |
-|-------|-----------|----------------|------|
-| Account state | `~/.claude-state/account-a/` | `/home/node/.claude/` | Read-write |
-| Credentials | `~/.claude-state/account-a/.credentials.json` | `/home/node/.claude/.credentials.json` | Read-write |
-| Memory | `~/.claude-state/account-a/projects/*/memory/` | `/home/node/.claude/projects/*/memory/` | Read-write |
-| Host config (claude-config) | `~/.claude/` | `/home/node/.claude-host/` (symlinked) | Read-only |
-| GitHub CLI auth (shared mode only) | `~/.config/gh/` | `/home/node/.config/gh/` | Read-only |
-| node_modules | Named volume `node_modules_a` | `${PROJECT_DIR}/node_modules/` | Read-write |
-| Project files | `${PROJECT_DIR}` bind mount | `${PROJECT_DIR}/` (mirrors host path) | Read-write |
+| Runtime | Account state on host | Container state | Read-only host config mount |
+|---------|-----------------------|-----------------|-----------------------------|
+| Claude | `~/.claude-state/account-a/` | `/home/node/.claude/` | `~/.claude/` -> `/home/node/.claude-host/` |
+| Codex | `~/.codex-state/account-a/` | `/home/node/.codex/` | `~/.codex/` -> `/home/node/.codex-host/` |
+| Gemini | `~/.gemini-state/account-a/` | `/home/node/.gemini/` | `~/.gemini/` -> `/home/node/.gemini-host/` |
+
+Mutable credentials, sessions, logs, and runtime history stay in the account
+state mount. Bootstrap modules deliberately exclude known credential and
+session files when they copy or link selected host configuration. That selected
+configuration is still visible to the container, so do not embed secrets in it.
+Other persistent mounts are:
+
+| Data | Host/source | Container destination | Mode |
+|------|-------------|-----------------------|------|
+| GitHub CLI config (shared mode only) | `${GH_CONFIG_DIR}` or the platform default | `/home/node/.config/gh/` | Read-only |
+| `node_modules` | Named volume `node_modules_<suffix>` | `${CONTAINER_PROJECT_DIR:-/project}/node_modules/` | Read-write |
+| Project files (Tier A) | `${PROJECT_DIR}` | `${CONTAINER_PROJECT_DIR:-/project}` | Read-write |
+| Project files (Tier B, account A example) | `${PROJECT_DIR_A}` | `${CONTAINER_PROJECT_DIR_A:-/project-a}` | Read-write |
 
 ## Compose Overrides
 
@@ -722,10 +812,11 @@ table above and runs in the `Bash Tests` CI matrix.
 | `docker-compose.linux.yml` | Legacy UID/GID + HOME override (kept for backward compat; base already carries it) | Optional |
 | `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
 
-Set `UID` / `GID` in `.env` (or export them in the shell before running
-`docker compose up`) to match the host user that owns `~/.claude-state/`.
-Without these, bind-mounted paths such as `~/.claude-state/account-a/` are
-not writable from inside the container, producing errors like
+On native Linux, set `UID` / `GID` in `.env` (or export them before running
+`docker compose up`) to match the host user that owns the selected runtime's
+state root. The interactive bash installer does this automatically. Without
+matching IDs, bind-mounted paths such as `~/.claude-state/account-a/` are not
+writable from inside the container, producing errors like
 `hook: /home/node/.claude/hooks/<name>.sh: not found` (failure to stat
 under non-matching UID) and Bash tool failures caused by the harness
 being unable to create `session-env/` subdirectories.
@@ -764,9 +855,9 @@ scripts/claude-docker exec claude-a claude auth login
 
 **Permission denied on bind mount (or `hook: ... not found`, `session-env` write failures):**
 
-Host UID/GID must match what owns `~/.claude-state/`. Add them to `.env`
-and restart — the base compose now reads these directly, so no extra
-overlay is required.
+On native Linux, the container UID/GID must match the owner of the selected
+runtime's state root. Add them to `.env` and restart — the base compose reads
+these directly, so no extra overlay is required.
 
 ```bash
 cat >> .env <<EOF
@@ -789,7 +880,7 @@ Move `node_modules` to a named volume (already configured in the default compose
 For large projects, consider [OrbStack](https://orbstack.dev) as a faster
 Docker Desktop alternative.
 
-**Slow file operations (Windows):**
+**Slow file operations (Windows through WSL2):**
 
 Ensure `PROJECT_DIR` points to a WSL2 filesystem path (`/home/...`),
 **not** an NTFS path (`/mnt/c/...`). The difference is ~27x in performance.
@@ -824,7 +915,8 @@ current installer.
 **Stray `.env.backup.*` files from pre-rotation installs:**
 
 Current `install.sh` / `install.ps1` keep at most three `.env.backup.*`
-files and set them to `chmod 600` (owner-only) immediately after creation.
+files and immediately restrict them to the current owner (`chmod 600` on
+Unix-like hosts, a user-only Windows ACL in PowerShell).
 If your working tree has leftover backups from before this change — often
 world-readable because they inherited umask — review and delete them:
 
@@ -844,16 +936,20 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 ## Bumping the Base Image
 
 The `Dockerfile` pins the Node base image to a specific patch version **and
-content digest** so rebuilds are byte-for-byte reproducible and any upstream
-repush of the tag is caught at build time as a digest mismatch. Inside the
-image, **Claude Code is installed via Anthropic's official native installer**
-(`https://claude.ai/install.sh`), not via npm. The installer places `claude`
-at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
-"leftover npm global install". Pin a specific Claude Code release with the
-`CLAUDE_CODE_VERSION` build arg (read from `.env`); leave it empty for
-`latest`. To bump:
+content digest**, so movement of the upstream tag cannot silently change the
+base layers. This does not make the complete image byte-for-byte reproducible:
+APT packages and several npm-installed tools track their repositories at build
+time unless explicitly pinned.
 
-1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
+Inside the image, **Claude Code is installed via Anthropic's official native
+installer** (`https://claude.ai/install.sh`), not via npm. The installer places
+`claude` at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
+"leftover npm global install". Optional build arguments are
+`CLAUDE_CODE_VERSION`, `CODEX_CLI_VERSION`, and `GEMINI_CLI_VERSION`; leave a
+value empty to follow that installer's current release. To bump the Node base:
+
+1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest patch in
+   the pinned 20.x line
 2. Capture the digest on a trusted host (**required**, not optional):
    ```bash
    docker pull node:<new-version>-slim
@@ -867,8 +963,10 @@ at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
    or running `install` picks up the new default automatically. Do not
    hand-edit the generated `docker-compose.yml` — its header forbids it.
    The committed compose files embed the tag as their default, so the bump
-   must carry a regeneration (`rm -f .env && scripts/generate-compose.sh`)
-   in the same change or the `Compose files are current` job fails
+   must carry a regeneration from a clean checkout or worktree with no `.env`
+   (`scripts/generate-compose.sh`) in the same change or the
+   `Compose files are current` job fails. Do not delete a working installation's
+   `.env` just to produce the repository defaults.
 5. Rebuild everything from scratch: `docker compose build --no-cache`
 6. Check the build log for the `[build] GitHub CLI keyring fingerprint:` line
    and confirm it matches prior builds (unexpected changes may indicate an
@@ -912,6 +1010,7 @@ claude-docker/
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
++-- .github/workflows/                 CI and cross-platform TUI release automation
 +-- LICENSE                            BSD 3-Clause
 +-- README.md                          This file
 +-- scripts/
@@ -921,13 +1020,13 @@ claude-docker/
 |   +-- ClaudeDocker.psm1              Shared PowerShell module
 |   +-- generate-compose.sh            Compose file generator (bash)
 |   +-- generate-compose.ps1           Compose file generator (PowerShell)
-|   +-- entrypoint.sh                  Container init (config symlinks, full-suite probe forwarding)
+|   +-- entrypoint.sh                  Runtime bootstrap dispatcher + GitHub auth setup
 |   +-- install.sh                     Interactive setup (bash)
 |   +-- install.ps1                    Interactive setup (PowerShell)
 |   +-- remove.sh                      Complete removal (bash)
 |   +-- remove.ps1                     Complete removal (PowerShell)
-|   +-- cleanup.sh                     Quick cleanup (bash)
-|   +-- cleanup.ps1                    Quick cleanup (PowerShell)
+|   +-- cleanup.sh                     Container/volume/worktree/state cleanup (bash)
+|   +-- cleanup.ps1                    Same cleanup flow (PowerShell)
 |   +-- setup-worktrees.sh             Tier B worktree setup (bash)
 |   +-- setup-worktrees.ps1            Tier B worktree setup (PowerShell)
 |   +-- test-concurrent-git.sh         E2E test (bash)
@@ -950,8 +1049,8 @@ claude-docker/
 |   +-- go.mod / go.sum
 |   +-- internal/                      account, auth, config, docker, ui, usage subpackages
 |       +-- config/runtimes.json       Runtime registry: cross-language single source of truth
-+-- tests/                             Registry equivalence, parse_env, entrypoint, and
-    |                                  attach-argv regression tests
++-- tests/                             Registry/parser/generator/auth/platform/entrypoint
+    |                                  regression tests and fixtures
     +-- env_fixtures/
     +-- entrypoint_fixtures/
 ```
