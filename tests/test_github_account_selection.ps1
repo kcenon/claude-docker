@@ -25,7 +25,10 @@ function Write-TestFile([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8)
 }
 
-$work = Join-Path ([System.IO.Path]::GetTempPath()) "claude-docker-gh-test-$PID"
+# Keep executable shims under the checked-out workspace. Some hosted Linux
+# runners mount the system temporary directory with noexec, which causes
+# command discovery to skip these mocks and fall through to the real gh CLI.
+$work = Join-Path $ProjectRoot ".test-github-account-selection-$PID"
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $originalPath = $env:PATH
 $originalOS = $PSVersionTable.OS
