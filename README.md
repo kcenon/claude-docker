@@ -19,6 +19,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) 24.0+ (Linux) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS / Windows)
+- [Docker Compose](https://docs.docker.com/compose/) v2.24.4+ -- the worktree overlay uses the `!override` merge tag, without which the shared project mount leaks into every worktree container (see [`docs/ISOLATION.md`](docs/ISOLATION.md))
 - [Node.js](https://nodejs.org/) 20+ (optional -- needed for `usage` subcommand token reports)
 - [Go](https://go.dev/dl/) 1.24+ (optional -- needed only to build the TUI from source)
 - Git
@@ -673,10 +674,26 @@ state directories.
 
 ## Configuration Tiers
 
+`ISOLATION_MODE` in `.env` declares which tier the accounts run under. Shared is
+the default, so an install that never sets the key behaves exactly as before.
+Full trust boundaries, non-goals, and the delivery order for the planned
+`isolated` mode are in [`docs/ISOLATION.md`](docs/ISOLATION.md).
+
+| `ISOLATION_MODE` | Tier | Boundary |
+|---|---|---|
+| `shared` (default) | Tier A | One read-write project mount shared by every account. |
+| `worktree` | Tier B | Each account mounts only its own worktree. Git metadata stays shared. |
+| `isolated` | -- | Account-exclusive workspace, state, config and network. **Not implemented yet**; configuring it fails with a diagnostic rather than starting a weaker boundary. |
+
+An unrecognized value is refused. The active mode and its boundary are printed
+by `claude-docker config`, by `claude-docker up`, and in the TUI.
+
 ### Tier A -- Shared Source (default)
 
 Both containers mount the same project directory. Simplest setup, minimum
-storage. Best when one session writes and the other reads/reviews.
+storage. Best when one session writes and the other reads/reviews. Any account
+can modify any other account's work, so use it only between mutually trusted
+accounts.
 
 ### Tier B -- Git Worktree
 
@@ -685,12 +702,22 @@ No `.git/index.lock` contention.
 
 ```bash
 scripts/setup-worktrees.sh ~/work/project    # Create worktrees
-scripts/claude-docker up                     # Auto-detects worktree overlay
+scripts/claude-docker up                     # Selects the worktree overlay
 ```
 
 On native Windows, use
 `.\scripts\setup-worktrees.ps1 C:\path\to\project`, then start with
 `.\scripts\claude-docker.ps1 up`.
+
+Setting `PROJECT_DIR_A` selects worktree mode on its own, which is how installs
+predating `ISOLATION_MODE` keep working unchanged. Setting the key explicitly
+outranks that inference, and configuring worktree paths under a different mode
+warns that they are inert rather than ignoring them silently.
+
+> **Worktrees are a concurrency tier, not a security boundary.** The accounts
+> still share one git object store, so an account can read every branch and
+> rewrite refs other accounts depend on. Use worktrees when agents collide on a
+> checkout, not when you distrust what an agent will run.
 
 ## Scaling Accounts
 

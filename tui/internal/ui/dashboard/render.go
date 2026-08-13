@@ -5,8 +5,40 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kcenon/claude-docker/tui/internal/account"
+	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/ui/components"
 )
+
+// renderIsolationBanner names the active workspace trust boundary above the
+// account table.
+//
+// The mode decides whether one account can read or write another's files, and
+// this dashboard is where an operator picks an account to attach to, so the
+// boundary is stated here rather than left to be inferred from the paths in
+// the table. Colour carries the same message as the text: shared is a warning
+// tone because it is the weakest boundary, and a mode this build cannot start
+// is red.
+func renderIsolationBanner(env *config.Env) string {
+	mode := env.IsolationMode()
+
+	var colour lipgloss.Color
+	switch mode {
+	case config.IsolationWorktree:
+		colour = lipgloss.Color("#06B6D4")
+	case config.IsolationShared:
+		colour = lipgloss.Color("#EAB308")
+	default:
+		// isolated, and any value the shell layers would refuse outright.
+		colour = lipgloss.Color("#EF4444")
+	}
+
+	label := lipgloss.NewStyle().Bold(true).Foreground(colour).
+		Render("  Isolation: " + mode)
+	tagline := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).
+		Render("  " + config.IsolationModeTagline(mode))
+
+	return label + tagline + "\n\n"
+}
 
 func renderAccountTable(accounts []account.Account, cursor int, width int) string {
 	var b strings.Builder

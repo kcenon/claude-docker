@@ -500,6 +500,19 @@ function New-EnvFile {
         $lines += ''
     }
 
+    # Record the chosen tier as an explicit isolation mode. Resolution would
+    # infer worktree from PROJECT_DIR_A anyway, but writing the key means a
+    # user reading .env later sees the trust boundary stated instead of having
+    # to derive it from which other variables are set.
+    $lines += '# ==== Workspace isolation ===='
+    $lines += '# shared | worktree | isolated -- see docs/ISOLATION.md'
+    if ($Script:Tier -eq 'B') {
+        $lines += 'ISOLATION_MODE=worktree'
+    } else {
+        $lines += 'ISOLATION_MODE=shared'
+    }
+    $lines += ''
+
     if ($Script:Tier -eq 'B') {
         $lines += '# ==== Tier B: Git Worktree Paths ===='
         $lines += '# (populated after worktree setup)'
@@ -759,7 +772,10 @@ function Invoke-WorktreeSetup {
             Write-LogInfo 'Switching to Tier A (shared bind mount)'
             $Script:Tier = 'A'
 
-            # Remove worktree placeholders from .env
+            # Remove worktree placeholders from .env and move the declared
+            # mode back to shared. Leaving ISOLATION_MODE=worktree behind
+            # would make the next run refuse to start, since the paths that
+            # mode requires have just been deleted.
             $envFile = Join-Path $ProjectRoot '.env'
             if (Test-Path $envFile) {
                 $content = [System.IO.File]::ReadAllText($envFile)
@@ -770,6 +786,7 @@ function Invoke-WorktreeSetup {
                 $content = $content -replace '(?m)^CONTAINER_PROJECT_DIR_A=.*\r?\n', ''
                 $content = $content -replace '(?m)^CONTAINER_PROJECT_DIR_B=.*\r?\n', ''
                 Write-EnvContent -Path $envFile -Content $content
+                Set-EnvValue -Path $envFile -Key 'ISOLATION_MODE' -Value 'shared'
             }
 
             Write-LogSuccess 'Switched to Tier A'

@@ -157,6 +157,34 @@ if ($GhAuthMode -eq 'per-account') {
     }
 }
 
+# Isolation mode declares the workspace trust boundary. Validated here, next to
+# GH_AUTH_MODE and for the same reason: an unusable value must be rejected
+# before the first output file is opened, so a failure cannot leave a partially
+# regenerated set behind.
+#
+# All three files are still generated in every mode. The mode decides which
+# ones a caller composes together (Get-ComposeArgs), not which ones exist, so
+# `compose-freshness` keeps comparing the same tracked set.
+try {
+    $IsolationMode = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot
+}
+catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
+if ($IsolationMode -eq 'worktree') {
+    for ($i = 1; $i -le $NumAccounts; $i++) {
+        $upper = Get-AccountLetterUpper -Index $i
+        if ([string]::IsNullOrEmpty((Resolve-EnvOrDefault "PROJECT_DIR_${upper}" ''))) {
+            Write-Error "PROJECT_DIR_${upper} is required when ISOLATION_MODE=worktree. Create the worktrees with scripts\setup-worktrees.ps1, which prints the paths to add."
+            exit 1
+        }
+    }
+}
+
+Write-UnusedWorktreePathWarning -ProjectRoot $ProjectRoot -Mode $IsolationMode
+
 # Thin wrappers around the shared helpers in lib/index.ps1 so legacy call
 # sites below keep working without rewriting each loop. Both helpers accept
 # indices 1..702 and throw out-of-range otherwise.
@@ -166,6 +194,44 @@ function ConvertTo-Letter([int]$Index) {
 
 function ConvertTo-UpperLetter([int]$Index) {
     return Get-AccountLetterUpper -Index $Index
+}
+
+# --- Shared emitters ----------------------------------------------------------
+
+function Get-AccountVolumeLines {
+    <#
+    .SYNOPSIS
+    Return the complete volume list for one account service, indented for a
+    `volumes:` block.
+    .DESCRIPTION
+    Mirrors emit_account_volumes in generate-compose.sh. The base config and
+    the worktree overlay differ only in where the project comes from and where
+    it lands; runtime state, the read-only host config mount, and the optional
+    agents/skills and shared gh mounts are identical. Producing both from one
+    function is what keeps them identical, and that matters more than it used
+    to: the worktree overlay REPLACES this list rather than appending to it, so
+    a mount missing here is missing from the resolved worktree service.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Letter,
+        [Parameter(Mandatory)][string]$ProjectSource,
+        [Parameter(Mandatory)][string]$ProjectTarget
+    )
+
+    $lines = @("      - ${ProjectSource}:${ProjectTarget}")
+    $lines += "      - `${HOME}/${RtStateDir}/account-${Letter}:${RtContainerConfigMount}"
+    $lines += "      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro"
+    # The agents/skills volume is bound only for runtimes whose registry entry
+    # sets mountsAgentsSkills (currently codex).
+    if ($RtMountsAgentsSkills -eq $true) {
+        $lines += '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+    }
+    if ($GhAuthMode -eq 'shared') {
+        $lines += '      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro'
+    }
+    $lines += "      - node_modules_${Letter}:${ProjectTarget}/node_modules"
+    return $lines
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------
@@ -213,18 +279,11 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    stdin_open: true')
         [void]$sb.AppendLine('    tty: true')
         [void]$sb.AppendLine('    volumes:')
-        [void]$sb.AppendLine('      - ${PROJECT_DIR}:${CONTAINER_PROJECT_DIR:-/project}')
-        [void]$sb.AppendLine("      - `${HOME}/${RtStateDir}/account-${letter}:${RtContainerConfigMount}")
-        [void]$sb.AppendLine("      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro")
-        # The agents/skills volume is bound only for runtimes whose
-        # registry entry sets mountsAgentsSkills (currently codex).
-        if ($RtMountsAgentsSkills -eq $true) {
-            [void]$sb.AppendLine('      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro')
+        foreach ($volumeLine in (Get-AccountVolumeLines -Letter $letter `
+                    -ProjectSource '${PROJECT_DIR}' `
+                    -ProjectTarget '${CONTAINER_PROJECT_DIR:-/project}')) {
+            [void]$sb.AppendLine($volumeLine)
         }
-        if ($GhAuthMode -eq 'shared') {
-            [void]$sb.AppendLine('      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro')
-        }
-        [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR:-/project}/node_modules")
         [void]$sb.AppendLine('    environment:')
         [void]$sb.AppendLine('      - TERM=xterm-256color')
         [void]$sb.AppendLine('      - TZ=${TZ:-UTC}')
@@ -308,6 +367,16 @@ function New-WorktreeCompose {
     [void]$sb.AppendLine('# docker-compose.worktree.yml')
     [void]$sb.AppendLine('# Generated by scripts/generate-compose — do not edit manually.')
     [void]$sb.AppendLine('# Usage: docker compose -f docker-compose.yml -f docker-compose.worktree.yml up')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# Every volume list below carries the !override merge tag, so it REPLACES the')
+    [void]$sb.AppendLine('# base list instead of extending it. Compose merges volumes by container')
+    [void]$sb.AppendLine('# target, and /project-<letter> is a different target from the base /project,')
+    [void]$sb.AppendLine('# so without the tag the shared ${PROJECT_DIR} mount survived alongside the')
+    [void]$sb.AppendLine('# worktree and stayed writable from inside the container (issue #335).')
+    [void]$sb.AppendLine('# Requires a Compose release that supports !override (Docker Compose v2.24.4+).')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# Worktrees are a concurrency tier, not a security boundary: the accounts')
+    [void]$sb.AppendLine('# still share one git object store. See docs/ISOLATION.md.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('services:')
 
@@ -318,9 +387,12 @@ function New-WorktreeCompose {
 
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine("    working_dir: `${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")
-        [void]$sb.AppendLine('    volumes:')
-        [void]$sb.AppendLine("      - `${PROJECT_DIR_${upper}}:`${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")
-        [void]$sb.AppendLine("      - node_modules_${letter}:`${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}/node_modules")
+        [void]$sb.AppendLine('    volumes: !override')
+        foreach ($volumeLine in (Get-AccountVolumeLines -Letter $letter `
+                    -ProjectSource "`${PROJECT_DIR_${upper}}" `
+                    -ProjectTarget "`${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")) {
+            [void]$sb.AppendLine($volumeLine)
+        }
 
         if ($i -lt $NumAccounts) {
             [void]$sb.AppendLine('')

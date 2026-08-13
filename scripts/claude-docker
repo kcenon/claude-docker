@@ -53,6 +53,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 . "$SCRIPT_DIR/lib/index.sh"
 # shellcheck source=lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
+# shellcheck source=lib/isolation.sh
+. "$SCRIPT_DIR/lib/isolation.sh"
 # shellcheck source=lib/build-compose-cmd.sh
 . "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 
@@ -64,7 +66,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Overlay selection logic:
 # 1. Base docker-compose.yml is always included
 # 2. docker-compose.linux.yml is added on Linux hosts when the file exists
-# 3. docker-compose.worktree.yml is added when .env declares PROJECT_DIR_A
+# 3. docker-compose.worktree.yml is added when the resolved ISOLATION_MODE is
+#    worktree (lib/isolation.sh)
 #
 # build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced above).
 COMPOSE_CMD=()
@@ -73,7 +76,12 @@ COMPOSE_CMD_INITIALIZED=0
 # Ensure COMPOSE_CMD is populated. Idempotent — safe to call from every subcommand.
 ensure_compose_cmd() {
     if [[ "$COMPOSE_CMD_INITIALIZED" -eq 0 ]]; then
-        build_compose_cmd
+        # `|| exit 1` rather than relying on set -e. set -e is suppressed for
+        # an entire call tree once any caller sits in a conditional context
+        # (if/&&/||/!), and the suppression follows into functions and
+        # subshells. A refused isolation mode has to stop the command in every
+        # one of those positions, not only the ones set -e still watches.
+        build_compose_cmd || exit 1
     fi
 }
 
@@ -158,6 +166,21 @@ get_gh_auth_mode() {
     esac
 }
 
+# Print the active isolation mode and the trust boundary it provides. Startup
+# and `config` both call it, so the boundary a session runs under is stated
+# rather than inferred from which compose files the caller happened to pass.
+#
+# Uses resolve_isolation_mode, not the require_ variant: a user who set an
+# unimplemented mode should still be told what it means before the compose
+# builder refuses it.
+show_isolation_mode() {
+    local mode
+    mode=$(resolve_isolation_mode) || return 1
+    echo -e "${BOLD}Isolation mode:${NC} $mode"
+    echo -e "${DIM}  $(isolation_mode_summary "$mode")${NC}"
+    warn_unused_worktree_paths "$mode"
+}
+
 # Resolve a CLI target (account letter or full service name) to a configured
 # lowercase Excel-style account suffix. Enumeration avoids accepting a suffix
 # beyond NUM_ACCOUNTS while reusing the canonical index implementation.
@@ -232,6 +255,10 @@ build_merged_config_dir() {
 # --- Subcommands --------------------------------------------------------------
 
 cmd_up() {
+    # Printed before ensure_compose_cmd so an unusable mode is diagnosed with
+    # its description already on screen.
+    show_isolation_mode
+    echo ""
     ensure_compose_cmd
     echo -e "${CYAN}Starting containers...${NC}"
     echo -e "${DIM}  $(compose_cmd_display)up -d${NC}"
@@ -857,6 +884,8 @@ cmd_scale() {
 }
 
 cmd_config() {
+    show_isolation_mode
+    echo ""
     ensure_compose_cmd
     echo -e "${DIM}Compose command: $(compose_cmd_display)${NC}"
     echo ""

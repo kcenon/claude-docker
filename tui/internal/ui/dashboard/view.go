@@ -27,6 +27,7 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
+	b.WriteString(renderIsolationBanner(m.env))
 	b.WriteString(renderAccountTable(m.accounts, m.cursor, m.width))
 	b.WriteString("\n")
 

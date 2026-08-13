@@ -507,6 +507,157 @@ function Get-ServiceNames {
     return $names
 }
 
+# --- Isolation mode ----------------------------------------------------------
+#
+# PowerShell port of scripts/lib/isolation.sh. The two must agree on
+# resolution order, accepted names, and which modes are refused, because a
+# Windows user and a Linux user configuring the same repository have to get
+# the same trust boundary. tests/test_isolation_modes.sh asserts that.
+
+function Test-IsolationModeKnown {
+    <#
+    .SYNOPSIS
+    Return $true when Mode is one of shared, worktree, isolated.
+    .DESCRIPTION
+    Knowing a name is separate from being able to run it: `isolated` is known
+    here and refused by Get-SupportedIsolationMode, so status output can
+    describe a mode this build cannot start.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Mode)
+
+    # -cin, not -in: PowerShell comparison operators ignore case by default,
+    # which would make this predicate accept 'Shared' while the bash `case`
+    # and the Go switch both reject it. Normalizing is the caller's job
+    # (Get-IsolationMode lowercases first); this answers whether a value is
+    # already one of the contract names.
+    return $Mode -cin @('shared', 'worktree', 'isolated')
+}
+
+function Get-IsolationModeSummary {
+    <#
+    .SYNOPSIS
+    One-line description of the trust boundary a mode provides.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Mode)
+
+    switch ($Mode) {
+        'shared' {
+            return 'all accounts share one read-write project mount; appropriate only for mutually trusted accounts'
+        }
+        'worktree' {
+            return 'each account mounts only its own worktree; git metadata stays shared, so this is a concurrency tier, not a security boundary'
+        }
+        'isolated' {
+            return 'account-exclusive workspace, state, configuration and network (not implemented yet)'
+        }
+        default {
+            throw "Unknown isolation mode: $Mode"
+        }
+    }
+}
+
+function Get-WorktreeRootA {
+    <#
+    .SYNOPSIS
+    Return PROJECT_DIR_A using the environment-then-.env order.
+    .DESCRIPTION
+    Module-internal (not exported). Mirrors _isolation_worktree_root_a in
+    lib/isolation.sh. Both the legacy worktree inference and the unused-path
+    warning need it, and a caller may have the value in the environment
+    rather than only on disk.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $value = [Environment]::GetEnvironmentVariable('PROJECT_DIR_A')
+    if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+
+    $envFile = Join-Path $ProjectRoot '.env'
+    if (-not (Test-Path $envFile)) { return '' }
+    return (Get-EnvValue -Path $envFile -Key 'PROJECT_DIR_A')
+}
+
+function Get-IsolationMode {
+    <#
+    .SYNOPSIS
+    Resolve the configured isolation mode.
+    .DESCRIPTION
+    Resolution order mirrors resolve_isolation_mode in lib/isolation.sh:
+      1. ISOLATION_MODE in the caller's environment.
+      2. ISOLATION_MODE in .env.
+      3. Legacy inference: a .env declaring PROJECT_DIR_A resolves to
+         worktree, because that is the variable Tier B installations set and
+         the one Get-ComposeArgs used to key the overlay off.
+      4. shared.
+    An unrecognized value throws rather than degrading to shared.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $mode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
+    $envFile = Join-Path $ProjectRoot '.env'
+
+    if ([string]::IsNullOrWhiteSpace($mode) -and (Test-Path $envFile)) {
+        $mode = Get-EnvValue -Path $envFile -Key 'ISOLATION_MODE'
+    }
+    if ([string]::IsNullOrWhiteSpace($mode) -and
+        -not [string]::IsNullOrWhiteSpace((Get-WorktreeRootA -ProjectRoot $ProjectRoot))) {
+        $mode = 'worktree'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = 'shared' }
+    $mode = $mode.ToLowerInvariant()
+
+    if (-not (Test-IsolationModeKnown -Mode $mode)) {
+        throw "ISOLATION_MODE must be shared, worktree or isolated (got: $mode)"
+    }
+    return $mode
+}
+
+function Get-SupportedIsolationMode {
+    <#
+    .SYNOPSIS
+    Get-IsolationMode, then refuse the modes this build cannot start.
+    .DESCRIPTION
+    Callers that write files or start containers use this. Callers that only
+    display configuration use Get-IsolationMode.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
+    if ($mode -eq 'isolated') {
+        throw ("ISOLATION_MODE=isolated is a valid setting, but the isolated stack is not implemented yet. " +
+               "Falling back to a shared workspace would hand an account the very access the mode asks to deny, " +
+               "so this fails instead. Use shared or worktree; see docs/ISOLATION.md for the delivery order.")
+    }
+    return $mode
+}
+
+function Write-UnusedWorktreePathWarning {
+    <#
+    .SYNOPSIS
+    Warn when .env declares PROJECT_DIR_A but the active mode ignores it.
+    .DESCRIPTION
+    Reaching this means an explicit ISOLATION_MODE outranked the legacy
+    inference, so the per-account paths are inert and every account is on the
+    shared mount. Reports a surprise; decides nothing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Mode
+    )
+
+    if ($Mode -eq 'worktree') { return }
+    if ([string]::IsNullOrWhiteSpace((Get-WorktreeRootA -ProjectRoot $ProjectRoot))) { return }
+
+    Write-LogWarn "PROJECT_DIR_A is configured, but ISOLATION_MODE=$Mode ignores per-account worktree paths."
+    Write-LogWarn "Every account uses PROJECT_DIR. Set ISOLATION_MODE=worktree to mount the worktrees."
+}
+
 # --- Docker Compose Helpers --------------------------------------------------
 
 function Get-ComposeArgs {
@@ -520,15 +671,20 @@ function Get-ComposeArgs {
 
     $args_ = @('-f', (Join-Path $ProjectRoot 'docker-compose.yml'))
 
-    # Worktree override: check if PROJECT_DIR_A is set in .env
-    $envFile = Join-Path $ProjectRoot '.env'
-    if (Test-Path $envFile) {
-        $envData = Read-EnvFile -Path $envFile
-        $pdirA = $envData['PROJECT_DIR_A']
+    # Overlay selection follows the resolved isolation mode rather than the
+    # presence of PROJECT_DIR_A. Get-IsolationMode still infers worktree from
+    # that variable when ISOLATION_MODE is unset, so Tier B installations
+    # predating the key keep the same overlay; an explicit mode now wins.
+    $mode = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot
+    if ($mode -eq 'worktree') {
         $wtFile = Join-Path $ProjectRoot 'docker-compose.worktree.yml'
-        if ($pdirA -and (Test-Path $wtFile)) {
-            $args_ += @('-f', $wtFile)
+        # A missing overlay would silently leave every account on the shared
+        # /project mount -- the exact fall back the mode is chosen to avoid.
+        if (-not (Test-Path $wtFile)) {
+            throw ("ISOLATION_MODE=worktree but docker-compose.worktree.yml is missing. " +
+                   "Regenerate it with scripts\generate-compose.ps1 before starting containers.")
         }
+        $args_ += @('-f', $wtFile)
     }
 
     return $args_
@@ -613,6 +769,9 @@ Export-ModuleMember -Function @(
     'ConvertTo-AccountLetter',
     # Runtime registry
     'Get-RuntimeField', 'Get-RuntimeList',
+    # Isolation mode
+    'Test-IsolationModeKnown', 'Get-IsolationModeSummary', 'Get-IsolationMode',
+    'Get-SupportedIsolationMode', 'Write-UnusedWorktreePathWarning',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose

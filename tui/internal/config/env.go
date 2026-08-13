@@ -20,6 +20,14 @@ const (
 	RuntimeGemini      = "gemini"
 	GHAuthShared       = "shared"
 	GHAuthPerAccount   = "per-account"
+
+	// Isolation modes name the workspace trust boundary a set of accounts
+	// runs under. Kept in lockstep with scripts/lib/isolation.sh and the
+	// PowerShell port in scripts/ClaudeDocker.psm1; tests/test_isolation_modes.sh
+	// asserts the three layers accept and refuse the same values.
+	IsolationShared   = "shared"
+	IsolationWorktree = "worktree"
+	IsolationIsolated = "isolated"
 )
 
 // Env holds parsed .env configuration with order-preserving entries.
@@ -283,6 +291,74 @@ func (e *Env) GHTokenKey(letter string) string {
 // HasWorktrees returns true if PROJECT_DIR_A is set (worktree mode).
 func (e *Env) HasWorktrees() bool {
 	return e.Get("PROJECT_DIR_A") != ""
+}
+
+// IsolationMode returns the configured workspace trust boundary.
+//
+// Resolution mirrors resolve_isolation_mode in scripts/lib/isolation.sh: an
+// explicit ISOLATION_MODE wins; otherwise a configured PROJECT_DIR_A means
+// worktree, because that is how Tier B installations predating the key were
+// set up and how the compose overlay used to be selected; otherwise shared.
+//
+// An invalid explicit value is returned verbatim rather than replaced with a
+// default, the same contract GitHubAuthMode uses: callers that act on the mode
+// reject it, and a display caller can name what was actually configured.
+func (e *Env) IsolationMode() string {
+	if e == nil {
+		return IsolationShared
+	}
+	if mode := strings.ToLower(strings.TrimSpace(e.Get("ISOLATION_MODE"))); mode != "" {
+		return mode
+	}
+	if e.HasWorktrees() {
+		return IsolationWorktree
+	}
+	return IsolationShared
+}
+
+// IsolationModeKnown reports whether a mode name is part of the contract.
+// Knowing a name is separate from being able to run it: isolated is known and
+// not yet implemented, so status output can describe a mode the shell layers
+// refuse to start.
+func IsolationModeKnown(mode string) bool {
+	switch mode {
+	case IsolationShared, IsolationWorktree, IsolationIsolated:
+		return true
+	}
+	return false
+}
+
+// IsolationModeSummary returns a one-line description of the trust boundary a
+// mode provides. Wording is kept in step with isolation_mode_summary in
+// scripts/lib/isolation.sh so the CLI and the dashboard say the same thing.
+func IsolationModeSummary(mode string) string {
+	switch mode {
+	case IsolationShared:
+		return "all accounts share one read-write project mount; appropriate only for mutually trusted accounts"
+	case IsolationWorktree:
+		return "each account mounts only its own worktree; git metadata stays shared, so this is a concurrency tier, not a security boundary"
+	case IsolationIsolated:
+		return "account-exclusive workspace, state, configuration and network (not implemented yet)"
+	default:
+		return "unrecognized mode; claude-docker refuses to start rather than fall back to a weaker boundary"
+	}
+}
+
+// IsolationModeTagline returns a short form of the summary for width-limited
+// surfaces such as the dashboard banner. It is a separate string rather than a
+// truncation of IsolationModeSummary because truncating would cut the worktree
+// disclaimer, which is the part a reader most needs.
+func IsolationModeTagline(mode string) string {
+	switch mode {
+	case IsolationShared:
+		return "one read-write project mount shared by every account"
+	case IsolationWorktree:
+		return "own worktree per account; git metadata shared, not a security boundary"
+	case IsolationIsolated:
+		return "not implemented yet; claude-docker refuses to start"
+	default:
+		return "unrecognized; claude-docker refuses to start"
+	}
 }
 
 // IndexToLetter converts a 1-based account index to its Excel-style
