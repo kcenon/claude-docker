@@ -178,6 +178,14 @@ show_isolation_mode() {
     mode=$(resolve_isolation_mode) || return 1
     echo -e "${BOLD}Isolation mode:${NC} $mode"
     echo -e "${DIM}  $(isolation_mode_summary "$mode")${NC}"
+    # Only under isolated: no other mode reads the network policy, and printing
+    # it elsewhere would suggest it applies when it does not.
+    if [[ "$mode" == "isolated" ]]; then
+        local net
+        net=$(resolve_isolated_network_mode) || return 1
+        echo -e "${BOLD}Network policy:${NC} $net"
+        echo -e "${DIM}  $(isolated_network_mode_summary "$net")${NC}"
+    fi
     warn_unused_workspace_paths "$mode"
 }
 

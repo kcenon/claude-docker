@@ -142,6 +142,85 @@ resolved_service_tmpfs() {
         | jq -r --arg svc "$service" '.services[$svc].tmpfs // [] | .[]'
 }
 
+# resolved_service_env_keys DIR SERVICE FILE...
+# Print the environment variable NAMES of one resolved service, one per line,
+# sorted.
+#
+# Names only, never values. This helper resolves whatever .env the sandbox
+# holds, and in CI the same code path runs against fixtures that put a
+# placeholder token in exactly the slot a real one would occupy; a helper that
+# printed values would put them in the job log the first time an assertion
+# failed. Every question this file needs to answer about credentials -- is
+# GH_TOKEN present, is it absent -- is answerable from the names alone.
+resolved_service_env_keys() {
+    local dir="$1" service="$2"
+    shift 2
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg svc "$service" '.services[$svc].environment // {} | keys[]'
+}
+
+# resolved_env_distinct DIR KEY SERVICE_A SERVICE_B FILE...
+# Compare one environment variable across two resolved services and print
+# `distinct`, `identical`, or `missing` -- never the values themselves.
+#
+# Presence of a key says only that a service has *a* credential; it cannot
+# distinguish a correctly scoped setup from one where both accounts were handed
+# the same token, which is the failure per-account auth exists to prevent. The
+# comparison happens inside jq so the values stay out of the output and out of
+# any CI log, which is why this is a helper rather than two greps in a caller.
+resolved_env_distinct() {
+    local dir="$1" key="$2" svc_a="$3" svc_b="$4"
+    shift 4
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg k "$key" --arg a "$svc_a" --arg b "$svc_b" '
+            (.services[$a].environment[$k] // null) as $va
+            | (.services[$b].environment[$k] // null) as $vb
+            | if $va == null or $vb == null then "missing"
+              elif $va == $vb then "identical"
+              else "distinct"
+              end
+        '
+}
+
+# resolved_service_networks DIR SERVICE FILE...
+# Print the network attachment of one resolved service: either one
+# `network=NAME` line per attached network, or a single `network_mode=NAME`
+# line when the service declares an explicit mode instead.
+#
+# Both spellings are reported by one helper because they are alternative
+# answers to the same question, and a caller that grepped only for `network=`
+# would read a detached service as "no assertion applies" rather than as the
+# offline policy it is.
+resolved_service_networks() {
+    local dir="$1" service="$2"
+    shift 2
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg svc "$service" '
+            .services[$svc] as $s
+            | if $s.network_mode then "network_mode=\($s.network_mode)"
+              else (($s.networks // {}) | keys[] | "network=\(.)")
+              end
+        '
+}
+
 # resolved_mount_manifest DIR FILE...
 # Print one "SERVICE|TYPE|SOURCE|TARGET|ACCESS" line per mount across every
 # service in the resolved model, sorted so the output is stable to diff.

@@ -181,6 +181,19 @@ catch {
 
 Write-UnusedWorkspacePathWarning -ProjectRoot $ProjectRoot -Mode $IsolationMode
 
+# The network policy is resolved unconditionally, even under shared or worktree,
+# because docker-compose.isolated.yml is written in every mode. Resolving it
+# only when the mode is isolated would leave an invalid value undetected until
+# somebody switched modes, which is the point at which a wrong network policy is
+# hardest to notice.
+try {
+    $IsolatedNetworkMode = Get-IsolatedNetworkMode -ProjectRoot $ProjectRoot
+}
+catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
 # Thin wrappers around the shared helpers in lib/index.ps1 so legacy call
 # sites below keep working without rewriting each loop. Both helpers accept
 # indices 1..702 and throw out-of-range otherwise.
@@ -234,7 +247,8 @@ function Get-AccountVolumeLines {
     # bootstrap-claude.sh returns early when the config source is missing -- so
     # the container still starts, with no shared hooks, skills, commands,
     # statusline or CLAUDE.md. Restoring that through an allowlisted
-    # per-account import is stage 4; see docs/ISOLATION.md.
+    # per-account import is still open -- it is optional in the issue's own
+    # wording and depends on a cross-repository decision; see docs/ISOLATION.md.
     if ($Mode -ne 'isolated') {
         $lines += "      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro"
         # The agents/skills volume is bound only for runtimes whose registry
@@ -249,6 +263,177 @@ function Get-AccountVolumeLines {
 
     $lines += "      - node_modules_${Letter}:${ProjectTarget}/node_modules"
     return $lines
+}
+
+function Get-AccountEnvironmentLines {
+    <#
+    .SYNOPSIS
+    Return the environment list for one account service, without its key.
+    .DESCRIPTION
+    Mirrors emit_account_environment in generate-compose.sh.
+
+    Both the base config and the isolated overlay come through here, and the
+    isolated overlay tags its block !override. That tag is not decoration: an
+    untagged block MERGES by key, so the base's shared-token entry would survive
+    into an isolated service. Compose offers no way to remove a single inherited
+    key -- !reset on an individual environment entry is ignored outright, and
+    !override replaces the whole list -- so the isolated environment has to be
+    re-emitted in full. Emitting both from one function is what keeps that
+    duplication honest: a variable added below reaches every mode, and a
+    credential withheld below is withheld everywhere it should be.
+
+    The withholding is deliberately fail-closed. Anything not listed here never
+    reaches an isolated service, so a credential added to the base later cannot
+    leak into the isolated profile by being forgotten -- only by being written
+    into the isolated branch on purpose.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Mode,
+        [Parameter(Mandatory)][string]$Upper
+    )
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+
+    $lines.Add('      - TERM=xterm-256color')
+    $lines.Add('      - TZ=${TZ:-UTC}')
+    # When the container runs as the host UID instead of node(1000),
+    # the passwd entry for that UID is missing, so $HOME defaults to
+    # /. Pinning HOME keeps runtime state, ~/.config, etc. resolvable.
+    $lines.Add('      - HOME=/home/node')
+    # AGENT_RUNTIME is now always emitted (previously codex-only).
+    # The entrypoint defaults to claude when unset, so emitting it
+    # for claude too is functionally inert and keeps the env block
+    # uniform across runtimes.
+    $lines.Add("      - AGENT_RUNTIME=${AgentRuntime}")
+    $lines.Add("      - ${RtConfigDirEnv}=${RtConfigDirEnvValue}")
+    $lines.Add("      - ${RtConfigSourceEnv}=`${${RtConfigSourceEnv}:-}")
+    # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
+    # the entrypoint, no codex equivalent). The registry has no field
+    # for it, so this one line stays gated on the runtime id.
+    if ($AgentRuntime -eq 'claude') {
+        $lines.Add('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
+    }
+    $lines.Add('      - NODE_OPTIONS=--max-old-space-size=4096')
+    # Only emit provider API keys when a per-account key is set at
+    # generate time. Emitting an empty key makes SDKs prefer the blank env
+    # var over persisted credentials in the mounted state dir. The variable
+    # read is already per-account, so this needs no isolated-mode branch.
+    $keyVarName = "${RtApiKeyPrefix}${Upper}"
+    $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
+    if ([string]::IsNullOrEmpty($keyValue) -and $envData.ContainsKey($keyVarName)) {
+        $keyValue = $envData[$keyVarName]
+    }
+    if (-not [string]::IsNullOrEmpty($keyValue)) {
+        $lines.Add("      - ${RtSdkApiKeyVar}=`${${keyVarName}}")
+    }
+
+    # GIT_USER_NAME/EMAIL are committer identity, not credentials: they name the
+    # human rather than an account, and an isolated account still has to commit.
+    # They are emitted in all three cases below.
+    if ($GhAuthMode -eq 'per-account') {
+        # Already scoped: every account reads its own token variable, which is
+        # exactly the contract issue #331 established. Isolated services reuse
+        # it unchanged rather than growing a second mechanism.
+        $ghUserVar = "GH_USER_${Upper}"
+        $ghTokenVar = "GH_TOKEN_${Upper}"
+        $gitNameVar = "GIT_USER_NAME_${Upper}"
+        $gitEmailVar = "GIT_USER_EMAIL_${Upper}"
+        $lines.Add('      - GH_AUTH_MODE=per-account')
+        $lines.Add("      - GH_USER=`${${ghUserVar}}")
+        $lines.Add("      - GH_TOKEN=`${${ghTokenVar}}")
+        $lines.Add("      - GIT_USER_NAME=`${${gitNameVar}:-`${GIT_USER_NAME:-}}")
+        $lines.Add("      - GIT_USER_EMAIL=`${${gitEmailVar}:-`${GIT_USER_EMAIL:-}}")
+    }
+    elseif ($Mode -eq 'isolated') {
+        # No GitHub credential at all. The shared GH_TOKEN identifies one
+        # account to GitHub, so handing the same value to every isolated
+        # service would make the boundary decorative on the one surface that
+        # carries write access to remote repositories (issue #335, stage 4).
+        # The entrypoint already treats an unset GH_TOKEN as "no token": it
+        # falls through to hosts.yml, which an isolated account does not have
+        # either, and reports unauthenticated rather than failing to start.
+        $lines.Add('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
+        $lines.Add('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
+    }
+    else {
+        $lines.Add('      - GH_TOKEN=${GH_TOKEN:-}')
+        $lines.Add('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
+        $lines.Add('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
+    }
+
+    if ($Mode -eq 'isolated') {
+        # $HOME is on the read-only root filesystem, so "git config --global"
+        # and "gh auth setup-git" cannot write ~/.gitconfig. Redirect the global
+        # config into the per-account state mount, which is writable and already
+        # account-private. Without this the entrypoint's credential-helper setup
+        # fails silently and git push breaks with no diagnostic. Requires git
+        # 2.32+ (image ships 2.39 on bookworm).
+        $lines.Add("      - GIT_CONFIG_GLOBAL=${RtContainerConfigMount}/gitconfig")
+    }
+
+    return $lines.ToArray()
+}
+
+function Get-IsolatedServiceNetworkLines {
+    <#
+    .SYNOPSIS
+    Return the network attachment lines for one isolated service.
+    .DESCRIPTION
+    Mirrors emit_isolated_service_network in generate-compose.sh.
+
+    The base stack declares no networks at all, so every service lands on the
+    project-wide implicit `default` bridge and siblings can reach each other by
+    service name. Declaring an explicit network here REPLACES that attachment
+    rather than adding to it, which is what makes the separation real.
+
+    `networks` and `network_mode` are mutually exclusive keys -- a service
+    carrying both is rejected -- so the policy has to pick one at generate time
+    and cannot be expressed as an interpolated ${VAR}.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Letter)
+
+    if ($IsolatedNetworkMode -eq 'none') {
+        return @('    network_mode: none')
+    }
+
+    return @(
+        '    networks:'
+        "      - isolated_net_$Letter"
+    )
+}
+
+function Get-IsolatedNetworksBlockLines {
+    <#
+    .SYNOPSIS
+    Return the top-level networks block declaring one bridge per account.
+    .DESCRIPTION
+    Mirrors emit_isolated_networks in generate-compose.sh.
+
+    Ordinary bridges, not internal: outbound access to the model API and to git
+    remotes has to keep working. What this buys is that A and B sit on different
+    bridges, so neither appears in the other's DNS and neither can open a direct
+    connection to it. Blocking egress is a proxy/firewall concern and is
+    deliberately not attempted here.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($IsolatedNetworkMode -eq 'none') {
+        return @()
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('')
+    $lines.Add('networks:')
+    for ($i = 1; $i -le $NumAccounts; $i++) {
+        $letter = ConvertTo-Letter $i
+        $lines.Add("  isolated_net_${letter}:")
+        $lines.Add('    driver: bridge')
+    }
+
+    return $lines.ToArray()
 }
 
 function Get-IsolatedTmpfsLines {
@@ -345,52 +530,8 @@ function New-BaseCompose {
             [void]$sb.AppendLine($volumeLine)
         }
         [void]$sb.AppendLine('    environment:')
-        [void]$sb.AppendLine('      - TERM=xterm-256color')
-        [void]$sb.AppendLine('      - TZ=${TZ:-UTC}')
-        # When the container runs as the host UID instead of node(1000),
-        # the passwd entry for that UID is missing, so $HOME defaults to
-        # /. Pinning HOME keeps runtime state, ~/.config, etc. resolvable.
-        [void]$sb.AppendLine('      - HOME=/home/node')
-        # AGENT_RUNTIME is now always emitted (previously codex-only).
-        # The entrypoint defaults to claude when unset, so emitting it
-        # for claude too is functionally inert and keeps the env block
-        # uniform across runtimes.
-        [void]$sb.AppendLine("      - AGENT_RUNTIME=${AgentRuntime}")
-        [void]$sb.AppendLine("      - ${RtConfigDirEnv}=${RtConfigDirEnvValue}")
-        [void]$sb.AppendLine("      - ${RtConfigSourceEnv}=`${${RtConfigSourceEnv}:-}")
-        # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
-        # the entrypoint, no codex equivalent). The registry has no field
-        # for it, so this one line stays gated on the runtime id.
-        if ($AgentRuntime -eq 'claude') {
-            [void]$sb.AppendLine('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
-        }
-        [void]$sb.AppendLine('      - NODE_OPTIONS=--max-old-space-size=4096')
-        # Only emit provider API keys when a per-account key is set at
-        # generate time. Emitting an empty key makes SDKs prefer the blank env
-        # var over persisted credentials in the mounted state dir.
-        $keyVarName = "${RtApiKeyPrefix}${upper}"
-        $keyValue = [Environment]::GetEnvironmentVariable($keyVarName)
-        if ([string]::IsNullOrEmpty($keyValue) -and $envData.ContainsKey($keyVarName)) {
-            $keyValue = $envData[$keyVarName]
-        }
-        if (-not [string]::IsNullOrEmpty($keyValue)) {
-            [void]$sb.AppendLine("      - ${RtSdkApiKeyVar}=`${${keyVarName}}")
-        }
-        if ($GhAuthMode -eq 'per-account') {
-            $ghUserVar = "GH_USER_${upper}"
-            $ghTokenVar = "GH_TOKEN_${upper}"
-            $gitNameVar = "GIT_USER_NAME_${upper}"
-            $gitEmailVar = "GIT_USER_EMAIL_${upper}"
-            [void]$sb.AppendLine('      - GH_AUTH_MODE=per-account')
-            [void]$sb.AppendLine("      - GH_USER=`${${ghUserVar}}")
-            [void]$sb.AppendLine("      - GH_TOKEN=`${${ghTokenVar}}")
-            [void]$sb.AppendLine("      - GIT_USER_NAME=`${${gitNameVar}:-`${GIT_USER_NAME:-}}")
-            [void]$sb.AppendLine("      - GIT_USER_EMAIL=`${${gitEmailVar}:-`${GIT_USER_EMAIL:-}}")
-        }
-        else {
-            [void]$sb.AppendLine('      - GH_TOKEN=${GH_TOKEN:-}')
-            [void]$sb.AppendLine('      - GIT_USER_NAME=${GIT_USER_NAME:-}')
-            [void]$sb.AppendLine('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
+        foreach ($envLine in (Get-AccountEnvironmentLines -Mode 'shared' -Upper $upper)) {
+            [void]$sb.AppendLine($envLine)
         }
         [void]$sb.AppendLine('    deploy:')
         [void]$sb.AppendLine('      resources:')
@@ -493,8 +634,22 @@ function New-IsolatedCompose {
     [void]$sb.AppendLine('# mounts is a bounded tmpfs; $HOME itself stays read-only, so the global')
     [void]$sb.AppendLine('# git config is redirected into the per-account state mount.')
     [void]$sb.AppendLine('#')
-    [void]$sb.AppendLine('# Credential environment variables and per-account networks are NOT yet')
-    [void]$sb.AppendLine('# scoped. See docs/ISOLATION.md.')
+    [void]$sb.AppendLine('# The environment lists carry !override for the same reason the volume')
+    [void]$sb.AppendLine('# lists do. An untagged block merges by key, so the base stack''s shared')
+    [void]$sb.AppendLine('# GH_TOKEN would survive into every isolated service; Compose cannot')
+    [void]$sb.AppendLine('# remove a single inherited key, so the list is re-emitted in full and')
+    [void]$sb.AppendLine('# whatever is absent below is absent from the resolved service.')
+    [void]$sb.AppendLine('#')
+    if ($IsolatedNetworkMode -eq 'none') {
+        [void]$sb.AppendLine('# ISOLATED_NETWORK_MODE=none: every account is detached from all')
+        [void]$sb.AppendLine('# networks. Outbound agent, API and git access do not work. Regenerate')
+        [void]$sb.AppendLine('# with ISOLATED_NETWORK_MODE=bridge to restore them.')
+    }
+    else {
+        [void]$sb.AppendLine('# Each account is on its own bridge network, so outbound access keeps')
+        [void]$sb.AppendLine('# working while siblings cannot resolve or connect to each other.')
+        [void]$sb.AppendLine('# Egress allowlisting is a separate proxy/firewall concern.')
+    }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('services:')
 
@@ -523,14 +678,13 @@ function New-IsolatedCompose {
         foreach ($tmpfsLine in (Get-IsolatedTmpfsLines)) {
             [void]$sb.AppendLine($tmpfsLine)
         }
-        [void]$sb.AppendLine('    environment:')
-        # $HOME is on the read-only root filesystem, so "git config --global"
-        # and "gh auth setup-git" cannot write ~/.gitconfig. Redirect the global
-        # config into the per-account state mount, which is writable and already
-        # account-private. Without this the entrypoint's credential-helper setup
-        # fails silently and git push breaks with no diagnostic. Requires git
-        # 2.32+ (image ships 2.39 on bookworm).
-        [void]$sb.AppendLine("      - GIT_CONFIG_GLOBAL=${RtContainerConfigMount}/gitconfig")
+        foreach ($networkLine in (Get-IsolatedServiceNetworkLines -Letter $letter)) {
+            [void]$sb.AppendLine($networkLine)
+        }
+        [void]$sb.AppendLine('    environment: !override')
+        foreach ($envLine in (Get-AccountEnvironmentLines -Mode 'isolated' -Upper $upper)) {
+            [void]$sb.AppendLine($envLine)
+        }
         [void]$sb.AppendLine('    volumes: !override')
         foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'isolated' -Letter $letter `
                     -ProjectSource "`${ISOLATED_WORKSPACE_${upper}}" `
@@ -541,6 +695,10 @@ function New-IsolatedCompose {
         if ($i -lt $NumAccounts) {
             [void]$sb.AppendLine('')
         }
+    }
+
+    foreach ($networkLine in (Get-IsolatedNetworksBlockLines)) {
+        [void]$sb.AppendLine($networkLine)
     }
 
     Write-EnvContent -Path $outFile -Content $sb.ToString()

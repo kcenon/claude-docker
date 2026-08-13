@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test_isolation_modes.sh -- ISOLATION_MODE contract, worktree mount
-# regression, and isolated stack coverage (issue #335, stages 1 to 3).
+# regression, and isolated stack coverage (issue #335, stages 1 to 4).
 #
 # Three things are under test and they fail in different ways:
 #
@@ -134,7 +134,8 @@ run_generator() {
     shift
     local rc=0
     # shellcheck disable=SC2086  # deliberate word-split of the assignment list
-    env -u ISOLATION_MODE -u NUM_ACCOUNTS -u PROJECT_DIR_A -u ISOLATED_WORKSPACE_A "$@" \
+    env -u ISOLATION_MODE -u NUM_ACCOUNTS -u PROJECT_DIR_A -u ISOLATED_WORKSPACE_A \
+        -u ISOLATED_NETWORK_MODE "$@" \
         bash "$dir/scripts/generate-compose.sh" >"$dir/.gen.log" 2>&1 || rc=$?
     return "$rc"
 }
@@ -146,7 +147,7 @@ run_generator() {
 # The sourcing list mirrors what scripts/claude-docker sources, in its order.
 # index.sh is not decoration: isolation.sh derives per-account variable names
 # through index_to_upper, so omitting it makes every mode that needs a
-# per-account path fail as if the overlay were missing. Section 5 asserts the
+# per-account path fail as if the overlay were missing. Section 6 asserts the
 # real entry points keep this set complete.
 compose_files() {
     local dir="$1"
@@ -304,6 +305,22 @@ if [[ -f "$dir/docker-compose.yml" ]]; then
     fail "isolated without paths: partial output was written"
 else
     pass "isolated without paths: no compose file was written"
+fi
+
+# An unknown network policy must not degrade to bridge. This one matters more
+# than a typo usually does: a rejected value that quietly became `bridge` would
+# attach every account to a network while the user believed they had asked for
+# an offline profile, and nothing downstream would look wrong.
+dir="$(make_sandbox reject-unknown-network)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATED_NETWORK_MODE=bogus"
+if run_generator "$dir"; then
+    fail "unknown network mode: generator succeeded"
+elif grep -q 'ISOLATED_NETWORK_MODE must be bridge or none' "$dir/.gen.log"; then
+    pass "unknown network mode: generator refused with a naming diagnostic"
+else
+    fail "unknown network mode: generator failed without naming the accepted values"
+    sed 's/^/        /' "$dir/.gen.log"
 fi
 
 # A configured isolated mode whose overlay has not been generated must refuse
@@ -612,7 +629,154 @@ else
     echo "  SKIP  resolved-compose assertions (docker or jq unavailable)"
 fi
 
-# --- 5. Entry-point library wiring --------------------------------------------
+# --- 5. Resolved isolated credentials and networks ----------------------------
+
+echo "== resolved isolated credentials and networks =="
+
+if compose_assert_requires; then
+    dir="$(make_sandbox resolved-scoping)"
+    write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+        "ISOLATION_MODE=isolated" \
+        "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B"
+    if ! run_generator "$dir"; then
+        fail "scoping: generator failed for a valid isolated configuration"
+        sed 's/^/        /' "$dir/.gen.log"
+    else
+        iso_files=(docker-compose.yml docker-compose.isolated.yml)
+        env_keys="$(resolved_service_env_keys "$dir" claude-a "${iso_files[@]}")"
+
+        # The shared GH_TOKEN names one GitHub account. Handing the same value
+        # to every isolated service would leave the boundary decorative on the
+        # one surface carrying write access to remote repositories. This is
+        # asserted on the resolved model because the overlay cannot be read for
+        # it: the base stack declares the variable, and only the merged project
+        # shows whether the override actually removed it.
+        if grep -qx 'GH_TOKEN' <<<"$env_keys"; then
+            fail "isolated: the shared GH_TOKEN survived into the isolated service"
+            printf '%s\n' "$env_keys" | sed 's/^/        key: /'
+        else
+            pass "isolated: no shared GitHub token"
+        fi
+
+        # The override replaces the whole environment list, so it can fail in
+        # the other direction too: a variable left out here is simply gone, and
+        # a container missing HOME or CLAUDE_CONFIG_DIR starts and then behaves
+        # strangely rather than failing outright.
+        for required in TERM HOME AGENT_RUNTIME CLAUDE_CONFIG_DIR NODE_OPTIONS \
+                        GIT_USER_NAME GIT_USER_EMAIL GIT_CONFIG_GLOBAL; do
+            if grep -qx "$required" <<<"$env_keys"; then
+                pass "isolated: $required survived the environment override"
+            else
+                fail "isolated: $required was dropped by the environment override"
+            fi
+        done
+
+        # Control. Without it, a generator that emitted an empty environment
+        # list for every mode would satisfy the assertion above.
+        cred_control="$(make_sandbox cred-control-shared)"
+        write_env "$cred_control" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT"
+        if run_generator "$cred_control"; then
+            if resolved_service_env_keys "$cred_control" claude-a docker-compose.yml \
+                | grep -qx 'GH_TOKEN'; then
+                pass "control: shared mode does receive the shared GitHub token"
+            else
+                fail "control: shared mode lost GH_TOKEN, so the isolated check proves nothing"
+            fi
+        else
+            fail "control: generator failed for a plain shared configuration"
+            sed 's/^/        /' "$cred_control/.gen.log"
+        fi
+
+        # Per-account auth is the other half of the contract: an isolated
+        # service may hold its OWN credential. Presence alone would not
+        # distinguish that from both accounts being handed the same token, so
+        # the values are compared -- inside the helper, which reports only
+        # whether they differ and never prints either one.
+        pa_dir="$(make_sandbox scoping-per-account)"
+        write_env "$pa_dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+            "ISOLATION_MODE=isolated" \
+            "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B" \
+            "GH_AUTH_MODE=per-account" \
+            "GH_USER_A=placeholder-user-a" "GH_TOKEN_A=placeholder-token-a" \
+            "GH_USER_B=placeholder-user-b" "GH_TOKEN_B=placeholder-token-b"
+        if run_generator "$pa_dir"; then
+            if resolved_service_env_keys "$pa_dir" claude-a "${iso_files[@]}" \
+                | grep -qx 'GH_TOKEN'; then
+                pass "isolated + per-account: the account keeps its own token"
+            else
+                fail "isolated + per-account: the account's own token was dropped"
+            fi
+
+            case "$(resolved_env_distinct "$pa_dir" GH_TOKEN claude-a claude-b "${iso_files[@]}")" in
+                distinct)  pass "isolated + per-account: the two accounts hold different tokens" ;;
+                identical) fail "isolated + per-account: both accounts hold the same token" ;;
+                *)         fail "isolated + per-account: GH_TOKEN is missing from a service" ;;
+            esac
+        else
+            fail "isolated + per-account: generator failed"
+            sed 's/^/        /' "$pa_dir/.gen.log"
+        fi
+
+        # --- Networks --------------------------------------------------------
+        # The base stack declares no networks, so every service lands on the
+        # project-wide implicit bridge and siblings reach each other by service
+        # name. That is the lateral path this replaces.
+        net_a="$(resolved_service_networks "$dir" claude-a "${iso_files[@]}")"
+        net_b="$(resolved_service_networks "$dir" claude-b "${iso_files[@]}")"
+
+        if [[ -z "$(comm -12 <(sort <<<"$net_a") <(sort <<<"$net_b"))" ]]; then
+            pass "isolated: the two accounts share no network"
+        else
+            fail "isolated: the two accounts share a network"
+            printf '%s\n' "$net_a" | sed 's/^/        a: /'
+            printf '%s\n' "$net_b" | sed 's/^/        b: /'
+        fi
+
+        # Attached, not detached. A bridge per account is what keeps outbound
+        # model-API and git access working; a profile that dropped the
+        # attachment entirely would also pass the disjointness check above
+        # while breaking every ordinary workload.
+        if grep -q '^network=' <<<"$net_a"; then
+            pass "isolated: the account is attached to a network under the default policy"
+        else
+            fail "isolated: the account has no network; outbound API and git access would fail"
+        fi
+
+        # Control. Shared mode puts every service on the implicit default
+        # bridge, so it MUST be reported as sharing -- without this, a helper
+        # that returned nothing for any input would pass the check above.
+        if [[ -n "$(comm -12 \
+            <(resolved_service_networks "$cred_control" claude-a docker-compose.yml | sort) \
+            <(resolved_service_networks "$cred_control" claude-b docker-compose.yml | sort))" ]]; then
+            pass "control: shared mode's accounts do share a network"
+        else
+            fail "control: shared mode reported no shared network, so the isolated check proves nothing"
+        fi
+
+        # The offline policy is a different YAML key, not a different value of
+        # the same one, so it is generated rather than interpolated and needs
+        # its own resolved-model case.
+        off_dir="$(make_sandbox scoping-offline)"
+        write_env "$off_dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+            "ISOLATION_MODE=isolated" "ISOLATED_NETWORK_MODE=none" \
+            "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B"
+        if run_generator "$off_dir"; then
+            if resolved_service_networks "$off_dir" claude-a "${iso_files[@]}" \
+                | grep -qx 'network_mode=none'; then
+                pass "isolated + none: the account is detached from every network"
+            else
+                fail "isolated + none: the offline policy did not reach the resolved model"
+            fi
+        else
+            fail "isolated + none: generator failed"
+            sed 's/^/        /' "$off_dir/.gen.log"
+        fi
+    fi
+else
+    echo "  SKIP  resolved-compose assertions (docker or jq unavailable)"
+fi
+
+# --- 6. Entry-point library wiring --------------------------------------------
 
 echo "== entry-point library wiring =="
 
@@ -652,7 +816,7 @@ for entry in "${wiring_entries[@]}"; do
     fi
 done
 
-# --- 6. Committed files untouched ---------------------------------------------
+# --- 7. Committed files untouched ---------------------------------------------
 
 echo "== committed compose files =="
 if [[ "$(compose_digest)" == "$DIGEST_BEFORE" ]]; then

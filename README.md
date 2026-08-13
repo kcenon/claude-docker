@@ -683,7 +683,7 @@ against are in [`docs/ISOLATION.md`](docs/ISOLATION.md).
 |---|---|---|
 | `shared` (default) | Tier A | One read-write project mount shared by every account. |
 | `worktree` | Tier B | Each account mounts only its own worktree. Git metadata stays shared. |
-| `isolated` | Tier C | Each account mounts its own independent clone, with its own git metadata and no shared host configuration, under a hardened container profile. Credentials and networks are not yet scoped. |
+| `isolated` | Tier C | Each account mounts its own independent clone, with its own git metadata and no shared host configuration, under a hardened container profile. No shared GitHub credential, and one bridge network per account. |
 
 An unrecognized value is refused, and so is a mode whose per-account workspace
 paths are missing. The active mode and its boundary are printed by
@@ -741,8 +741,7 @@ that key, so an undeclared mode is a mistake worth reporting rather than a
 legacy layout worth honoring.
 
 Isolated accounts receive no shared host configuration, which means no shared
-hooks, skills, commands, statusline or `CLAUDE.md`. GitHub authentication still
-works through `GH_TOKEN`.
+hooks, skills, commands, statusline or `CLAUDE.md`.
 
 The container profile is hardened: a read-only root filesystem, every capability
 dropped, `no-new-privileges`, an init process, and a bounded PID limit
@@ -751,11 +750,18 @@ have to write — `/tmp`, the npm and tool caches, the XDG config directory — 
 bounded tmpfs mounts, and the global git config is redirected into the account's
 own state mount so `git push` keeps working.
 
-> **What this tier does not yet do.** Credentials and networks are not scoped:
-> an isolated account cannot reach another account's source, but still sees the
-> same `GH_TOKEN` and can reach sibling containers. Those are the remainder of
-> stage 4 of [#335](https://github.com/kcenon/claude-docker/issues/335);
-> [`docs/ISOLATION.md`](docs/ISOLATION.md) has the per-concern table.
+Credentials and networks are scoped too. An isolated account receives **no
+shared `GH_TOKEN`**, and each account sits on its own bridge network so siblings
+cannot resolve or connect to each other. Set `GH_AUTH_MODE=per-account` to give
+an account credentials of its own — it then receives only its own `GH_TOKEN_<X>`
+— and `ISOLATED_NETWORK_MODE=none` for a fully offline profile.
+
+> **What this tier does not do.** Egress is not filtered: separate bridges stop
+> account A from reaching account B, not from reaching the internet. A container
+> escape is also out of scope — the hardened profile raises the cost of one, but
+> a kernel or runtime vulnerability defeats it, so this is not a substitute for a
+> VM boundary. [`docs/ISOLATION.md`](docs/ISOLATION.md) has the per-concern
+> table.
 
 ## Scaling Accounts
 

@@ -22,8 +22,15 @@
 # mounts is a bounded tmpfs; $HOME itself stays read-only, so the global
 # git config is redirected into the per-account state mount.
 #
-# Credential environment variables and per-account networks are NOT yet
-# scoped. See docs/ISOLATION.md.
+# The environment lists carry !override for the same reason the volume
+# lists do. An untagged block merges by key, so the base stack's shared
+# GH_TOKEN would survive into every isolated service; Compose cannot
+# remove a single inherited key, so the list is re-emitted in full and
+# whatever is absent below is absent from the resolved service.
+#
+# Each account is on its own bridge network, so outbound access keeps
+# working while siblings cannot resolve or connect to each other.
+# Egress allowlisting is a separate proxy/firewall concern.
 
 services:
   claude-a:
@@ -44,7 +51,19 @@ services:
       - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
       - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
       - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-    environment:
+    networks:
+      - isolated_net_a
+    environment: !override
+      - TERM=xterm-256color
+      - TZ=${TZ:-UTC}
+      - HOME=/home/node
+      - AGENT_RUNTIME=claude
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
+      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig
     volumes: !override
       - ${ISOLATED_WORKSPACE_A}:${CONTAINER_ISOLATED_DIR_A:-/workspace-a}
@@ -69,9 +88,27 @@ services:
       - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
       - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
       - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-    environment:
+    networks:
+      - isolated_net_b
+    environment: !override
+      - TERM=xterm-256color
+      - TZ=${TZ:-UTC}
+      - HOME=/home/node
+      - AGENT_RUNTIME=claude
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
+      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig
     volumes: !override
       - ${ISOLATED_WORKSPACE_B}:${CONTAINER_ISOLATED_DIR_B:-/workspace-b}
       - ${HOME}/.claude-state/account-b:/home/node/.claude
       - node_modules_b:${CONTAINER_ISOLATED_DIR_B:-/workspace-b}/node_modules
+
+networks:
+  isolated_net_a:
+    driver: bridge
+  isolated_net_b:
+    driver: bridge

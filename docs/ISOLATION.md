@@ -5,14 +5,16 @@ under. This document states what each mode does and does not protect against,
 so a boundary is chosen deliberately rather than inferred from which compose
 file happened to be passed.
 
-Status: stages 1 to 3 of issue #335 are implemented, plus the container
-hardening half of stage 4. `isolated` isolates the **workspace** — independent
-clones, independent git metadata, no shared host configuration — and runs under
-a hardened container profile: read-only root filesystem, every capability
-dropped, no-new-privileges, an init process and a bounded PID limit. It does
-**not** yet scope credentials or the network; that is the rest of stage 4. Read
+Status: stages 1 to 4 of issue #335 are implemented. `isolated` isolates the
+**workspace** (independent clones, independent git metadata, no shared host
+configuration), runs under a hardened container profile (read-only root
+filesystem, every capability dropped, no-new-privileges, an init process and a
+bounded PID limit), receives no shared GitHub credential, and sits on its own
+network. What remains is capacity and performance work — see
+[Delivery order](#delivery-order). Read
 [What each mode protects against](#what-each-mode-protects-against) before
-relying on it, and see [Delivery order](#delivery-order) for what remains.
+relying on it: several concerns are still outside the model, container escape
+among them.
 
 ## Modes
 
@@ -41,6 +43,12 @@ every clone.
 
 Regenerate compose afterwards; `ISOLATION_MODE=isolated` without
 `ISOLATED_WORKSPACE_<X>` for every account is refused, not guessed.
+
+Two optional keys tune the profile, both read only under `isolated`:
+`ISOLATED_NETWORK_MODE` (`bridge` by default, or `none` for an offline
+profile — see [Network policy](#network-policy)) and `ISOLATED_PIDS_LIMIT`.
+Changing either means regenerating: they select what the generator writes, not
+what Compose interpolates at start time.
 
 ### Resolution
 
@@ -77,26 +85,29 @@ The adversary model for `isolated` is an agent running an unsafe or malicious
 command **inside a normal container** — a wrong `rm -rf`, a prompt-injected
 tool call, a compromised dependency's postinstall script.
 
-| Concern | `shared` | `worktree` | `isolated` (as shipped) | `isolated` (once credentials/networks land) |
-|---|---|---|---|---|
-| Account A edits account B's working tree | No | Yes | Yes | Yes |
-| Account A reads account B's working tree | No | Yes | Yes | Yes |
-| Account A rewrites shared git history (`.git`) | No | **No** | Yes | Yes |
-| Account A reads the shared host configuration | No | No | Yes | Yes |
-| Container root filesystem is read-only | No | No | Yes | Yes |
-| Capabilities dropped and privilege escalation blocked | No | No | Yes | Yes |
-| Account A reads account B's credentials | No | No | **No** | Yes |
-| Account A reaches account B over the network | No | No | **No** | Yes |
-| Container escape to the host | No | No | No | No |
+| Concern | `shared` | `worktree` | `isolated` |
+|---|---|---|---|
+| Account A edits account B's working tree | No | Yes | Yes |
+| Account A reads account B's working tree | No | Yes | Yes |
+| Account A rewrites shared git history (`.git`) | No | **No** | Yes |
+| Account A reads the shared host configuration | No | No | Yes |
+| Container root filesystem is read-only | No | No | Yes |
+| Capabilities dropped and privilege escalation blocked | No | No | Yes |
+| Account A holds account B's GitHub credential | No | No | Yes |
+| Account A connects to account B over the network | No | No | Yes |
+| Account A reaches the internet | No | No | **No**, unless `ISOLATED_NETWORK_MODE=none` |
+| Container escape to the host | No | No | **No** |
 
 "No" means the mode does not defend against it.
 
-The two `isolated` columns matter. What is shipped is the workspace boundary
-(stage 3) and the container profile (the hardening half of stage 4); credential
-scoping and per-account networks are the remainder. Until they land `isolated`
-is the right choice for "these agents must not touch each other's source" and
-"this agent should not be able to write outside its workspace", and the wrong
-choice for "these agents must not learn each other's secrets".
+Two rows are worth reading twice. **Egress is not restricted** by default: each
+account is on its own bridge, which stops A from reaching B, not from reaching
+anything outside. Restricting what a container may talk to is a proxy or
+firewall concern, and `ISOLATED_NETWORK_MODE=none` is the only lever this
+document offers — it removes all network access rather than filtering it. And
+**container escape is still out of the model**: the hardened profile raises the
+cost of one, but a kernel or runtime vulnerability defeats it, so `isolated` is
+not a substitute for a VM boundary when the workload is genuinely untrusted.
 
 ### Why `worktree` is a concurrency tier, not a sandbox
 
@@ -159,7 +170,7 @@ Compose overlays are applied in this order, and the combination matters:
 | `docker-compose.yml` | always | Base services, shared `/project` mount. |
 | `docker-compose.linux.yml` | Linux hosts, file present | Overrides the effective user with `${UID}:${GID}`. |
 | `docker-compose.worktree.yml` | resolved mode is `worktree` | Replaces each service's volume list with the worktree set. |
-| `docker-compose.isolated.yml` | resolved mode is `isolated` | Replaces each service's volume list with the clone-only set. |
+| `docker-compose.isolated.yml` | resolved mode is `isolated` | Replaces each service's volume list with the clone-only set, replaces its environment list, and attaches it to a per-account network. |
 
 All four files are generated in every mode. The mode decides which ones a
 caller composes together, not which ones exist, so drift checks keep comparing
@@ -250,6 +261,85 @@ redirect the container starts normally, prints its "authenticated as ..."
 banner, and only fails later at `git push` — with no credential helper and no
 diagnostic explaining why.
 
+## Credential scoping
+
+An isolated service receives **no shared GitHub credential**. Under the default
+`GH_AUTH_MODE`, the base stack hands every service the same `GH_TOKEN`; that
+token names one GitHub account, so passing it to each isolated service would
+have left the boundary decorative on the one surface carrying write access to
+remote repositories.
+
+Two configurations are therefore supported, and nothing in between:
+
+| `GH_AUTH_MODE` | What an isolated service receives |
+|---|---|
+| `per-account` (from #331) | Its own `GH_TOKEN_<X>` and `GH_USER_<X>`. Each account authenticates as itself. |
+| anything else | No GitHub credential. `gh` reports unauthenticated; `git push` to a remote needing auth fails. |
+
+The second row is a deliberate cost. An isolated account that needs to push
+should be configured with per-account authentication rather than handed the
+shared token — that is what #331 exists for, and this mode reuses its contract
+unchanged rather than growing a second mechanism.
+
+Provider API keys were already per-account (`ANTHROPIC_API_KEY_<X>` and the
+equivalents for other runtimes) and are unaffected. `GIT_USER_NAME` and
+`GIT_USER_EMAIL` are still passed through: they are committer identity, they
+name the human rather than an account, and an isolated account still has to be
+able to commit.
+
+### Why the environment list is replaced wholesale
+
+`docker-compose.isolated.yml` tags each service's environment block
+`!override`, exactly as it does the volume list, and therefore re-states every
+variable the service needs.
+
+That looks like duplication, and it is — deliberately. Compose merges an
+untagged `environment` block **by key**, so the base stack's `GH_TOKEN` entry
+survives into the merged service; and Compose offers no way to remove a single
+inherited key. `!reset` on an individual environment entry is ignored outright,
+which is worse than unsupported: the overlay reads as though it removes the
+variable and the resolved model still carries it. Replacing the whole list is
+the only mechanism that works.
+
+The property this buys is worth the duplication: anything not listed in the
+isolated branch never reaches an isolated service, so a credential added to the
+base stack later cannot leak into this profile by being forgotten. Both lists
+are emitted by one function in each generator (`emit_account_environment` /
+`Get-AccountEnvironmentLines`), so the two cannot silently diverge, and
+`tests/test_isolation_modes.sh` asserts on the resolved model in both
+directions — that `GH_TOKEN` is gone, and that `HOME`, `AGENT_RUNTIME` and the
+rest survived.
+
+## Network policy
+
+`ISOLATED_NETWORK_MODE` selects what an isolated account can reach. It is read
+only when `ISOLATION_MODE=isolated`.
+
+| Value | Effect |
+|---|---|
+| `bridge` (default) | Each account is attached to its own bridge network, `isolated_net_<x>`. |
+| `none` | Each account is detached from every network. |
+
+The base stack declares no networks at all, so without this every service lands
+on the project-wide implicit `default` bridge and account A can reach account B
+by service name. Declaring an explicit network in the overlay **replaces** that
+attachment rather than adding to it, which is what makes the separation real.
+
+The bridges are ordinary, not `internal: true`: outbound access to the model
+API and to git remotes has to keep working. What per-account bridges buy is
+that A and B sit on different ones, so neither appears in the other's DNS and
+neither can open a direct connection to it. **Egress allowlisting is not
+attempted here** and belongs to a proxy or firewall.
+
+`none` is the offline policy, for workloads that need no external access at
+all. It is a different YAML key (`network_mode`) rather than a different value
+of `networks`, and Compose rejects a service carrying both, so the policy is
+decided when the file is generated rather than interpolated at compose time —
+the same shape `NUM_ACCOUNTS` and `GH_AUTH_MODE` already have. **Changing it
+means regenerating**, and an unrecognized value is refused rather than
+defaulting to `bridge`, because an offline profile that quietly came up
+networked produces no other visible symptom.
+
 ## Interaction with the shared runtime configuration mount
 
 Every service mounts the host's `~/.claude/` read-only at
@@ -266,19 +356,25 @@ returns early when its config source is missing, so the runtime degrades rather
 than failing.
 
 What an isolated account gives up, concretely: shared hooks, skills, commands,
-statusline and `CLAUDE.md`. GitHub authentication still works, because it
-travels through the `GH_TOKEN` environment variable rather than the mounted
-`gh` config.
+statusline and `CLAUDE.md`.
 
-**Still open for stage 4.** Whether to restore any of that through an explicit
-allowlisted import — issue #335 offers "copy an explicit allowlist into a
-per-account staging directory and reject files classified as credentials" — is
-a cross-repository decision, because the consuming side of the contract lives
-in `kcenon/claude-config`. The mechanism already exists and is wired:
-`CLAUDE_CONFIG_SOURCE` overrides the config source path
-(`scripts/lib/bootstrap-claude.sh`), both generators emit it, and the
-installers write it as a commented key. What is undecided is the policy — which
-files are safe to copy — not the plumbing.
+GitHub authentication does **not** survive by default. It travels through the
+`GH_TOKEN` environment variable rather than the mounted `gh` config, so the
+absent mount alone would not have removed it — the environment override does.
+Configure per-account authentication to give an isolated account credentials of
+its own; see [Credential scoping](#credential-scoping).
+
+**Still open.** Whether to restore any of the shared configuration through an
+explicit allowlisted import — issue #335 offers "copy an explicit allowlist
+into a per-account staging directory and reject files classified as
+credentials" — is a cross-repository decision, because the consuming side of
+the contract lives in `kcenon/claude-config`. It gates that optional import
+alone; the requirement it belongs to ("an absent-by-default **or**
+account-scoped source") is already met by the absent-by-default half. The
+mechanism exists and is wired: `CLAUDE_CONFIG_SOURCE` overrides the config
+source path (`scripts/lib/bootstrap-claude.sh`), both generators emit it, and
+the installers write it as a commented key. What is undecided is the policy —
+which files are safe to copy — not the plumbing.
 
 The read-only mount is unchanged in `shared` and `worktree`.
 
@@ -289,9 +385,7 @@ Issue #335 is delivered in six stages. Each is a separate PR.
 1. **Configuration contract, threat model, resolved-compose test helpers.** ✅
 2. **Worktree mount correction and regression tests.** ✅
 3. **Independent workspace setup and isolated mount generation.** ✅
-4. Runtime, configuration, credential and network hardening. **Partial** — the
-   container profile is delivered; credential scoping and per-account networks
-   remain.
+4. **Runtime, configuration, credential and network hardening.** ✅
 5. Resource validation, transactional scaling, TUI cache correction, benchmarks.
 6. Cross-platform rollout, migration documentation, final benchmark report.
 
@@ -299,15 +393,23 @@ Issue #335 is delivered in six stages. Each is a separate PR.
 a name — the contract had accepted the value since stage 1 precisely so that
 stages could turn it on without changing what users configure.
 
-Stage 4 is split because its four axes are independent: the container profile
-constrains what an account can do to its own container, while credential and
-network scoping constrain what it can reach. Landing them separately keeps a
-read-only-root regression and a network regression from arriving in one CI run.
+Stage 4 landed as two PRs because its axes are independent: the container
+profile constrains what an account can do to its own container, while
+credential and network scoping constrain what it can reach. Landing them
+separately kept a read-only-root regression and a network regression from
+arriving in one CI run.
+
+One item from stage 4's issue text is **not** implemented: the allowlisted
+configuration import described in
+[Interaction with the shared runtime configuration mount](#interaction-with-the-shared-runtime-configuration-mount).
+It is optional in the issue's own wording ("**If** configuration import is
+supported"), and the requirement it belongs to is satisfied by the
+absent-by-default source.
 
 ## Verifying the active mode
 
 ```bash
-scripts/claude-docker config     # prints the mode, its trust boundary, then the resolved compose model
+scripts/claude-docker config     # prints the mode and its trust boundary, the network policy when the mode is isolated, then the resolved compose model
 scripts/claude-docker up         # prints the same banner before starting containers
 scripts/claude-docker tui        # dashboard shows the mode above the account table
 ```

@@ -653,6 +653,67 @@ function Get-IsolationMode {
     return $mode
 }
 
+function Test-IsolatedNetworkModeKnown {
+    <#
+    .SYNOPSIS
+    Return $true when Mode is one of bridge, none.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Mode)
+
+    # -cin for the same reason Test-IsolationModeKnown uses it: the bash `case`
+    # is case-sensitive, so accepting 'Bridge' here would let a Windows user
+    # configure a value a Linux user's generator rejects.
+    return $Mode -cin @('bridge', 'none')
+}
+
+function Get-IsolatedNetworkModeSummary {
+    <#
+    .SYNOPSIS
+    One-line description of the reachability a network policy provides.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Mode)
+
+    switch ($Mode) {
+        'bridge' {
+            return 'each account is on its own bridge network; outbound access works, sibling discovery and direct connections do not'
+        }
+        'none' {
+            return 'each account is detached from every network; no outbound agent, API or git access'
+        }
+        default {
+            throw "Unknown isolated network mode: $Mode"
+        }
+    }
+}
+
+function Get-IsolatedNetworkMode {
+    <#
+    .SYNOPSIS
+    Resolve the network policy the isolated mode applies.
+    .DESCRIPTION
+    Mirrors resolve_isolated_network_mode in lib/isolation.sh: environment,
+    then .env, then bridge. No inference leg -- nothing predates this key, so
+    an unset value means "never configured" rather than "configured the old
+    way". An unrecognized value throws rather than falling back to bridge,
+    because a typo that silently attaches every account to a network produces
+    no other visible symptom.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $mode = Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'ISOLATED_NETWORK_MODE'
+
+    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = 'bridge' }
+    $mode = $mode.ToLowerInvariant()
+
+    if (-not (Test-IsolatedNetworkModeKnown -Mode $mode)) {
+        throw "ISOLATED_NETWORK_MODE must be bridge or none (got: $mode)"
+    }
+    return $mode
+}
+
 function Get-SupportedIsolationMode {
     <#
     .SYNOPSIS
@@ -847,6 +908,8 @@ Export-ModuleMember -Function @(
     'Test-IsolationModeKnown', 'Get-IsolationModeSummary', 'Get-IsolationMode',
     'Get-IsolationAccountVariable', 'Get-IsolationSetupHint',
     'Get-SupportedIsolationMode', 'Write-UnusedWorkspacePathWarning',
+    'Test-IsolatedNetworkModeKnown', 'Get-IsolatedNetworkModeSummary',
+    'Get-IsolatedNetworkMode',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose
