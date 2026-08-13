@@ -170,15 +170,15 @@ get_gh_auth_mode() {
 # and `config` both call it, so the boundary a session runs under is stated
 # rather than inferred from which compose files the caller happened to pass.
 #
-# Uses resolve_isolation_mode, not the require_ variant: a user who set an
-# unimplemented mode should still be told what it means before the compose
-# builder refuses it.
+# Uses resolve_isolation_mode, not the require_ variant: a user whose
+# per-account workspace paths are missing should still be told which boundary
+# was asked for before the compose builder refuses to start on it.
 show_isolation_mode() {
     local mode
     mode=$(resolve_isolation_mode) || return 1
     echo -e "${BOLD}Isolation mode:${NC} $mode"
     echo -e "${DIM}  $(isolation_mode_summary "$mode")${NC}"
-    warn_unused_worktree_paths "$mode"
+    warn_unused_workspace_paths "$mode"
 }
 
 # Resolve a CLI target (account letter or full service name) to a configured

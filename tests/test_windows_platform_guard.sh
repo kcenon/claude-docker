@@ -47,6 +47,7 @@ GUARDED=(
     "scripts/cleanup.sh|cleanup.ps1"
     "scripts/remove.sh|remove.ps1"
     "scripts/setup-worktrees.sh|setup-worktrees.ps1"
+    "scripts/setup-isolated.sh|setup-isolated.ps1"
     "scripts/test-concurrent-git.sh|test-concurrent-git.ps1"
 )
 

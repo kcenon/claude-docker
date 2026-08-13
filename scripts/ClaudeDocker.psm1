@@ -510,18 +510,15 @@ function Get-ServiceNames {
 # --- Isolation mode ----------------------------------------------------------
 #
 # PowerShell port of scripts/lib/isolation.sh. The two must agree on
-# resolution order, accepted names, and which modes are refused, because a
-# Windows user and a Linux user configuring the same repository have to get
-# the same trust boundary. tests/test_isolation_modes.sh asserts that.
+# resolution order, accepted names, and which per-account paths each mode
+# requires, because a Windows user and a Linux user configuring the same
+# repository have to get the same trust boundary.
+# tests/test_isolation_modes.sh asserts that.
 
 function Test-IsolationModeKnown {
     <#
     .SYNOPSIS
     Return $true when Mode is one of shared, worktree, isolated.
-    .DESCRIPTION
-    Knowing a name is separate from being able to run it: `isolated` is known
-    here and refused by Get-SupportedIsolationMode, so status output can
-    describe a mode this build cannot start.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Mode)
@@ -550,7 +547,7 @@ function Get-IsolationModeSummary {
             return 'each account mounts only its own worktree; git metadata stays shared, so this is a concurrency tier, not a security boundary'
         }
         'isolated' {
-            return 'account-exclusive workspace, state, configuration and network (not implemented yet)'
+            return 'each account gets an independent clone with its own git metadata and state; no shared project mount and no shared host configuration'
         }
         default {
             throw "Unknown isolation mode: $Mode"
@@ -558,25 +555,65 @@ function Get-IsolationModeSummary {
     }
 }
 
-function Get-WorktreeRootA {
+function Get-IsolationAccountVariable {
     <#
     .SYNOPSIS
-    Return PROJECT_DIR_A using the environment-then-.env order.
+    Name of the per-account workspace variable a mode reads, or '' for none.
     .DESCRIPTION
-    Module-internal (not exported). Mirrors _isolation_worktree_root_a in
-    lib/isolation.sh. Both the legacy worktree inference and the unused-path
-    warning need it, and a caller may have the value in the environment
-    rather than only on disk.
+    Mirrors isolation_mode_account_var in lib/isolation.sh. One table so
+    validation, warnings and the generators cannot disagree about which
+    variable belongs to which mode.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$ProjectRoot)
+    param(
+        [Parameter(Mandatory)][string]$Mode,
+        [Parameter(Mandatory)][string]$Upper
+    )
 
-    $value = [Environment]::GetEnvironmentVariable('PROJECT_DIR_A')
+    switch ($Mode) {
+        'worktree' { return "PROJECT_DIR_$Upper" }
+        'isolated' { return "ISOLATED_WORKSPACE_$Upper" }
+        default { return '' }
+    }
+}
+
+function Get-IsolationSetupHint {
+    <#
+    .SYNOPSIS
+    One-line "run this to create them" hint for a mode's workspaces.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Mode)
+
+    switch ($Mode) {
+        'worktree' { return 'Create the worktrees with scripts\setup-worktrees.ps1, which prints the paths to add.' }
+        'isolated' { return 'Create the clones with scripts\setup-isolated.ps1, which prints the paths to add.' }
+        default { return '' }
+    }
+}
+
+function Get-IsolationValue {
+    <#
+    .SYNOPSIS
+    Return a configuration key using the environment-then-.env order.
+    .DESCRIPTION
+    Module-internal (not exported). Mirrors _isolation_lookup in
+    lib/isolation.sh. The legacy worktree inference, the per-account
+    validation and the unused-path warning all need it, and a caller may have
+    the value in the environment rather than only on disk.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Key
+    )
+
+    $value = [Environment]::GetEnvironmentVariable($Key)
     if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
 
     $envFile = Join-Path $ProjectRoot '.env'
     if (-not (Test-Path $envFile)) { return '' }
-    return (Get-EnvValue -Path $envFile -Key 'PROJECT_DIR_A')
+    return (Get-EnvValue -Path $envFile -Key $Key)
 }
 
 function Get-IsolationMode {
@@ -603,7 +640,7 @@ function Get-IsolationMode {
         $mode = Get-EnvValue -Path $envFile -Key 'ISOLATION_MODE'
     }
     if ([string]::IsNullOrWhiteSpace($mode) -and
-        -not [string]::IsNullOrWhiteSpace((Get-WorktreeRootA -ProjectRoot $ProjectRoot))) {
+        -not [string]::IsNullOrWhiteSpace((Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'PROJECT_DIR_A'))) {
         $mode = 'worktree'
     }
 
@@ -619,31 +656,51 @@ function Get-IsolationMode {
 function Get-SupportedIsolationMode {
     <#
     .SYNOPSIS
-    Get-IsolationMode, then refuse the modes this build cannot start.
+    Get-IsolationMode, then verify the mode's per-account workspace paths.
     .DESCRIPTION
     Callers that write files or start containers use this. Callers that only
     display configuration use Get-IsolationMode.
+
+    AccountCount defaults to 1: overlay selection only needs to know the mode
+    is usable at all, and account A is the one every installation has. The
+    compose generator passes NUM_ACCOUNTS so a path missing for account C is
+    caught before the first output file is opened. A mode whose paths are
+    unset would otherwise reach Compose as an empty bind source, which fails
+    later and less legibly than it does here.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$ProjectRoot)
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [ValidateRange(1, 702)][int]$AccountCount = 1
+    )
 
     $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
-    if ($mode -eq 'isolated') {
-        throw ("ISOLATION_MODE=isolated is a valid setting, but the isolated stack is not implemented yet. " +
-               "Falling back to a shared workspace would hand an account the very access the mode asks to deny, " +
-               "so this fails instead. Use shared or worktree; see docs/ISOLATION.md for the delivery order.")
+
+    for ($i = 1; $i -le $AccountCount; $i++) {
+        # Uppercasing the Excel-style letter is correct for both 'a' -> 'A'
+        # and 'aa' -> 'AA', so no separate uppercase converter is needed.
+        $upper = (ConvertTo-AccountLetter -Index $i).ToUpperInvariant()
+        $var = Get-IsolationAccountVariable -Mode $mode -Upper $upper
+        # shared consumes no per-account path; nothing to check for any account.
+        if ([string]::IsNullOrEmpty($var)) { break }
+
+        if ([string]::IsNullOrWhiteSpace((Get-IsolationValue -ProjectRoot $ProjectRoot -Key $var))) {
+            throw ("$var is required when ISOLATION_MODE=$mode. " + (Get-IsolationSetupHint -Mode $mode))
+        }
     }
+
     return $mode
 }
 
-function Write-UnusedWorktreePathWarning {
+function Write-UnusedWorkspacePathWarning {
     <#
     .SYNOPSIS
-    Warn when .env declares PROJECT_DIR_A but the active mode ignores it.
+    Warn about per-account workspace paths the active mode ignores.
     .DESCRIPTION
-    Reaching this means an explicit ISOLATION_MODE outranked the legacy
-    inference, so the per-account paths are inert and every account is on the
-    shared mount. Reports a surprise; decides nothing.
+    Both families are checked, because both can be present at once: a user who
+    tried isolated, went back to worktree, and left the clone paths in .env
+    should be told the clones are now inert. Reports a surprise; decides
+    nothing.
     #>
     [CmdletBinding()]
     param(
@@ -651,11 +708,22 @@ function Write-UnusedWorktreePathWarning {
         [Parameter(Mandatory)][string]$Mode
     )
 
-    if ($Mode -eq 'worktree') { return }
-    if ([string]::IsNullOrWhiteSpace((Get-WorktreeRootA -ProjectRoot $ProjectRoot))) { return }
+    if ($Mode -ne 'worktree' -and
+        -not [string]::IsNullOrWhiteSpace((Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'PROJECT_DIR_A'))) {
+        Write-LogWarn "PROJECT_DIR_A is configured, but ISOLATION_MODE=$Mode ignores per-account worktree paths."
+        if ($Mode -eq 'shared') {
+            Write-LogWarn "Every account uses PROJECT_DIR. Set ISOLATION_MODE=worktree to mount the worktrees."
+        }
+        else {
+            Write-LogWarn "Set ISOLATION_MODE=worktree to mount the worktrees."
+        }
+    }
 
-    Write-LogWarn "PROJECT_DIR_A is configured, but ISOLATION_MODE=$Mode ignores per-account worktree paths."
-    Write-LogWarn "Every account uses PROJECT_DIR. Set ISOLATION_MODE=worktree to mount the worktrees."
+    if ($Mode -ne 'isolated' -and
+        -not [string]::IsNullOrWhiteSpace((Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'ISOLATED_WORKSPACE_A'))) {
+        Write-LogWarn "ISOLATED_WORKSPACE_A is configured, but ISOLATION_MODE=$Mode ignores per-account clone paths."
+        Write-LogWarn "Set ISOLATION_MODE=isolated to mount the independent clones."
+    }
 }
 
 # --- Docker Compose Helpers --------------------------------------------------
@@ -676,15 +744,21 @@ function Get-ComposeArgs {
     # that variable when ISOLATION_MODE is unset, so Tier B installations
     # predating the key keep the same overlay; an explicit mode now wins.
     $mode = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot
-    if ($mode -eq 'worktree') {
-        $wtFile = Join-Path $ProjectRoot 'docker-compose.worktree.yml'
+    $overlay = switch ($mode) {
+        'worktree' { 'docker-compose.worktree.yml' }
+        'isolated' { 'docker-compose.isolated.yml' }
+        default { '' }
+    }
+
+    if (-not [string]::IsNullOrEmpty($overlay)) {
+        $overlayPath = Join-Path $ProjectRoot $overlay
         # A missing overlay would silently leave every account on the shared
         # /project mount -- the exact fall back the mode is chosen to avoid.
-        if (-not (Test-Path $wtFile)) {
-            throw ("ISOLATION_MODE=worktree but docker-compose.worktree.yml is missing. " +
+        if (-not (Test-Path $overlayPath)) {
+            throw ("ISOLATION_MODE=$mode but $overlay is missing. " +
                    "Regenerate it with scripts\generate-compose.ps1 before starting containers.")
         }
-        $args_ += @('-f', $wtFile)
+        $args_ += @('-f', $overlayPath)
     }
 
     return $args_
@@ -771,7 +845,8 @@ Export-ModuleMember -Function @(
     'Get-RuntimeField', 'Get-RuntimeList',
     # Isolation mode
     'Test-IsolationModeKnown', 'Get-IsolationModeSummary', 'Get-IsolationMode',
-    'Get-SupportedIsolationMode', 'Write-UnusedWorktreePathWarning',
+    'Get-IsolationAccountVariable', 'Get-IsolationSetupHint',
+    'Get-SupportedIsolationMode', 'Write-UnusedWorkspacePathWarning',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose

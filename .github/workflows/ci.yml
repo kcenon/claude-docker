@@ -145,9 +145,11 @@ jobs:
   # same change, because the committed files embed the tag as a default.
   #
   # The file list in "Assert no drift" is the tracked generated set. Every mode
-  # generates all three, so the mode does not change what belongs here -- but a
-  # stage that adds a generated isolated stack must add it to that list too, or
-  # the new file gets no drift coverage while the job stays green.
+  # generates all four, so the mode does not change what belongs here -- but a
+  # stage that adds another generated stack must add it to that list too, or
+  # the new file gets no drift coverage while the job stays green. That is not
+  # hypothetical: docker-compose.isolated.yml was added in stage 3 of #335 and
+  # would have been invisible here until it was listed.
   compose-freshness:
     name: Compose files are current
     runs-on: ubuntu-latest
@@ -162,7 +164,7 @@ jobs:
           bash scripts/generate-compose.sh
       - name: Assert no drift
         run: |
-          if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml; then
+          if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml docker-compose.isolated.yml; then
             echo "::error::Committed compose files differ from generator output. Regenerate with: rm -f .env && bash scripts/generate-compose.sh"
             exit 1
           fi

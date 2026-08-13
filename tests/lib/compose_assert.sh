@@ -17,6 +17,8 @@
 #   resolved_service_mounts DIR SERVICE FILE...
 #   resolved_mount_targets  DIR SERVICE FILE...
 #   resolved_mount_sources  DIR SERVICE FILE...
+#   resolved_mount_manifest DIR FILE...
+#   duplicate_writable_sources DIR FILE...
 #
 # Callers own their own PASS/FAIL counters; these functions only report facts.
 
@@ -90,4 +92,62 @@ resolved_mount_targets() {
 # volumes contribute an empty line.
 resolved_mount_sources() {
     resolved_service_mounts "$@" | cut -d'|' -f2
+}
+
+# resolved_mount_manifest DIR FILE...
+# Print one "SERVICE|TYPE|SOURCE|TARGET|ACCESS" line per mount across every
+# service in the resolved model, sorted so the output is stable to diff.
+# ACCESS is `ro` or `rw`.
+#
+# This is the machine-readable mount manifest issue #335 asks tests to produce.
+# Per-service assertions answer "does account A have what it should"; only a
+# whole-model view can answer the cross-account question, which is whether any
+# host path is writable from two accounts at once.
+resolved_mount_manifest() {
+    local dir="$1"
+    shift
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r '
+            .services
+            | to_entries[]
+            | .key as $svc
+            | (.value.volumes // [])[]
+            | [
+                $svc,
+                (.type // ""),
+                (.source // ""),
+                (.target // ""),
+                (if .read_only then "ro" else "rw" end)
+              ]
+            | join("|")
+        ' \
+        | sort
+}
+
+# duplicate_writable_sources DIR FILE...
+# Print every host path that more than one service bind-mounts writable, one
+# per line. Empty output is the pass condition: no account can reach another's
+# workspace or state through a shared host path.
+#
+# Read-only binds are deliberately excluded. A shared read-only mount is a
+# capability question (which config does an account see) rather than a
+# containment breach, and shared modes legitimately have several.
+#
+# Named volumes are excluded too: `node_modules_a` is per-account by name, and
+# a genuinely shared named volume would show up as the same source in two
+# services only if the generator emitted it that way, which the per-service
+# assertions already cover.
+duplicate_writable_sources() {
+    resolved_mount_manifest "$@" \
+        | awk -F'|' '$2 == "bind" && $5 == "rw" && $3 != "" { print $1 "|" $3 }' \
+        | sort -u \
+        | cut -d'|' -f2 \
+        | sort \
+        | uniq -d
 }

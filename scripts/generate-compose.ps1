@@ -6,6 +6,7 @@
     Reads NUM_ACCOUNTS and IMAGE_TAG from .env (or environment) and writes:
       docker-compose.yml          Base config (Tier A: shared source)
       docker-compose.worktree.yml Tier B override (per-account worktrees)
+      docker-compose.isolated.yml Isolated override (per-account clones)
       docker-compose.linux.yml    Linux UID/GID override
 .EXAMPLE
     .\scripts\generate-compose.ps1
@@ -162,28 +163,23 @@ if ($GhAuthMode -eq 'per-account') {
 # before the first output file is opened, so a failure cannot leave a partially
 # regenerated set behind.
 #
-# All three files are still generated in every mode. The mode decides which
+# All four files are still generated in every mode. The mode decides which
 # ones a caller composes together (Get-ComposeArgs), not which ones exist, so
 # `compose-freshness` keeps comparing the same tracked set.
+#
+# -AccountCount makes the per-account workspace check cover every account, not
+# just the first: the compose builder only needs to know the mode is usable,
+# but a file written here with an unset path for account C would fail at `up`
+# instead of now.
 try {
-    $IsolationMode = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot
+    $IsolationMode = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot -AccountCount $NumAccounts
 }
 catch {
     Write-Error $_.Exception.Message
     exit 1
 }
 
-if ($IsolationMode -eq 'worktree') {
-    for ($i = 1; $i -le $NumAccounts; $i++) {
-        $upper = Get-AccountLetterUpper -Index $i
-        if ([string]::IsNullOrEmpty((Resolve-EnvOrDefault "PROJECT_DIR_${upper}" ''))) {
-            Write-Error "PROJECT_DIR_${upper} is required when ISOLATION_MODE=worktree. Create the worktrees with scripts\setup-worktrees.ps1, which prints the paths to add."
-            exit 1
-        }
-    }
-}
-
-Write-UnusedWorktreePathWarning -ProjectRoot $ProjectRoot -Mode $IsolationMode
+Write-UnusedWorkspacePathWarning -ProjectRoot $ProjectRoot -Mode $IsolationMode
 
 # Thin wrappers around the shared helpers in lib/index.ps1 so legacy call
 # sites below keep working without rewriting each loop. Both helpers accept
@@ -204,32 +200,53 @@ function Get-AccountVolumeLines {
     Return the complete volume list for one account service, indented for a
     `volumes:` block.
     .DESCRIPTION
-    Mirrors emit_account_volumes in generate-compose.sh. The base config and
-    the worktree overlay differ only in where the project comes from and where
-    it lands; runtime state, the read-only host config mount, and the optional
-    agents/skills and shared gh mounts are identical. Producing both from one
-    function is what keeps them identical, and that matters more than it used
-    to: the worktree overlay REPLACES this list rather than appending to it, so
-    a mount missing here is missing from the resolved worktree service.
+    Mirrors emit_account_volumes in generate-compose.sh. All three outputs that
+    carry volumes come through here. The base config and the worktree overlay
+    differ only in where the project comes from and where it lands; the
+    isolated overlay additionally drops every shared host-home mount. Producing
+    all of them from one function is what keeps the common mounts identical,
+    and that matters more than it used to: both overlays REPLACE this list
+    rather than appending to it, so a mount missing here is missing from the
+    resolved service.
     #>
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory)][ValidateSet('shared', 'worktree', 'isolated')][string]$Mode,
         [Parameter(Mandatory)][string]$Letter,
         [Parameter(Mandatory)][string]$ProjectSource,
         [Parameter(Mandatory)][string]$ProjectTarget
     )
 
     $lines = @("      - ${ProjectSource}:${ProjectTarget}")
+
+    # Per-account runtime state stays a host bind mount in every mode. It is
+    # under $HOME, but it is not a *shared* surface: each account has its own
+    # directory, so account A still cannot reach account B's state. Moving it
+    # into a named volume would satisfy the letter of "no host home mounts"
+    # while blinding the TUI, which discovers accounts by scanning
+    # $HOME/<stateDir>/account-* on the host (tui/internal/config/state.go).
     $lines += "      - `${HOME}/${RtStateDir}/account-${Letter}:${RtContainerConfigMount}"
-    $lines += "      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro"
-    # The agents/skills volume is bound only for runtimes whose registry entry
-    # sets mountsAgentsSkills (currently codex).
-    if ($RtMountsAgentsSkills -eq $true) {
-        $lines += '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+
+    # The remaining host-home mounts ARE shared surfaces: the read-only runtime
+    # config tree, the agents/skills tree and the shared gh config resolve to
+    # the same host path for every account. An isolated account receives none
+    # of them (issue #335, stage 3). The runtime tolerates their absence --
+    # bootstrap-claude.sh returns early when the config source is missing -- so
+    # the container still starts, with no shared hooks, skills, commands,
+    # statusline or CLAUDE.md. Restoring that through an allowlisted
+    # per-account import is stage 4; see docs/ISOLATION.md.
+    if ($Mode -ne 'isolated') {
+        $lines += "      - `${HOME}/${RtHostConfigBasename}:${RtHostConfigMount}:ro"
+        # The agents/skills volume is bound only for runtimes whose registry
+        # entry sets mountsAgentsSkills (currently codex).
+        if ($RtMountsAgentsSkills -eq $true) {
+            $lines += '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+        }
+        if ($GhAuthMode -eq 'shared') {
+            $lines += '      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro'
+        }
     }
-    if ($GhAuthMode -eq 'shared') {
-        $lines += '      - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro'
-    }
+
     $lines += "      - node_modules_${Letter}:${ProjectTarget}/node_modules"
     return $lines
 }
@@ -279,7 +296,7 @@ function New-BaseCompose {
         [void]$sb.AppendLine('    stdin_open: true')
         [void]$sb.AppendLine('    tty: true')
         [void]$sb.AppendLine('    volumes:')
-        foreach ($volumeLine in (Get-AccountVolumeLines -Letter $letter `
+        foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'shared' -Letter $letter `
                     -ProjectSource '${PROJECT_DIR}' `
                     -ProjectTarget '${CONTAINER_PROJECT_DIR:-/project}')) {
             [void]$sb.AppendLine($volumeLine)
@@ -388,9 +405,60 @@ function New-WorktreeCompose {
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine("    working_dir: `${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")
         [void]$sb.AppendLine('    volumes: !override')
-        foreach ($volumeLine in (Get-AccountVolumeLines -Letter $letter `
+        foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'worktree' -Letter $letter `
                     -ProjectSource "`${PROJECT_DIR_${upper}}" `
                     -ProjectTarget "`${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")) {
+            [void]$sb.AppendLine($volumeLine)
+        }
+
+        if ($i -lt $NumAccounts) {
+            [void]$sb.AppendLine('')
+        }
+    }
+
+    Write-EnvContent -Path $outFile -Content $sb.ToString()
+    Write-LogInfo "Generated: $outFile ($NumAccounts services)"
+}
+
+# --- Generate docker-compose.isolated.yml ------------------------------------
+
+function New-IsolatedCompose {
+    $outFile = Join-Path $ProjectRoot 'docker-compose.isolated.yml'
+    $sb = [System.Text.StringBuilder]::new()
+
+    [void]$sb.AppendLine('# docker-compose.isolated.yml')
+    [void]$sb.AppendLine('# Generated by scripts/generate-compose — do not edit manually.')
+    [void]$sb.AppendLine('# Usage: docker compose -f docker-compose.yml -f docker-compose.isolated.yml up')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# Each account mounts its own independent clone — separate working tree AND')
+    [void]$sb.AppendLine('# separate git metadata, created by scripts/setup-isolated.sh. Unlike a')
+    [void]$sb.AppendLine('# worktree, nothing is shared: there is no common object store to read other')
+    [void]$sb.AppendLine('# branches from or rewrite refs in.')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# The volume lists carry !override so they REPLACE the base list. Compose')
+    [void]$sb.AppendLine('# merges volumes by container target, so without the tag the shared')
+    [void]$sb.AppendLine('# ${PROJECT_DIR} mount would survive alongside the clone (issue #335).')
+    [void]$sb.AppendLine('# Requires a Compose release that supports !override (Docker Compose v2.24.4+).')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# Shared host-home mounts are absent by design: no read-only host config')
+    [void]$sb.AppendLine('# tree, no agents/skills tree, no shared gh config. An isolated account')
+    [void]$sb.AppendLine('# therefore has no shared hooks, skills, commands, statusline or CLAUDE.md.')
+    [void]$sb.AppendLine('# Credential environment variables and per-account networks are NOT yet')
+    [void]$sb.AppendLine('# scoped — that is stage 4. See docs/ISOLATION.md.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('services:')
+
+    for ($i = 1; $i -le $NumAccounts; $i++) {
+        $letter = ConvertTo-Letter $i
+        $upper  = ConvertTo-UpperLetter $i
+        $svc    = "$ServicePrefix-$letter"
+
+        [void]$sb.AppendLine("  ${svc}:")
+        [void]$sb.AppendLine("    working_dir: `${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-$letter}")
+        [void]$sb.AppendLine('    volumes: !override')
+        foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'isolated' -Letter $letter `
+                    -ProjectSource "`${ISOLATED_WORKSPACE_${upper}}" `
+                    -ProjectTarget "`${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-$letter}")) {
             [void]$sb.AppendLine($volumeLine)
         }
 
@@ -438,5 +506,6 @@ function New-LinuxCompose {
 Write-LogInfo "Generating compose files for $NumAccounts account(s)..."
 New-BaseCompose
 New-WorktreeCompose
+New-IsolatedCompose
 New-LinuxCompose
 Write-LogSuccess 'Done.'

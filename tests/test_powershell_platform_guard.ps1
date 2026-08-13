@@ -45,6 +45,7 @@ $Guarded = @(
     [pscustomobject]@{ Path = 'scripts/cleanup.ps1'; Counterpart = './scripts/cleanup.sh' }
     [pscustomobject]@{ Path = 'scripts/remove.ps1'; Counterpart = './scripts/remove.sh' }
     [pscustomobject]@{ Path = 'scripts/setup-worktrees.ps1'; Counterpart = './scripts/setup-worktrees.sh' }
+    [pscustomobject]@{ Path = 'scripts/setup-isolated.ps1'; Counterpart = './scripts/setup-isolated.sh' }
     [pscustomobject]@{ Path = 'scripts/test-concurrent-git.ps1'; Counterpart = './scripts/test-concurrent-git.sh' }
 )
 
@@ -86,10 +87,10 @@ try {
         [void]$startInfo.ArgumentList.Add('-File')
         [void]$startInfo.ArgumentList.Add($isolatedScript)
 
-        # Mandatory parameter binding precedes a script body, so give the
-        # worktree helper a harmless path. If its guard is absent, validation
-        # fails inside the sandbox without touching a real repository.
-        if ($entry.Path -eq 'scripts/setup-worktrees.ps1') {
+        # Mandatory parameter binding precedes a script body, so give the setup
+        # helpers a harmless path. If a guard is absent, validation fails
+        # inside the sandbox without touching a real repository.
+        if ($entry.Path -in @('scripts/setup-worktrees.ps1', 'scripts/setup-isolated.ps1')) {
             [void]$startInfo.ArgumentList.Add('-RepoDir')
             [void]$startInfo.ArgumentList.Add((Join-Path $caseRoot 'missing-repository'))
         }

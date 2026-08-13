@@ -81,6 +81,11 @@ log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_
 . "$SCRIPT_DIR/lib/runtime.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# build-compose-cmd.sh calls into the isolation contract, so isolation.sh must
+# be sourced first. Omitting it made every build_compose_cmd call here abort
+# with "require_supported_isolation_mode: command not found".
+# shellcheck source=lib/isolation.sh
+. "$SCRIPT_DIR/lib/isolation.sh"
 # shellcheck source=lib/build-compose-cmd.sh
 . "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 

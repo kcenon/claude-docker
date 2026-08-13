@@ -16,18 +16,21 @@
 #   worktree  Each account sees only its own git worktree. Common git
 #             metadata is still shared, so this is a concurrency tier and
 #             NOT an adversarial sandbox.
-#   isolated  Account-exclusive workspace, runtime state, configuration and
-#             network. Accepted by this contract but NOT IMPLEMENTED yet;
-#             see docs/ISOLATION.md.
+#   isolated  Each account gets an independent clone with its own git
+#             metadata, its own runtime state and dependency cache, and no
+#             shared host configuration. Clones come from
+#             scripts/setup-isolated.sh; see docs/ISOLATION.md.
 #
 # Public functions:
-#   isolation_mode_is_known MODE      # 0 when MODE is one of the three names
-#   isolation_mode_summary MODE       # one-line trust-boundary description
-#   resolve_isolation_mode            # environment -> .env -> inference -> shared
-#   require_supported_isolation_mode  # resolve, then reject unimplemented modes
-#   warn_unused_worktree_paths MODE   # flag PROJECT_DIR_A that MODE ignores
+#   isolation_mode_is_known MODE       # 0 when MODE is one of the three names
+#   isolation_mode_summary MODE        # one-line trust-boundary description
+#   isolation_mode_account_var MODE N  # per-account path variable, if any
+#   resolve_isolation_mode             # environment -> .env -> inference -> shared
+#   require_supported_isolation_mode   # resolve, then check per-account inputs
+#   warn_unused_workspace_paths MODE   # flag per-account paths MODE ignores
 #
-# Requires: scripts/lib/parse_env.sh sourced before this file.
+# Requires: scripts/lib/parse_env.sh and scripts/lib/index.sh sourced before
+# this file.
 
 # Guard against double-sourcing.
 if [[ -n "${_CLAUDE_DOCKER_ISOLATION_SH_SOURCED:-}" ]]; then
@@ -39,10 +42,7 @@ _CLAUDE_DOCKER_ISOLATION_SH_SOURCED=1
 ISOLATION_MODE_DEFAULT="shared"
 
 # isolation_mode_is_known MODE
-# Return 0 when MODE is one of the three contract names. Knowing a name is
-# separate from being able to run it: `isolated` is known here and rejected by
-# require_supported_isolation_mode, so documentation and status output can
-# describe a mode this build cannot start.
+# Return 0 when MODE is one of the three contract names.
 isolation_mode_is_known() {
     case "${1:-}" in
         shared|worktree|isolated) return 0 ;;
@@ -63,7 +63,7 @@ isolation_mode_summary() {
             printf '%s' "each account mounts only its own worktree; git metadata stays shared, so this is a concurrency tier, not a security boundary"
             ;;
         isolated)
-            printf '%s' "account-exclusive workspace, state, configuration and network (not implemented yet)"
+            printf '%s' "each account gets an independent clone with its own git metadata and state; no shared project mount and no shared host configuration"
             ;;
         *)
             return 1
@@ -71,18 +71,49 @@ isolation_mode_summary() {
     esac
 }
 
-# _isolation_worktree_root_a
-# Print PROJECT_DIR_A using the environment-then-.env order every other key
-# follows. Internal: both the legacy inference and the unused-path warning need
-# it, and the compose generators reach this file after load_env_file has
-# exported .env into the environment rather than leaving it only on disk.
-_isolation_worktree_root_a() {
-    if [[ -n "${PROJECT_DIR_A:-}" ]]; then
-        printf '%s' "$PROJECT_DIR_A"
+# isolation_mode_account_var MODE UPPER
+# Print the name of the per-account workspace variable MODE reads for the
+# account identified by UPPER (A, B, ... ZZ), or nothing when MODE needs none.
+# One table so validation, warnings and the generators cannot disagree about
+# which variable belongs to which mode.
+isolation_mode_account_var() {
+    case "${1:-}" in
+        worktree) printf 'PROJECT_DIR_%s' "${2:-}" ;;
+        isolated) printf 'ISOLATED_WORKSPACE_%s' "${2:-}" ;;
+        *) return 0 ;;
+    esac
+}
+
+# _isolation_setup_hint MODE
+# Print the one-line "run this to create them" hint for MODE's workspaces.
+_isolation_setup_hint() {
+    case "${1:-}" in
+        worktree)
+            printf '%s' "Create the worktrees with scripts/setup-worktrees.sh, which prints the paths to add."
+            ;;
+        isolated)
+            printf '%s' "Create the clones with scripts/setup-isolated.sh, which prints the paths to add."
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+# _isolation_lookup VAR
+# Print VAR using the environment-then-.env order every other key follows.
+# Internal, and the .env leg is load-bearing: the compose generators reach this
+# file after load_env_file has exported .env into the environment, but
+# scripts/claude-docker does not export it, so a value that exists only on disk
+# must still be found.
+_isolation_lookup() {
+    local var="${1:-}"
+    [[ -n "$var" ]] || return 0
+
+    if [[ -n "${!var:-}" ]]; then
+        printf '%s' "${!var}"
         return 0
     fi
     [[ -n "${PROJECT_ROOT:-}" ]] || return 0
-    parse_env_value "${PROJECT_ROOT}/.env" "PROJECT_DIR_A"
+    parse_env_value "${PROJECT_ROOT}/.env" "$var"
 }
 
 # resolve_isolation_mode
@@ -95,6 +126,10 @@ _isolation_worktree_root_a() {
 #      inferring here is what keeps their behavior unchanged.
 #   4. ISOLATION_MODE_DEFAULT.
 #
+# There is deliberately no inference from ISOLATED_WORKSPACE_A: nothing predates
+# that key, so an installation configuring it without declaring the mode has
+# made a mistake worth reporting rather than a legacy layout worth honoring.
+#
 # An unrecognized value fails instead of degrading to shared: silently running
 # a weaker boundary than the one that was asked for is the failure this
 # contract exists to prevent.
@@ -105,7 +140,7 @@ resolve_isolation_mode() {
         mode=$(parse_env_value "${PROJECT_ROOT}/.env" "ISOLATION_MODE")
     fi
 
-    if [[ -z "$mode" && -n "$(_isolation_worktree_root_a)" ]]; then
+    if [[ -z "$mode" && -n "$(_isolation_lookup PROJECT_DIR_A)" ]]; then
         mode="worktree"
     fi
 
@@ -120,36 +155,63 @@ resolve_isolation_mode() {
     printf '%s' "$mode"
 }
 
-# require_supported_isolation_mode
-# resolve_isolation_mode, then refuse the modes this build cannot start.
-# Callers that create files or containers use this; callers that only display
-# configuration use resolve_isolation_mode.
+# require_supported_isolation_mode [ACCOUNT_COUNT]
+# resolve_isolation_mode, then verify the per-account workspace paths the
+# resolved mode consumes are actually configured. Callers that create files or
+# start containers use this; callers that only display configuration use
+# resolve_isolation_mode.
+#
+# ACCOUNT_COUNT defaults to 1. Overlay selection only needs to know the mode is
+# usable at all, and account A is the one every installation has; the compose
+# generators pass NUM_ACCOUNTS so a path missing for account C is caught before
+# the first output file is opened.
+#
+# A mode whose paths are unset would otherwise reach Compose as an empty bind
+# source, which fails later and less legibly than it does here.
 require_supported_isolation_mode() {
+    local count="${1:-1}"
     local mode
     mode=$(resolve_isolation_mode) || return 1
 
-    if [[ "$mode" == "isolated" ]]; then
-        echo "Error: ISOLATION_MODE=isolated is a valid setting, but the isolated stack is not implemented yet." >&2
-        echo "       Falling back to a shared workspace would hand an account the very access the mode asks to deny," >&2
-        echo "       so this fails instead. Use shared or worktree; see docs/ISOLATION.md for the delivery order." >&2
-        return 1
-    fi
+    local i upper var
+    for (( i = 1; i <= count; i++ )); do
+        upper="$(index_to_upper "$i")"
+        var="$(isolation_mode_account_var "$mode" "$upper")"
+        # shared consumes no per-account path; nothing to check for any account.
+        [[ -n "$var" ]] || break
+
+        if [[ -z "$(_isolation_lookup "$var")" ]]; then
+            echo "Error: $var is required when ISOLATION_MODE=$mode" >&2
+            echo "       $(_isolation_setup_hint "$mode")" >&2
+            return 1
+        fi
+    done
 
     printf '%s' "$mode"
 }
 
-# warn_unused_worktree_paths MODE
-# Warn when PROJECT_DIR_A is configured but MODE does not consume it. Reaching
-# this means an explicit ISOLATION_MODE outranked the legacy inference, so the
-# per-account paths are inert and the account is on the shared mount. Always
-# returns 0 — this reports a surprise, it does not decide anything.
-warn_unused_worktree_paths() {
+# warn_unused_workspace_paths MODE
+# Warn about per-account workspace paths that are configured but that MODE does
+# not consume. Both families are checked, because both can be present at once:
+# a user who tried isolated, went back to worktree, and left the clone paths in
+# .env should be told the clones are now inert. Always returns 0 — this reports
+# a surprise, it does not decide anything.
+warn_unused_workspace_paths() {
     local mode="${1:-}"
-    [[ "$mode" == "worktree" ]] && return 0
 
-    if [[ -n "$(_isolation_worktree_root_a)" ]]; then
+    if [[ "$mode" != "worktree" && -n "$(_isolation_lookup PROJECT_DIR_A)" ]]; then
         echo "Warning: PROJECT_DIR_A is configured, but ISOLATION_MODE=$mode ignores per-account worktree paths." >&2
-        echo "         Every account uses PROJECT_DIR. Set ISOLATION_MODE=worktree to mount the worktrees." >&2
+        if [[ "$mode" == "shared" ]]; then
+            echo "         Every account uses PROJECT_DIR. Set ISOLATION_MODE=worktree to mount the worktrees." >&2
+        else
+            echo "         Set ISOLATION_MODE=worktree to mount the worktrees." >&2
+        fi
     fi
+
+    if [[ "$mode" != "isolated" && -n "$(_isolation_lookup ISOLATED_WORKSPACE_A)" ]]; then
+        echo "Warning: ISOLATED_WORKSPACE_A is configured, but ISOLATION_MODE=$mode ignores per-account clone paths." >&2
+        echo "         Set ISOLATION_MODE=isolated to mount the independent clones." >&2
+    fi
+
     return 0
 }

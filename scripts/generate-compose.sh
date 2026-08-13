@@ -4,6 +4,7 @@
 # Reads NUM_ACCOUNTS and IMAGE_TAG from .env (or environment) and writes:
 #   docker-compose.yml          Base config (Tier A: shared source)
 #   docker-compose.worktree.yml Tier B override (per-account worktrees)
+#   docker-compose.isolated.yml Isolated override (per-account clones)
 #   docker-compose.linux.yml    Linux UID/GID override
 #
 # Usage:
@@ -133,54 +134,66 @@ fi
 # before the first output file is opened, so a failure cannot leave a partially
 # regenerated set behind.
 #
-# All three files are still generated in every mode. The mode decides which
+# All four files are still generated in every mode. The mode decides which
 # ones a caller composes together (lib/build-compose-cmd.sh), not which ones
 # exist, so `compose-freshness` keeps comparing the same tracked set.
-ISOLATION_MODE_RESOLVED="$(require_supported_isolation_mode)" || exit 1
+#
+# NUM_ACCOUNTS is passed so the per-account workspace paths are checked for
+# every account, not just the first: the compose builder only needs to know the
+# mode is usable, but a file written here with an unset path for account C
+# would fail at `up` instead of now.
+ISOLATION_MODE_RESOLVED="$(require_supported_isolation_mode "$NUM_ACCOUNTS")" || exit 1
 
-if [[ "$ISOLATION_MODE_RESOLVED" == "worktree" ]]; then
-    for i in $(seq 1 "$NUM_ACCOUNTS"); do
-        upper=$(index_to_upper "$i")
-        pdir_var="PROJECT_DIR_${upper}"
-        if [[ -z "${!pdir_var:-}" ]]; then
-            echo "Error: $pdir_var is required when ISOLATION_MODE=worktree" >&2
-            echo "       Create the worktrees with scripts/setup-worktrees.sh, which prints the paths to add." >&2
-            exit 1
-        fi
-    done
-fi
-
-warn_unused_worktree_paths "$ISOLATION_MODE_RESOLVED"
+warn_unused_workspace_paths "$ISOLATION_MODE_RESOLVED"
 
 # index_to_letter and index_to_upper provided by scripts/lib/index.sh.
 
 # --- Shared emitters ----------------------------------------------------------
 
-# emit_account_volumes LETTER PROJECT_SOURCE PROJECT_TARGET
+# emit_account_volumes MODE LETTER PROJECT_SOURCE PROJECT_TARGET
 # Print the complete volume list for one account service, indented for a
 # `volumes:` block.
 #
-# The base config and the worktree overlay differ only in where the project
-# comes from and where it lands; runtime state, the read-only host config
-# mount, and the optional agents/skills and shared gh mounts are identical.
-# Emitting both from one function is what keeps them identical, and that
-# matters more than it used to: the worktree overlay REPLACES this list rather
-# than appending to it, so a mount missing here is missing from the resolved
-# worktree service entirely.
+# All three outputs that carry volumes come through here. The base config and
+# the worktree overlay differ only in where the project comes from and where it
+# lands; the isolated overlay additionally drops every shared host-home mount.
+# Emitting all of them from one function is what keeps the common mounts
+# identical, and that matters more than it used to: both overlays REPLACE this
+# list rather than appending to it, so a mount missing here is missing from the
+# resolved service entirely.
 emit_account_volumes() {
-    local letter="$1" project_source="$2" project_target="$3"
+    local mode="$1" letter="$2" project_source="$3" project_target="$4"
 
     echo "      - ${project_source}:${project_target}"
+
+    # Per-account runtime state stays a host bind mount in every mode. It is
+    # under $HOME, but it is not a *shared* surface: each account has its own
+    # directory, so account A still cannot reach account B's state. Moving it
+    # into a named volume would satisfy the letter of "no host home mounts"
+    # while blinding the TUI, which discovers accounts by scanning
+    # $HOME/<stateDir>/account-* on the host (tui/internal/config/state.go).
     echo "      - \${HOME}/${RT_STATE_DIR}/account-${letter}:${RT_CONTAINER_CONFIG_MOUNT}"
-    echo "      - \${HOME}/${RT_HOST_CONFIG_BASENAME}:${RT_HOST_CONFIG_MOUNT}:ro"
-    # The agents/skills volume is bound only for runtimes whose registry entry
-    # sets mountsAgentsSkills (currently codex).
-    if [[ "$RT_MOUNTS_AGENTS_SKILLS" == "true" ]]; then
-        echo '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+
+    # The remaining host-home mounts ARE shared surfaces: the read-only runtime
+    # config tree, the agents/skills tree and the shared gh config resolve to
+    # the same host path for every account. An isolated account receives none
+    # of them (issue #335, stage 3). The runtime tolerates their absence --
+    # bootstrap-claude.sh returns early when the config source is missing -- so
+    # the container still starts, with no shared hooks, skills, commands,
+    # statusline or CLAUDE.md. Restoring that through an allowlisted
+    # per-account import is stage 4; see docs/ISOLATION.md.
+    if [[ "$mode" != "isolated" ]]; then
+        echo "      - \${HOME}/${RT_HOST_CONFIG_BASENAME}:${RT_HOST_CONFIG_MOUNT}:ro"
+        # The agents/skills volume is bound only for runtimes whose registry
+        # entry sets mountsAgentsSkills (currently codex).
+        if [[ "$RT_MOUNTS_AGENTS_SKILLS" == "true" ]]; then
+            echo '      - ${AGENTS_SKILLS_DIR:-${HOME}/.agents/skills}:/home/node/.agents/skills:ro'
+        fi
+        if [[ "$GH_AUTH_MODE" == "shared" ]]; then
+            echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
+        fi
     fi
-    if [[ "$GH_AUTH_MODE" == "shared" ]]; then
-        echo "      - \${GH_CONFIG_DIR:-\${HOME}/.config/gh}:/home/node/.config/gh:ro"
-    fi
+
     echo "      - node_modules_${letter}:${project_target}/node_modules"
 }
 
@@ -230,7 +243,7 @@ generate_base() {
             echo "    stdin_open: true"
             echo "    tty: true"
             echo "    volumes:"
-            emit_account_volumes "$letter" '${PROJECT_DIR}' '${CONTAINER_PROJECT_DIR:-/project}'
+            emit_account_volumes shared "$letter" '${PROJECT_DIR}' '${CONTAINER_PROJECT_DIR:-/project}'
             echo "    environment:"
             echo "      - TERM=xterm-256color"
             echo "      - TZ=\${TZ:-UTC}"
@@ -334,9 +347,59 @@ generate_worktree() {
             echo "  ${svc}:"
             echo "    working_dir: \${CONTAINER_PROJECT_DIR_${upper}:-/project-${letter}}"
             echo "    volumes: !override"
-            emit_account_volumes "$letter" \
+            emit_account_volumes worktree "$letter" \
                 "\${PROJECT_DIR_${upper}}" \
                 "\${CONTAINER_PROJECT_DIR_${upper}:-/project-${letter}}"
+
+            if [[ "$i" -lt "$NUM_ACCOUNTS" ]]; then
+                echo ""
+            fi
+        done
+    } > "$outfile"
+
+    echo "Generated: $outfile ($NUM_ACCOUNTS services)"
+}
+
+# --- Generate docker-compose.isolated.yml ------------------------------------
+
+generate_isolated() {
+    local outfile="$PROJECT_ROOT/docker-compose.isolated.yml"
+    {
+        echo "# docker-compose.isolated.yml"
+        echo "# Generated by scripts/generate-compose — do not edit manually."
+        echo "# Usage: docker compose -f docker-compose.yml -f docker-compose.isolated.yml up"
+        echo "#"
+        echo "# Each account mounts its own independent clone — separate working tree AND"
+        echo "# separate git metadata, created by scripts/setup-isolated.sh. Unlike a"
+        echo "# worktree, nothing is shared: there is no common object store to read other"
+        echo "# branches from or rewrite refs in."
+        echo "#"
+        echo "# The volume lists carry !override so they REPLACE the base list. Compose"
+        echo "# merges volumes by container target, so without the tag the shared"
+        echo "# \${PROJECT_DIR} mount would survive alongside the clone (issue #335)."
+        echo "# Requires a Compose release that supports !override (Docker Compose v2.24.4+)."
+        echo "#"
+        echo "# Shared host-home mounts are absent by design: no read-only host config"
+        echo "# tree, no agents/skills tree, no shared gh config. An isolated account"
+        echo "# therefore has no shared hooks, skills, commands, statusline or CLAUDE.md."
+        echo "# Credential environment variables and per-account networks are NOT yet"
+        echo "# scoped — that is stage 4. See docs/ISOLATION.md."
+        echo ""
+        echo "services:"
+
+        for i in $(seq 1 "$NUM_ACCOUNTS"); do
+            local letter
+            letter=$(index_to_letter "$i")
+            local upper
+            upper=$(index_to_upper "$i")
+            local svc="${SERVICE_PREFIX}-${letter}"
+
+            echo "  ${svc}:"
+            echo "    working_dir: \${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-${letter}}"
+            echo "    volumes: !override"
+            emit_account_volumes isolated "$letter" \
+                "\${ISOLATED_WORKSPACE_${upper}}" \
+                "\${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-${letter}}"
 
             if [[ "$i" -lt "$NUM_ACCOUNTS" ]]; then
                 echo ""
@@ -383,6 +446,7 @@ main() {
     echo "Generating compose files for $NUM_ACCOUNTS account(s)..."
     generate_base
     generate_worktree
+    generate_isolated
     generate_linux
     echo "Done."
 }
