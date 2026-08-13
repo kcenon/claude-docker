@@ -5,10 +5,12 @@ under. This document states what each mode does and does not protect against,
 so a boundary is chosen deliberately rather than inferred from which compose
 file happened to be passed.
 
-Status: stages 1 to 3 of issue #335 are implemented. `isolated` runs, and it
-isolates the **workspace**: independent clones, independent git metadata, and
-no shared host configuration. It does **not** yet scope credentials or the
-network — that is stage 4. Read
+Status: stages 1 to 3 of issue #335 are implemented, plus the container
+hardening half of stage 4. `isolated` isolates the **workspace** — independent
+clones, independent git metadata, no shared host configuration — and runs under
+a hardened container profile: read-only root filesystem, every capability
+dropped, no-new-privileges, an init process and a bounded PID limit. It does
+**not** yet scope credentials or the network; that is the rest of stage 4. Read
 [What each mode protects against](#what-each-mode-protects-against) before
 relying on it, and see [Delivery order](#delivery-order) for what remains.
 
@@ -75,24 +77,26 @@ The adversary model for `isolated` is an agent running an unsafe or malicious
 command **inside a normal container** — a wrong `rm -rf`, a prompt-injected
 tool call, a compromised dependency's postinstall script.
 
-| Concern | `shared` | `worktree` | `isolated` (as shipped) | `isolated` (stage 4+) |
+| Concern | `shared` | `worktree` | `isolated` (as shipped) | `isolated` (once credentials/networks land) |
 |---|---|---|---|---|
 | Account A edits account B's working tree | No | Yes | Yes | Yes |
 | Account A reads account B's working tree | No | Yes | Yes | Yes |
 | Account A rewrites shared git history (`.git`) | No | **No** | Yes | Yes |
 | Account A reads the shared host configuration | No | No | Yes | Yes |
+| Container root filesystem is read-only | No | No | Yes | Yes |
+| Capabilities dropped and privilege escalation blocked | No | No | Yes | Yes |
 | Account A reads account B's credentials | No | No | **No** | Yes |
 | Account A reaches account B over the network | No | No | **No** | Yes |
-| Container root filesystem is read-only | No | No | **No** | Yes |
 | Container escape to the host | No | No | No | No |
 
 "No" means the mode does not defend against it.
 
-The two `isolated` columns matter. Stage 3 delivered the workspace boundary;
-credential scoping, per-account networks and container hardening are stage 4.
-Until then `isolated` is the right choice for "these agents must not touch each
-other's source", and the wrong choice for "these agents must not learn each
-other's secrets".
+The two `isolated` columns matter. What is shipped is the workspace boundary
+(stage 3) and the container profile (the hardening half of stage 4); credential
+scoping and per-account networks are the remainder. Until they land `isolated`
+is the right choice for "these agents must not touch each other's source" and
+"this agent should not be able to write outside its workspace", and the wrong
+choice for "these agents must not learn each other's secrets".
 
 ### Why `worktree` is a concurrency tier, not a sandbox
 
@@ -165,21 +169,86 @@ Exactly one mode overlay is ever composed. Composing two would let the later
 one replace the volume list again, which is how a boundary could be undone by
 an ordering accident rather than a code change.
 
-**Note for stage 4 — the Linux overlay `user` conflict has a mechanical
-answer.** `docker-compose.linux.yml` sets `user: "${UID}:${GID}"`, which looked
-like it would block the stage 4 requirement to run isolated services as the
-non-root `node` user, because on a Linux host that overlay is applied
-unconditionally. It does not: the mode overlay is appended **after** the Linux
-overlay and Compose lets a later `-f` win, so an isolated stack declaring
-`user: node` overrides it without the Linux overlay being touched or scoped to
-non-isolated modes.
+**The overlay order settles the `user` question.** Both the base stack and
+`docker-compose.linux.yml` declare `user: "${UID:-1000}:${GID:-1000}"`, and the
+mode overlay is appended **after** both, so an isolated stack could override the
+field outright — Compose lets a later `-f` win. It deliberately does not; see
+[Why the host user, not `node`](#why-the-host-user-not-node).
 
-Stage 3 declares no `user`, so nothing changes yet. One consequence is worth
-carrying forward: running as `node` (uid 1000) when the host user has a
-different uid makes the bind-mounted per-account state directory unwritable,
-which is the reason the Linux overlay exists. Stage 4 has to solve that —
-`chown` at setup, a named volume for state, or an entrypoint fixup — not just
-set the field.
+## The hardened container profile
+
+`isolated` services run under a restricted profile. Every field below is
+asserted against the resolved model in `tests/test_isolation_modes.sh` rather
+than against the overlay, because the base stack contributes fields of its own
+and only the merged project shows which value wins.
+
+| Field | Value | What it bounds |
+|---|---|---|
+| `read_only` | `true` | Writes anywhere outside the declared mounts, including the image's own tooling. |
+| `cap_drop` | `[ALL]` | Every Linux capability, including the ones an agent workload never uses. |
+| `security_opt` | `no-new-privileges:true` | A setuid binary raising privileges after start. |
+| `init` | `true` | Orphaned processes accumulating as zombies under PID 1. |
+| `deploy.resources.limits.pids` | `${ISOLATED_PIDS_LIMIT:-1024}` | A fork loop exhausting the host process table. |
+
+The PID cap lives under `deploy.resources.limits`, not the legacy top-level
+`pids_limit` key. The base stack already declares `deploy.resources.limits`
+(cpus, memory); Compose treats the two spellings as one setting and rejects the
+merged project outright when both appear. The default is chosen to leave
+headroom for parallel compilers and test runners, not from measurement —
+measured budgets are stage 5.
+
+### Why the host user, not `node`
+
+Issue #335 asks isolated services to run as "the existing non-root `node`
+user". The profile keeps the host user's uid/gid instead, and the tests assert
+the property the acceptance criterion actually names: the effective user is not
+uid 0.
+
+Pinning uid 1000 would break the reason the base stack declares `user` at all.
+The per-account state directory is a host bind mount; on a Linux host whose user
+is not uid 1000 it would become unwritable, and that directory is also what the
+TUI reads. The alternatives cost more than they buy — `chown`ing the host
+directories at setup mutates paths the user and the dashboard share, and moving
+state into a named volume blinds account discovery.
+
+### Writable paths under a read-only root
+
+`read_only: true` makes the image layers unwritable, so every path the
+entrypoint or the toolchain writes to needs a mount of its own. The account's
+workspace, runtime state and `node_modules` already are mounts. The rest are
+bounded tmpfs:
+
+| Path | Written by |
+|---|---|
+| `/tmp` | general tool scratch |
+| `/home/node/.config` | `bootstrap-claude.sh`, creating the ccstatusline XDG link |
+| `/home/node/.cache` | generic tool caches |
+| `/home/node/.npm` | npm |
+| `/home/node/.agents` | `bootstrap-codex.sh` / `bootstrap-gemini.sh` |
+
+`/home/node/.local` is deliberately **absent**: the agent CLI is installed there
+and is on `PATH`, so a tmpfs would hide the binary. A test asserts its absence,
+because "add one more tmpfs" is the obvious wrong fix for a future write error
+in that tree.
+
+Each tmpfs is mounted `uid=${UID:-1000},gid=${GID:-1000},mode=0700` to match the
+service's own identity. Without those options Docker mounts a tmpfs root-owned
+with mode 1777 — writable, but world-writable, which is not what this profile
+should be shipping. `/tmp` keeps the conventional 1777 and its sticky bit,
+because tools expect a shared scratch there.
+
+### The global git config
+
+`$HOME` stays on the read-only root, so `git config --global` and
+`gh auth setup-git` cannot write `~/.gitconfig`. The profile therefore sets
+`GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig`, inside the per-account state
+mount, which is writable and already account-private.
+
+This is worth stating explicitly because the failure it prevents is silent. The
+entrypoint wraps `gh auth setup-git` in `2>/dev/null || true`, so without the
+redirect the container starts normally, prints its "authenticated as ..."
+banner, and only fails later at `git push` — with no credential helper and no
+diagnostic explaining why.
 
 ## Interaction with the shared runtime configuration mount
 
@@ -220,13 +289,20 @@ Issue #335 is delivered in six stages. Each is a separate PR.
 1. **Configuration contract, threat model, resolved-compose test helpers.** ✅
 2. **Worktree mount correction and regression tests.** ✅
 3. **Independent workspace setup and isolated mount generation.** ✅
-4. Runtime, configuration, credential and network hardening.
+4. Runtime, configuration, credential and network hardening. **Partial** — the
+   container profile is delivered; credential scoping and per-account networks
+   remain.
 5. Resource validation, transactional scaling, TUI cache correction, benchmarks.
 6. Cross-platform rollout, migration documentation, final benchmark report.
 
 `isolated` became usable at stage 3, which removed a refusal rather than adding
 a name — the contract had accepted the value since stage 1 precisely so that
 stages could turn it on without changing what users configure.
+
+Stage 4 is split because its four axes are independent: the container profile
+constrains what an account can do to its own container, while credential and
+network scoping constrain what it can reach. Landing them separately keeps a
+read-only-root regression and a network regression from arriving in one CI run.
 
 ## Verifying the active mode
 

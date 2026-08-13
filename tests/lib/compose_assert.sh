@@ -94,6 +94,54 @@ resolved_mount_sources() {
     resolved_service_mounts "$@" | cut -d'|' -f2
 }
 
+# resolved_service_hardening DIR SERVICE FILE...
+# Print the container-hardening fields of one resolved service as KEY=VALUE
+# lines. List-valued fields are rendered as sorted compact JSON so a caller can
+# match the whole list exactly instead of grepping for a substring -- the
+# difference between asserting "all capabilities are dropped" and accepting a
+# list that merely mentions ALL among others.
+resolved_service_hardening() {
+    local dir="$1" service="$2"
+    shift 2
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg svc "$service" '
+            .services[$svc] as $s
+            | [
+                "user=\($s.user // "")",
+                "read_only=\($s.read_only // false)",
+                "init=\($s.init // false)",
+                "pids=\($s.deploy.resources.limits.pids // "")",
+                "cap_drop=\(($s.cap_drop // []) | sort | tostring)",
+                "security_opt=\(($s.security_opt // []) | sort | tostring)",
+                "git_config_global=\($s.environment.GIT_CONFIG_GLOBAL // "")"
+              ]
+            | .[]
+        '
+}
+
+# resolved_service_tmpfs DIR SERVICE FILE...
+# Print one tmpfs entry per line, as it appears in the resolved model
+# (`TARGET` or `TARGET:OPTIONS`). Callers that only care about the mount point
+# should `cut -d: -f1`.
+resolved_service_tmpfs() {
+    local dir="$1" service="$2"
+    shift 2
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg svc "$service" '.services[$svc].tmpfs // [] | .[]'
+}
+
 # resolved_mount_manifest DIR FILE...
 # Print one "SERVICE|TYPE|SOURCE|TARGET|ACCESS" line per mount across every
 # service in the resolved model, sorted so the output is stable to diff.

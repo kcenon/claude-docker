@@ -15,12 +15,37 @@
 # Shared host-home mounts are absent by design: no read-only host config
 # tree, no agents/skills tree, no shared gh config. An isolated account
 # therefore has no shared hooks, skills, commands, statusline or CLAUDE.md.
+#
+# The container profile is hardened: read-only root filesystem, all
+# capabilities dropped, no-new-privileges, an init process and a bounded
+# PID limit. Every path the entrypoint writes to outside the account's own
+# mounts is a bounded tmpfs; $HOME itself stays read-only, so the global
+# git config is redirected into the per-account state mount.
+#
 # Credential environment variables and per-account networks are NOT yet
-# scoped — that is stage 4. See docs/ISOLATION.md.
+# scoped. See docs/ISOLATION.md.
 
 services:
   claude-a:
     working_dir: ${CONTAINER_ISOLATED_DIR_A:-/workspace-a}
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          pids: ${ISOLATED_PIDS_LIMIT:-1024}
+    tmpfs:
+      - /tmp:mode=1777
+      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+    environment:
+      - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig
     volumes: !override
       - ${ISOLATED_WORKSPACE_A}:${CONTAINER_ISOLATED_DIR_A:-/workspace-a}
       - ${HOME}/.claude-state/account-a:/home/node/.claude
@@ -28,6 +53,24 @@ services:
 
   claude-b:
     working_dir: ${CONTAINER_ISOLATED_DIR_B:-/workspace-b}
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          pids: ${ISOLATED_PIDS_LIMIT:-1024}
+    tmpfs:
+      - /tmp:mode=1777
+      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+    environment:
+      - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig
     volumes: !override
       - ${ISOLATED_WORKSPACE_B}:${CONTAINER_ISOLATED_DIR_B:-/workspace-b}
       - ${HOME}/.claude-state/account-b:/home/node/.claude

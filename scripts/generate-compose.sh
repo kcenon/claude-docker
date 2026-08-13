@@ -197,6 +197,40 @@ emit_account_volumes() {
     echo "      - node_modules_${letter}:${project_target}/node_modules"
 }
 
+# emit_isolated_tmpfs
+# Bounded writable scratch for the isolated profile's read-only root filesystem.
+#
+# Every path below is an image layer rather than a mount, so with
+# read_only: true the first write to it fails. The inventory is what the
+# entrypoint and toolchain actually write outside the account's own mounts:
+#
+#   /tmp                 general tool scratch
+#   /home/node/.config   bootstrap-claude.sh creates the ccstatusline XDG link
+#   /home/node/.cache    generic tool caches
+#   /home/node/.npm      npm cache
+#   /home/node/.agents   bootstrap-codex/gemini create skills/ under it
+#
+# /home/node/.local is deliberately absent: the agent CLI is installed there
+# (Dockerfile) and is on PATH, so covering it with a tmpfs would hide the
+# binary. $HOME itself is likewise left read-only; the one thing that needed to
+# write there, the global git config, is redirected via GIT_CONFIG_GLOBAL.
+#
+# uid/gid repeat the host-user defaults the base stack uses for `user:`.
+# Without them a tmpfs mounts root-owned with mode 1777 — writable by the
+# service, but world-writable, which contradicts the point of this profile.
+# /tmp keeps the conventional 1777 with its sticky bit instead, because tools
+# expect a shared scratch there.
+emit_isolated_tmpfs() {
+    local owner="uid=\${UID:-1000},gid=\${GID:-1000},mode=0700"
+
+    echo "    tmpfs:"
+    echo "      - /tmp:mode=1777"
+    echo "      - /home/node/.config:${owner}"
+    echo "      - /home/node/.cache:${owner}"
+    echo "      - /home/node/.npm:${owner}"
+    echo "      - /home/node/.agents:${owner}"
+}
+
 # --- Generate docker-compose.yml ---------------------------------------------
 
 generate_base() {
@@ -382,8 +416,15 @@ generate_isolated() {
         echo "# Shared host-home mounts are absent by design: no read-only host config"
         echo "# tree, no agents/skills tree, no shared gh config. An isolated account"
         echo "# therefore has no shared hooks, skills, commands, statusline or CLAUDE.md."
+        echo "#"
+        echo "# The container profile is hardened: read-only root filesystem, all"
+        echo "# capabilities dropped, no-new-privileges, an init process and a bounded"
+        echo "# PID limit. Every path the entrypoint writes to outside the account's own"
+        echo "# mounts is a bounded tmpfs; \$HOME itself stays read-only, so the global"
+        echo "# git config is redirected into the per-account state mount."
+        echo "#"
         echo "# Credential environment variables and per-account networks are NOT yet"
-        echo "# scoped — that is stage 4. See docs/ISOLATION.md."
+        echo "# scoped. See docs/ISOLATION.md."
         echo ""
         echo "services:"
 
@@ -396,6 +437,30 @@ generate_isolated() {
 
             echo "  ${svc}:"
             echo "    working_dir: \${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-${letter}}"
+            echo "    read_only: true"
+            echo "    init: true"
+            echo "    cap_drop:"
+            echo "      - ALL"
+            echo "    security_opt:"
+            echo "      - no-new-privileges:true"
+            # The PID cap goes under deploy.resources.limits, not the legacy
+            # top-level pids_limit key. The base stack already declares
+            # deploy.resources.limits (cpus, memory); Compose treats the legacy
+            # key and the deploy field as the same setting and rejects the
+            # merged project outright when both appear.
+            echo "    deploy:"
+            echo "      resources:"
+            echo "        limits:"
+            echo "          pids: \${ISOLATED_PIDS_LIMIT:-1024}"
+            emit_isolated_tmpfs
+            echo "    environment:"
+            # $HOME is on the read-only root filesystem, so `git config --global`
+            # and `gh auth setup-git` cannot write ~/.gitconfig. Redirect the
+            # global config into the per-account state mount, which is writable
+            # and already account-private. Without this the entrypoint's
+            # credential-helper setup fails silently and `git push` breaks with
+            # no diagnostic. Requires git 2.32+ (image ships 2.39 on bookworm).
+            echo "      - GIT_CONFIG_GLOBAL=${RT_CONTAINER_CONFIG_MOUNT}/gitconfig"
             echo "    volumes: !override"
             emit_account_volumes isolated "$letter" \
                 "\${ISOLATED_WORKSPACE_${upper}}" \
