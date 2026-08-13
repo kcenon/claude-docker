@@ -430,8 +430,11 @@ func TestIsolationModeSummary(t *testing.T) {
 	if s := IsolationModeSummary(IsolationWorktree); !strings.Contains(s, "not a security boundary") {
 		t.Errorf("worktree summary lost its security disclaimer: %q", s)
 	}
-	if s := IsolationModeSummary(IsolationIsolated); !strings.Contains(s, "not implemented") {
-		t.Errorf("isolated summary does not say it is unimplemented: %q", s)
+	// The isolated summary has to name the property that separates it from
+	// worktree. Both give an account its own working tree; only isolated gives
+	// it independent git metadata, and that is the whole security difference.
+	if s := IsolationModeSummary(IsolationIsolated); !strings.Contains(s, "own git metadata") {
+		t.Errorf("isolated summary does not name its independent git metadata: %q", s)
 	}
 	if s := IsolationModeSummary("bogus"); !strings.Contains(s, "refuses to start") {
 		t.Errorf("unknown-mode summary does not describe the refusal: %q", s)
@@ -446,8 +449,8 @@ func TestIsolationModeTagline(t *testing.T) {
 	if s := IsolationModeTagline(IsolationWorktree); !strings.Contains(s, "not a security boundary") {
 		t.Errorf("worktree tagline lost its security disclaimer: %q", s)
 	}
-	if s := IsolationModeTagline(IsolationIsolated); !strings.Contains(s, "refuses to start") {
-		t.Errorf("isolated tagline does not warn it will not start: %q", s)
+	if s := IsolationModeTagline(IsolationIsolated); !strings.Contains(s, "own git metadata") {
+		t.Errorf("isolated tagline does not name its independent git metadata: %q", s)
 	}
 	for _, mode := range []string{IsolationShared, IsolationWorktree, IsolationIsolated, "bogus"} {
 		if len(IsolationModeTagline(mode)) > len(IsolationModeSummary(mode)) {

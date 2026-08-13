@@ -119,14 +119,14 @@ function Show-IsolationMode {
     both call it so the boundary a session runs under is stated rather than
     inferred from which compose files the caller happened to pass.
 
-    Uses Get-IsolationMode, not the Supported variant: a user who set an
-    unimplemented mode should still be told what it means before
-    Get-ComposeArgs refuses it.
+    Uses Get-IsolationMode, not the Supported variant: a user whose
+    per-account workspace paths are missing should still be told which
+    boundary was asked for before Get-ComposeArgs refuses to start on it.
     #>
     $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
     Write-Host "Isolation mode: $mode"
     Write-Host "  $(Get-IsolationModeSummary -Mode $mode)" -ForegroundColor DarkGray
-    Write-UnusedWorktreePathWarning -ProjectRoot $ProjectRoot -Mode $mode
+    Write-UnusedWorkspacePathWarning -ProjectRoot $ProjectRoot -Mode $mode
 }
 
 function Invoke-Up {

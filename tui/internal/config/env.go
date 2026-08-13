@@ -317,9 +317,6 @@ func (e *Env) IsolationMode() string {
 }
 
 // IsolationModeKnown reports whether a mode name is part of the contract.
-// Knowing a name is separate from being able to run it: isolated is known and
-// not yet implemented, so status output can describe a mode the shell layers
-// refuse to start.
 func IsolationModeKnown(mode string) bool {
 	switch mode {
 	case IsolationShared, IsolationWorktree, IsolationIsolated:
@@ -338,7 +335,7 @@ func IsolationModeSummary(mode string) string {
 	case IsolationWorktree:
 		return "each account mounts only its own worktree; git metadata stays shared, so this is a concurrency tier, not a security boundary"
 	case IsolationIsolated:
-		return "account-exclusive workspace, state, configuration and network (not implemented yet)"
+		return "each account gets an independent clone with its own git metadata and state; no shared project mount and no shared host configuration"
 	default:
 		return "unrecognized mode; claude-docker refuses to start rather than fall back to a weaker boundary"
 	}
@@ -355,7 +352,7 @@ func IsolationModeTagline(mode string) string {
 	case IsolationWorktree:
 		return "own worktree per account; git metadata shared, not a security boundary"
 	case IsolationIsolated:
-		return "not implemented yet; claude-docker refuses to start"
+		return "independent clone per account; own git metadata, no shared host config"
 	default:
 		return "unrecognized; claude-docker refuses to start"
 	}

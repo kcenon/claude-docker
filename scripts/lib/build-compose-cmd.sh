@@ -6,7 +6,12 @@
 #   1. Always: docker-compose.yml
 #   2. Linux + docker-compose.linux.yml exists: add linux overlay,
 #      export UID/GID
-#   3. The resolved ISOLATION_MODE is worktree: add the worktree overlay
+#   3. The resolved ISOLATION_MODE names an overlay (worktree, isolated):
+#      add it
+#
+# The mode overlay is appended AFTER the linux overlay, and Compose lets a
+# later -f win, so anything the mode overlay declares overrides the Linux
+# override rather than the other way round.
 #
 # Inputs: PROJECT_ROOT must be set in the caller's environment.
 # Output: COMPOSE_CMD array (caller can invoke as "${COMPOSE_CMD[@]}" up -d)
@@ -30,8 +35,9 @@ _CLAUDE_DOCKER_BUILD_COMPOSE_CMD_SH_SOURCED=1
 #   1. Base docker-compose.yml is always included.
 #   2. docker-compose.linux.yml is added on Linux hosts when the file exists;
 #      UID/GID are exported for the Linux override to consume.
-#   3. docker-compose.worktree.yml is added when the resolved ISOLATION_MODE
-#      is worktree.
+#   3. The overlay named by the resolved ISOLATION_MODE is added:
+#      docker-compose.worktree.yml or docker-compose.isolated.yml. shared
+#      names none.
 build_compose_cmd() {
     COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
 
@@ -54,17 +60,23 @@ build_compose_cmd() {
     # worktree from that variable when ISOLATION_MODE is unset, so Tier B
     # installations predating the key keep the same overlay while an explicit
     # mode now outranks the inference.
-    local mode
+    local mode overlay
     mode=$(require_supported_isolation_mode) || return 1
-    if [[ "$mode" == "worktree" ]]; then
+    case "$mode" in
+        worktree) overlay="docker-compose.worktree.yml" ;;
+        isolated) overlay="docker-compose.isolated.yml" ;;
+        *)        overlay="" ;;
+    esac
+
+    if [[ -n "$overlay" ]]; then
         # A missing overlay would silently leave every account on the shared
-        # /project mount — the exact fall back this mode is chosen to avoid.
-        if [[ ! -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
-            echo "Error: ISOLATION_MODE=worktree but docker-compose.worktree.yml is missing." >&2
+        # /project mount — the exact fall back these modes are chosen to avoid.
+        if [[ ! -f "${PROJECT_ROOT}/${overlay}" ]]; then
+            echo "Error: ISOLATION_MODE=${mode} but ${overlay} is missing." >&2
             echo "       Regenerate it with scripts/generate-compose.sh before starting containers." >&2
             return 1
         fi
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
+        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/${overlay}")
     fi
 
     # COMPOSE_CMD_INITIALIZED is consumed by callers (scripts/claude-docker

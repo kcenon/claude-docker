@@ -1,5 +1,5 @@
 # test_isolation_modes.ps1 — ISOLATION_MODE contract parity for the PowerShell
-# layer (issue #335, stage 1).
+# layer (issue #335, stages 1 to 3).
 #
 # Run:  pwsh -NoProfile -File tests/test_isolation_modes.ps1
 # Exits non-zero on any failure.
@@ -86,8 +86,10 @@ function New-Sandbox {
 # every case below means.
 $savedMode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
 $savedProjectDirA = [Environment]::GetEnvironmentVariable('PROJECT_DIR_A')
+$savedIsolatedA = [Environment]::GetEnvironmentVariable('ISOLATED_WORKSPACE_A')
 $env:ISOLATION_MODE = ''
 $env:PROJECT_DIR_A = ''
+$env:ISOLATED_WORKSPACE_A = ''
 
 try {
     Write-Host '== Test-IsolationModeKnown =='
@@ -104,8 +106,22 @@ try {
     # mode does not do, and the issue makes stating it an acceptance criterion.
     Assert-Eq 'worktree summary keeps its disclaimer' $true `
         ((Get-IsolationModeSummary -Mode 'worktree') -like '*not a security boundary*')
-    Assert-Eq 'isolated summary says unimplemented' $true `
-        ((Get-IsolationModeSummary -Mode 'isolated') -like '*not implemented yet*')
+    # The isolated summary must state what the mode actually gives, and the
+    # independent git metadata is the property that separates it from worktree.
+    Assert-Eq 'isolated summary names the independent clone' $true `
+        ((Get-IsolationModeSummary -Mode 'isolated') -like '*independent clone*')
+    Assert-Eq 'isolated summary names its own git metadata' $true `
+        ((Get-IsolationModeSummary -Mode 'isolated') -like '*own git metadata*')
+
+    Write-Host '== Get-IsolationAccountVariable =='
+    # One table drives validation, warnings and both generators, so the mapping
+    # is asserted directly rather than only through its consumers.
+    Assert-Eq 'worktree reads PROJECT_DIR_<X>' 'PROJECT_DIR_B' `
+        (Get-IsolationAccountVariable -Mode 'worktree' -Upper 'B')
+    Assert-Eq 'isolated reads ISOLATED_WORKSPACE_<X>' 'ISOLATED_WORKSPACE_B' `
+        (Get-IsolationAccountVariable -Mode 'isolated' -Upper 'B')
+    Assert-Eq 'shared reads no per-account path' '' `
+        (Get-IsolationAccountVariable -Mode 'shared' -Upper 'B')
 
     Write-Host '== Get-IsolationMode: resolution order =='
     Assert-Eq 'no .env at all defaults to shared' 'shared' `
@@ -139,16 +155,41 @@ try {
         { Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=bogus')) } `
         '*must be shared, worktree or isolated*'
 
-    # `isolated` is a known name this build cannot start. It resolves, so
-    # status output can describe it, and the Supported variant refuses it.
-    $isolatedRoot = New-Sandbox @('ISOLATION_MODE=isolated')
-    Assert-Eq 'isolated resolves for display' 'isolated' (Get-IsolationMode -ProjectRoot $isolatedRoot)
-    Assert-Throws 'isolated is refused by the supported-mode gate' `
-        { Get-SupportedIsolationMode -ProjectRoot $isolatedRoot } `
-        '*not implemented yet*'
-    Assert-Throws 'isolated is refused by the compose argument builder' `
-        { Get-ComposeArgs -ProjectRoot $isolatedRoot } `
-        '*not implemented yet*'
+    # isolated now runs, so the refusal moved from "this mode is unimplemented"
+    # to "this mode's inputs are missing". It must still name both the variable
+    # and the script that produces it.
+    $isolatedNoPaths = New-Sandbox @('ISOLATION_MODE=isolated')
+    Assert-Eq 'isolated resolves for display' 'isolated' `
+        (Get-IsolationMode -ProjectRoot $isolatedNoPaths)
+    Assert-Throws 'isolated without clone paths names the variable' `
+        { Get-SupportedIsolationMode -ProjectRoot $isolatedNoPaths } `
+        '*ISOLATED_WORKSPACE_A is required*'
+    Assert-Throws 'isolated without clone paths names the setup script' `
+        { Get-SupportedIsolationMode -ProjectRoot $isolatedNoPaths } `
+        '*setup-isolated.ps1*'
+
+    # AccountCount is what extends the check past account A. The compose
+    # builder only needs A; the generator passes NUM_ACCOUNTS so a path missing
+    # for a later account fails before any file is written.
+    $isolatedOnlyA = New-Sandbox @('ISOLATION_MODE=isolated', 'ISOLATED_WORKSPACE_A=/tmp/iso-a')
+    Assert-Eq 'isolated with only A passes the single-account check' 'isolated' `
+        (Get-SupportedIsolationMode -ProjectRoot $isolatedOnlyA)
+    Assert-Throws 'isolated with only A fails a two-account check on B' `
+        { Get-SupportedIsolationMode -ProjectRoot $isolatedOnlyA -AccountCount 2 } `
+        '*ISOLATED_WORKSPACE_B is required*'
+
+    # The same rule now covers worktree, which used to be checked only inside
+    # the generator and not by the shared contract.
+    $wtOnlyA = New-Sandbox @('ISOLATION_MODE=worktree', 'PROJECT_DIR_A=/tmp/wt-a')
+    Assert-Throws 'worktree with only A fails a two-account check on B' `
+        { Get-SupportedIsolationMode -ProjectRoot $wtOnlyA -AccountCount 2 } `
+        '*PROJECT_DIR_B is required*'
+
+    # There is deliberately no inference from ISOLATED_WORKSPACE_A, unlike the
+    # legacy PROJECT_DIR_A one: nothing predates that key, so it must not
+    # silently select a stronger boundary than the one declared.
+    Assert-Eq 'ISOLATED_WORKSPACE_A alone does not infer isolated' 'shared' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATED_WORKSPACE_A=/tmp/iso-a')))
 
     Write-Host '== Get-ComposeArgs: overlay selection =='
     # Get-ComposeArgs only adds the overlay when the file exists, so each case
@@ -174,10 +215,30 @@ try {
     Assert-Throws 'worktree with a missing overlay is refused' `
         { Get-ComposeArgs -ProjectRoot $wtMissing } `
         '*docker-compose.worktree.yml is missing*'
+
+    # isolated selects its own overlay, and only its own: composing the
+    # worktree overlay as well would let a later -f replace the volume list
+    # again and undo the boundary.
+    $isoProject = New-Sandbox @('ISOLATION_MODE=isolated', 'ISOLATED_WORKSPACE_A=/tmp/iso-a')
+    foreach ($f in 'docker-compose.yml', 'docker-compose.isolated.yml', 'docker-compose.worktree.yml') {
+        New-Item -ItemType File -Path (Join-Path $isoProject $f) | Out-Null
+    }
+    $isoArgs = Get-ComposeArgs -ProjectRoot $isoProject
+    Assert-Eq 'isolated: isolated overlay selected' $true `
+        (($isoArgs -join ' ') -like '*docker-compose.isolated.yml*')
+    Assert-Eq 'isolated: worktree overlay not selected' $false `
+        (($isoArgs -join ' ') -like '*docker-compose.worktree.yml*')
+
+    $isoMissing = New-Sandbox @('ISOLATION_MODE=isolated', 'ISOLATED_WORKSPACE_A=/tmp/iso-a')
+    New-Item -ItemType File -Path (Join-Path $isoMissing 'docker-compose.yml') | Out-Null
+    Assert-Throws 'isolated with a missing overlay is refused' `
+        { Get-ComposeArgs -ProjectRoot $isoMissing } `
+        '*docker-compose.isolated.yml is missing*'
 }
 finally {
     $env:ISOLATION_MODE = $savedMode
     $env:PROJECT_DIR_A = $savedProjectDirA
+    $env:ISOLATED_WORKSPACE_A = $savedIsolatedA
     foreach ($dir in $script:Sandboxes) {
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     }

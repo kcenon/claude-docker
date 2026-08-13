@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# test_isolation_modes.sh -- ISOLATION_MODE contract and worktree mount
-# regression coverage (issue #335, stages 1 and 2).
+# test_isolation_modes.sh -- ISOLATION_MODE contract, worktree mount
+# regression, and isolated stack coverage (issue #335, stages 1 to 3).
 #
-# Two things are under test and they fail in different ways:
+# Three things are under test and they fail in different ways:
 #
 # 1. The configuration contract. Which mode a set of accounts runs under used
 #    to be inferred from an unrelated variable, so a user could neither state
@@ -17,6 +17,13 @@
 #    target from the base /project, so the shared read-write source mount
 #    survived into every resolved worktree service. Those assertions therefore
 #    run against `docker compose config` output, never against the YAML.
+#
+# 3. The isolated stack. An isolated account must see its own clone and nothing
+#    shared: no /project, no host config tree, no shared gh config, no sibling
+#    workspace. The quiet failure here is the inverse of the worktree one --
+#    !override replaces the whole volume list, so a mount the base contributed
+#    can go missing without any error, which is why the surviving mounts are
+#    asserted too.
 #
 # Every generator runs inside a throwaway sandbox holding only the files it
 # reads. Running one in the repository would overwrite the committed compose
@@ -37,7 +44,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/compose_assert.sh
 . "$SCRIPT_DIR/lib/compose_assert.sh"
 
-OUTPUTS=(docker-compose.yml docker-compose.worktree.yml docker-compose.linux.yml)
+OUTPUTS=(
+    docker-compose.yml
+    docker-compose.worktree.yml
+    docker-compose.isolated.yml
+    docker-compose.linux.yml
+)
 
 # Placeholder host paths. Nothing is created on disk: `docker compose config`
 # resolves the model without touching the sources it names.
@@ -45,6 +57,8 @@ PLACEHOLDER_HOME="/tmp/claude-docker-isolation-home"
 PLACEHOLDER_PROJECT="/tmp/claude-docker-isolation-project"
 PLACEHOLDER_WT_A="/tmp/claude-docker-isolation-wt-a"
 PLACEHOLDER_WT_B="/tmp/claude-docker-isolation-wt-b"
+PLACEHOLDER_ISO_A="/tmp/claude-docker-isolation-clone-a"
+PLACEHOLDER_ISO_B="/tmp/claude-docker-isolation-clone-b"
 
 PASS=0
 FAIL=0
@@ -120,7 +134,7 @@ run_generator() {
     shift
     local rc=0
     # shellcheck disable=SC2086  # deliberate word-split of the assignment list
-    env -u ISOLATION_MODE -u NUM_ACCOUNTS -u PROJECT_DIR_A "$@" \
+    env -u ISOLATION_MODE -u NUM_ACCOUNTS -u PROJECT_DIR_A -u ISOLATED_WORKSPACE_A "$@" \
         bash "$dir/scripts/generate-compose.sh" >"$dir/.gen.log" 2>&1 || rc=$?
     return "$rc"
 }
@@ -128,6 +142,12 @@ run_generator() {
 # compose_files DIR -- print the compose files build_compose_cmd selects for
 # the configuration staged in DIR, one per line. Runs in a subshell so the
 # sourced libraries cannot leak into this test's own shell state.
+#
+# The sourcing list mirrors what scripts/claude-docker sources, in its order.
+# index.sh is not decoration: isolation.sh derives per-account variable names
+# through index_to_upper, so omitting it makes every mode that needs a
+# per-account path fail as if the overlay were missing. Section 5 asserts the
+# real entry points keep this set complete.
 compose_files() {
     local dir="$1"
     (
@@ -136,6 +156,8 @@ compose_files() {
         export PROJECT_ROOT
         # shellcheck source=/dev/null
         . "$dir/scripts/lib/parse_env.sh"
+        # shellcheck source=/dev/null
+        . "$dir/scripts/lib/index.sh"
         # shellcheck source=/dev/null
         . "$dir/scripts/lib/isolation.sh"
         # shellcheck source=/dev/null
@@ -187,6 +209,32 @@ else
     fail "explicit worktree: overlay missing"
 fi
 
+# The isolated mode selects its own overlay. Its per-account clone paths have
+# to be configured for the mode to be usable at all, so the sandbox names them.
+dir="$(make_sandbox resolve-explicit-isolated)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATION_MODE=isolated" \
+    "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B"
+if compose_files "$dir" | grep -q 'docker-compose.isolated.yml'; then
+    pass "explicit isolated: isolated overlay selected"
+else
+    fail "explicit isolated: isolated overlay missing"
+fi
+
+# There is deliberately no inference from ISOLATED_WORKSPACE_A, unlike the
+# legacy PROJECT_DIR_A one above. Nothing predates that key, so setting it
+# without declaring the mode is a mistake to report rather than a layout to
+# honor -- and inferring a stronger boundary than was asked for is its own
+# surprise.
+dir="$(make_sandbox resolve-no-isolated-inference)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A"
+if compose_files "$dir" | grep -q 'docker-compose.isolated.yml'; then
+    fail "no inference: ISOLATED_WORKSPACE_A alone selected the isolated overlay"
+else
+    pass "no inference: ISOLATED_WORKSPACE_A alone stays on shared"
+fi
+
 dir="$(make_sandbox resolve-explicit-shared)"
 write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
     "ISOLATION_MODE=shared" \
@@ -236,31 +284,51 @@ else
     sed 's/^/        /' "$dir/.gen.log"
 fi
 
-# `isolated` is a known name this build cannot start. Accepting it and running
-# a shared workspace would hand an account the access the mode asks to deny,
-# so the contract validates the value and the generator still refuses it.
-dir="$(make_sandbox reject-isolated)"
+# isolated without per-account clone paths cannot be honored, and the failure
+# has to name the variable and the script that produces it. Bare sandbox: the
+# next case asserts on what the generator wrote.
+dir="$(make_bare_sandbox reject-isolated-no-paths)"
 write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
     "ISOLATION_MODE=isolated"
 if run_generator "$dir"; then
-    fail "isolated: generator produced a stack for an unimplemented mode"
-elif grep -q 'not implemented yet' "$dir/.gen.log"; then
-    pass "isolated: generator refused and said the stack is not implemented"
+    fail "isolated without paths: generator succeeded"
+elif grep -q 'ISOLATED_WORKSPACE_A is required when ISOLATION_MODE=isolated' "$dir/.gen.log" \
+    && grep -q 'setup-isolated.sh' "$dir/.gen.log"; then
+    pass "isolated without paths: generator names the variable and the setup script"
 else
-    fail "isolated: generator failed without explaining why"
+    fail "isolated without paths: diagnostic did not name the variable and the script"
     sed 's/^/        /' "$dir/.gen.log"
 fi
 
-# The same value must be refused by the compose builder, not only the
-# generator: a user with already-generated files would otherwise start
-# containers on the shared mount.
-dir="$(make_sandbox reject-isolated-runtime)"
-write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
-    "ISOLATION_MODE=isolated"
-if compose_files "$dir" >/dev/null 2>&1; then
-    fail "isolated: compose builder fell back instead of refusing"
+if [[ -f "$dir/docker-compose.yml" ]]; then
+    fail "isolated without paths: partial output was written"
 else
-    pass "isolated: compose builder refuses to assemble a command"
+    pass "isolated without paths: no compose file was written"
+fi
+
+# A configured isolated mode whose overlay has not been generated must refuse
+# rather than compose the base alone: that would put every account back on the
+# shared /project mount, which is exactly what the mode is chosen to deny.
+dir="$(make_bare_sandbox reject-isolated-missing-overlay)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATION_MODE=isolated" \
+    "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B"
+if compose_files "$dir" >/dev/null 2>&1; then
+    fail "isolated with no overlay: compose builder fell back to the base stack"
+else
+    pass "isolated with no overlay: compose builder refuses to assemble a command"
+fi
+
+# The unused-path warning is symmetric: clone paths left behind after a move
+# back to worktree are inert and the user should be told.
+dir="$(make_bare_sandbox warn-inert-clone-paths)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATION_MODE=shared" "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A"
+if run_generator "$dir" && grep -q 'ISOLATED_WORKSPACE_A is configured' "$dir/.gen.log"; then
+    pass "shared: generator warns the configured clone paths are ignored"
+else
+    fail "shared: generator silently ignored the configured clone paths"
+    sed 's/^/        /' "$dir/.gen.log"
 fi
 
 # worktree without per-account paths cannot be honored. Bare sandbox: the
@@ -379,7 +447,138 @@ else
     echo "  SKIP  resolved-compose assertions (docker or jq unavailable)"
 fi
 
-# --- 4. Committed files untouched ---------------------------------------------
+# --- 4. Resolved isolated mounts ----------------------------------------------
+
+echo "== resolved isolated mounts =="
+
+if compose_assert_requires; then
+    dir="$(make_sandbox resolved-isolated)"
+    write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+        "ISOLATION_MODE=isolated" \
+        "ISOLATED_WORKSPACE_A=$PLACEHOLDER_ISO_A" "ISOLATED_WORKSPACE_B=$PLACEHOLDER_ISO_B"
+    if ! run_generator "$dir"; then
+        fail "isolated: generator failed for a valid isolated configuration"
+        sed 's/^/        /' "$dir/.gen.log"
+    else
+        iso_files=(docker-compose.yml docker-compose.isolated.yml)
+        targets="$(resolved_mount_targets "$dir" claude-a "${iso_files[@]}")"
+        sources="$(resolved_mount_sources "$dir" claude-a "${iso_files[@]}")"
+
+        # Same defect class as the worktree one: the shared source must not
+        # survive the container-target merge.
+        if grep -qx '/project' <<<"$targets"; then
+            fail "isolated: shared /project mount survived into the isolated service"
+            printf '%s\n' "$targets" | sed 's/^/        target: /'
+        else
+            pass "isolated: no inherited /project mount"
+        fi
+
+        if grep -qx "$PLACEHOLDER_ISO_A" <<<"$sources"; then
+            pass "isolated: the account's own clone is mounted"
+        else
+            fail "isolated: the account's clone is missing"
+        fi
+
+        if grep -qx "$PLACEHOLDER_ISO_B" <<<"$sources"; then
+            fail "isolated: account A mounts account B's clone"
+        else
+            pass "isolated: no sibling clone mount"
+        fi
+
+        # The shared host-home surfaces are what stage 3 removes. Each of these
+        # resolves to the same host path for every account, so their presence
+        # would mean the accounts still share configuration.
+        for forbidden in /home/node/.claude-host /home/node/.config/gh; do
+            if grep -qx "$forbidden" <<<"$targets"; then
+                fail "isolated: shared host mount $forbidden is still present"
+            else
+                pass "isolated: $forbidden is absent"
+            fi
+        done
+
+        # Per-account runtime state stays on purpose. It lives under $HOME but
+        # is not a shared surface, and the TUI finds accounts by scanning it on
+        # the host, so dropping it would blank the dashboard.
+        if grep -qx '/home/node/.claude' <<<"$targets"; then
+            pass "isolated: per-account runtime state survived the override"
+        else
+            fail "isolated: per-account runtime state was dropped by the override"
+        fi
+
+        # The machine-readable manifest answers the one question no
+        # single-service assertion can: is any host path writable from two
+        # accounts at once. This is what catches two accounts pointed at the
+        # same clone, the obvious .env copy-paste mistake.
+        dupes="$(duplicate_writable_sources "$dir" "${iso_files[@]}")"
+        if [[ -z "$dupes" ]]; then
+            pass "isolated: no host path is writable from more than one account"
+        else
+            fail "isolated: host paths writable from several accounts"
+            printf '%s\n' "$dupes" | sed 's/^/        shared: /'
+        fi
+
+        # Control for the check above. Shared mode binds one PROJECT_DIR into
+        # every account, so it MUST be reported as a duplicate -- without this,
+        # a detector that returned nothing for any input would pass.
+        dup_control="$(make_sandbox dup-control-shared)"
+        write_env "$dup_control" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT"
+        if run_generator "$dup_control"; then
+            if duplicate_writable_sources "$dup_control" docker-compose.yml \
+                | grep -qx "$PLACEHOLDER_PROJECT"; then
+                pass "control: the duplicate detector reports shared mode's common mount"
+            else
+                fail "control: the duplicate detector missed shared mode's common mount"
+            fi
+        else
+            fail "control: generator failed for a plain shared configuration"
+            sed 's/^/        /' "$dup_control/.gen.log"
+        fi
+    fi
+else
+    echo "  SKIP  resolved-compose assertions (docker or jq unavailable)"
+fi
+
+# --- 5. Entry-point library wiring --------------------------------------------
+
+echo "== entry-point library wiring =="
+
+# build-compose-cmd.sh calls into the isolation contract, so every entry point
+# sourcing it must source isolation.sh first. Omitting it is not a syntax
+# error: it fails at run time with "command not found", which is how
+# scripts/install.sh shipped broken after stage 1 -- nothing exercised its
+# library set, so shellcheck and every other test stayed green.
+#
+# Each entry point's own `. "$SCRIPT_DIR/lib/*.sh"` lines are executed in the
+# order it lists them and the contract functions are then looked up, so a
+# wrong order is caught as well as an omission.
+mapfile -t wiring_entries < <(
+    find "$PROJECT_ROOT/scripts" -maxdepth 1 -type f \
+        -exec grep -lE '^\. "\$SCRIPT_DIR/lib/build-compose-cmd\.sh"$' {} + | sort
+)
+
+if [[ "${#wiring_entries[@]}" -eq 0 ]]; then
+    fail "wiring: no entry point matched the build-compose-cmd sourcing pattern"
+fi
+
+for entry in "${wiring_entries[@]}"; do
+    name="$(basename "$entry")"
+    grep -E '^\. "\$SCRIPT_DIR/lib/[a-z_-]+\.sh"$' "$entry" >"$WORK/$name.srcs"
+    if (
+        set -uo pipefail
+        SCRIPT_DIR="$PROJECT_ROOT/scripts"
+        export PROJECT_ROOT
+        # shellcheck source=/dev/null
+        . "$WORK/$name.srcs"
+        declare -F require_supported_isolation_mode >/dev/null &&
+            declare -F build_compose_cmd >/dev/null
+    ) >/dev/null 2>&1; then
+        pass "$name: the isolation contract resolves from its library set"
+    else
+        fail "$name: build_compose_cmd would abort -- isolation.sh is not sourced"
+    fi
+done
+
+# --- 6. Committed files untouched ---------------------------------------------
 
 echo "== committed compose files =="
 if [[ "$(compose_digest)" == "$DIGEST_BEFORE" ]]; then

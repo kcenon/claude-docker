@@ -676,17 +676,18 @@ state directories.
 
 `ISOLATION_MODE` in `.env` declares which tier the accounts run under. Shared is
 the default, so an install that never sets the key behaves exactly as before.
-Full trust boundaries, non-goals, and the delivery order for the planned
-`isolated` mode are in [`docs/ISOLATION.md`](docs/ISOLATION.md).
+Full trust boundaries, non-goals, and what each tier does **not** protect
+against are in [`docs/ISOLATION.md`](docs/ISOLATION.md).
 
 | `ISOLATION_MODE` | Tier | Boundary |
 |---|---|---|
 | `shared` (default) | Tier A | One read-write project mount shared by every account. |
 | `worktree` | Tier B | Each account mounts only its own worktree. Git metadata stays shared. |
-| `isolated` | -- | Account-exclusive workspace, state, config and network. **Not implemented yet**; configuring it fails with a diagnostic rather than starting a weaker boundary. |
+| `isolated` | Tier C | Each account mounts its own independent clone, with its own git metadata and no shared host configuration. Credentials and networks are not yet scoped. |
 
-An unrecognized value is refused. The active mode and its boundary are printed
-by `claude-docker config`, by `claude-docker up`, and in the TUI.
+An unrecognized value is refused, and so is a mode whose per-account workspace
+paths are missing. The active mode and its boundary are printed by
+`claude-docker config`, by `claude-docker up`, and in the TUI.
 
 ### Tier A -- Shared Source (default)
 
@@ -718,6 +719,37 @@ warns that they are inert rather than ignoring them silently.
 > still share one git object store, so an account can read every branch and
 > rewrite refs other accounts depend on. Use worktrees when agents collide on a
 > checkout, not when you distrust what an agent will run.
+
+### Tier C -- Independent Clones
+
+Each container gets its own full clone: separate working tree *and* separate
+git metadata, so there is no common object store to read other branches from.
+
+```bash
+scripts/setup-isolated.sh ~/work/project     # Create independent clones
+# add the printed ISOLATION_MODE and ISOLATED_WORKSPACE_* lines to .env
+scripts/generate-compose.sh                  # Regenerate with the new mode
+scripts/claude-docker up                     # Selects the isolated overlay
+```
+
+On native Windows, use `.\scripts\setup-isolated.ps1 C:\path\to\project` and
+`.\scripts\generate-compose.ps1`.
+
+Unlike `PROJECT_DIR_A`, setting `ISOLATED_WORKSPACE_A` does not select the mode
+on its own — declare `ISOLATION_MODE=isolated` explicitly. Nothing predates
+that key, so an undeclared mode is a mistake worth reporting rather than a
+legacy layout worth honoring.
+
+Isolated accounts receive no shared host configuration, which means no shared
+hooks, skills, commands, statusline or `CLAUDE.md`. GitHub authentication still
+works through `GH_TOKEN`.
+
+> **What this tier does not yet do.** Credentials and networks are not scoped:
+> an isolated account cannot reach another account's source, but still sees the
+> same `GH_TOKEN` and can reach sibling containers. The container also still
+> runs with a writable root filesystem and full default capabilities. Those are
+> the next stage of [#335](https://github.com/kcenon/claude-docker/issues/335);
+> [`docs/ISOLATION.md`](docs/ISOLATION.md) has the per-concern table.
 
 ## Scaling Accounts
 
