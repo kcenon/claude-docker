@@ -51,10 +51,14 @@ one cache across both accounts, as the dashboard does.
 
 ### Measured results
 
-Windows 11, amd64, Intel Core i5-14600KF (20 logical CPUs), Go 1.24. Each
+Windows 11, amd64, Intel Core i5-14600KF (20 logical CPUs), Go 1.26.2. Each
 session file holds 40 assistant entries. Median of 5 samples; the range
 across those samples is given because the `cache=off` arm is GC-bound and
 therefore noisy.
+
+That toolchain is newer than the 1.24 `tui/go.mod` requires and CI pins, so
+these are one machine's figures rather than a cross-platform baseline. The
+relationship between the two arms is what the benchmark is for.
 
 | History per account | `cache=off` | `cache=on` | Ratio |
 |---|---|---|---|
