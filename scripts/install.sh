@@ -703,6 +703,19 @@ generate_env() {
             echo ""
         fi
 
+        # Record the chosen tier as an explicit isolation mode. Resolution
+        # would infer worktree from PROJECT_DIR_A anyway, but writing the key
+        # means a user reading .env later sees the trust boundary stated
+        # instead of having to derive it from which other variables are set.
+        echo "# ==== Workspace isolation ===="
+        echo "# shared | worktree | isolated -- see docs/ISOLATION.md"
+        if [[ "$TIER" == "B" ]]; then
+            echo "ISOLATION_MODE=worktree"
+        else
+            echo "ISOLATION_MODE=shared"
+        fi
+        echo ""
+
         if [[ "$TIER" == "B" ]]; then
             echo "# ==== Tier B: Git Worktree Paths ===="
             echo "# (populated after worktree setup)"
@@ -964,10 +977,14 @@ setup_worktrees() {
             log_info "Switching to Tier A (shared bind mount)"
             TIER="A"
 
-            # Remove worktree placeholders from .env
+            # Remove worktree placeholders from .env and move the declared
+            # mode back to shared. Leaving ISOLATION_MODE=worktree behind
+            # would make the next run refuse to start, since the paths that
+            # mode requires have just been deleted.
             local env_file="$PROJECT_ROOT/.env"
             if [[ -f "$env_file" ]]; then
                 perl -i -ne 'print unless /^# ==== Tier B:/ || /^# \(populated after/ || /^PROJECT_DIR_A=/ || /^PROJECT_DIR_B=/ || /^CONTAINER_PROJECT_DIR_A=/ || /^CONTAINER_PROJECT_DIR_B=/' "$env_file"
+                set_env_value "$env_file" "ISOLATION_MODE" "shared"
             fi
 
             log_success "Switched to Tier A"

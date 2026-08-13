@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -365,6 +366,92 @@ func TestGeminiRuntimeAPIKeyAndCommandArgs(t *testing.T) {
 				t.Errorf("RuntimeCommandArgs(%v)[%d] = %q, want %q",
 					c.skipPermissions, i, gotArgs[i], c.want[i])
 			}
+		}
+	}
+}
+
+// TestIsolationMode_Resolution pins the resolution order the shell layers use
+// (scripts/lib/isolation.sh). The legacy case is the one most easily broken by
+// adding an explicit key: installations predating ISOLATION_MODE configured
+// Tier B by setting PROJECT_DIR_A alone, and losing the inference would move
+// every one of them onto the shared mount without saying so.
+func TestIsolationMode_Resolution(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"default", "NUM_ACCOUNTS=2\n", IsolationShared},
+		{"legacy inference", "PROJECT_DIR_A=/tmp/wt-a\n", IsolationWorktree},
+		{"explicit worktree", "ISOLATION_MODE=worktree\nPROJECT_DIR_A=/tmp/wt-a\n", IsolationWorktree},
+		{"explicit shared outranks inference", "ISOLATION_MODE=shared\nPROJECT_DIR_A=/tmp/wt-a\n", IsolationShared},
+		{"case and space insensitive", "ISOLATION_MODE=  WorkTree  \n", IsolationWorktree},
+		{"isolated is reported as configured", "ISOLATION_MODE=isolated\n", IsolationIsolated},
+		// An invalid value is returned verbatim so a caller can name what was
+		// configured when it refuses it, matching GitHubAuthMode.
+		{"invalid value retained", "ISOLATION_MODE=bogus\n", "bogus"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e, err := LoadEnv(writeTempEnv(t, c.content))
+			if err != nil {
+				t.Fatalf("LoadEnv: %v", err)
+			}
+			if got := e.IsolationMode(); got != c.want {
+				t.Errorf("IsolationMode() = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	var nilEnv *Env
+	if got := nilEnv.IsolationMode(); got != IsolationShared {
+		t.Errorf("nil Env IsolationMode() = %q, want %q", got, IsolationShared)
+	}
+}
+
+func TestIsolationModeKnown(t *testing.T) {
+	for _, mode := range []string{IsolationShared, IsolationWorktree, IsolationIsolated} {
+		if !IsolationModeKnown(mode) {
+			t.Errorf("IsolationModeKnown(%q) = false, want true", mode)
+		}
+	}
+	for _, mode := range []string{"", "bogus", "Shared", "per-account"} {
+		if IsolationModeKnown(mode) {
+			t.Errorf("IsolationModeKnown(%q) = true, want false", mode)
+		}
+	}
+}
+
+// The worktree summary must keep saying git metadata is shared. That sentence
+// is the one place a user is told the tier is not an adversarial boundary, and
+// the issue makes stating it an acceptance criterion.
+func TestIsolationModeSummary(t *testing.T) {
+	if s := IsolationModeSummary(IsolationWorktree); !strings.Contains(s, "not a security boundary") {
+		t.Errorf("worktree summary lost its security disclaimer: %q", s)
+	}
+	if s := IsolationModeSummary(IsolationIsolated); !strings.Contains(s, "not implemented") {
+		t.Errorf("isolated summary does not say it is unimplemented: %q", s)
+	}
+	if s := IsolationModeSummary("bogus"); !strings.Contains(s, "refuses to start") {
+		t.Errorf("unknown-mode summary does not describe the refusal: %q", s)
+	}
+}
+
+// The tagline is the dashboard's copy of the same warning. It exists so the
+// worktree disclaimer survives a narrow terminal, which means the disclaimer
+// has to actually be in it -- a shortened string that dropped the qualifier
+// would defeat the reason the shorter string exists.
+func TestIsolationModeTagline(t *testing.T) {
+	if s := IsolationModeTagline(IsolationWorktree); !strings.Contains(s, "not a security boundary") {
+		t.Errorf("worktree tagline lost its security disclaimer: %q", s)
+	}
+	if s := IsolationModeTagline(IsolationIsolated); !strings.Contains(s, "refuses to start") {
+		t.Errorf("isolated tagline does not warn it will not start: %q", s)
+	}
+	for _, mode := range []string{IsolationShared, IsolationWorktree, IsolationIsolated, "bogus"} {
+		if len(IsolationModeTagline(mode)) > len(IsolationModeSummary(mode)) {
+			t.Errorf("tagline for %q is not shorter than its summary", mode)
 		}
 	}
 }

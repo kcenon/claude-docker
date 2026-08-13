@@ -1,0 +1,188 @@
+# test_isolation_modes.ps1 — ISOLATION_MODE contract parity for the PowerShell
+# layer (issue #335, stage 1).
+#
+# Run:  pwsh -NoProfile -File tests/test_isolation_modes.ps1
+# Exits non-zero on any failure.
+#
+# The bash side is covered by tests/test_isolation_modes.sh. This file exists
+# because a Windows user and a Linux user configuring the same repository must
+# get the same trust boundary: the two implementations are independent, so
+# agreement is a property that has to be asserted rather than assumed.
+#
+# Resolved-mount assertions live only on the bash side. They need the compose
+# generator, which refuses to run on Windows by design, and the merge behavior
+# under test is Compose's rather than either script's.
+#
+# Every value here is a placeholder; no test writes or prints a credential.
+
+param()
+
+$ErrorActionPreference = 'Stop'
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Split-Path -Parent $ScriptDir
+
+Import-Module (Join-Path $ProjectRoot 'scripts' 'ClaudeDocker.psm1') -Force
+
+$script:Pass = 0
+$script:Fail = 0
+
+function Assert-Eq {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][object]$Expected,
+        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][object]$Actual
+    )
+    if ([string]$Expected -eq [string]$Actual) {
+        Write-Host ("  PASS  {0}" -f $Label)
+        $script:Pass++
+    } else {
+        Write-Host ("  FAIL  {0}`n        expected: {1}`n        actual:   {2}" -f `
+            $Label, ([string]$Expected), ([string]$Actual))
+        $script:Fail++
+    }
+}
+
+function Assert-Throws {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][scriptblock]$Action,
+        [Parameter(Mandatory)][string]$MessageLike
+    )
+    try {
+        & $Action | Out-Null
+        Write-Host ("  FAIL  {0}`n        expected a terminating error, got none" -f $Label)
+        $script:Fail++
+    }
+    catch {
+        if ($_.Exception.Message -like $MessageLike) {
+            Write-Host ("  PASS  {0}" -f $Label)
+            $script:Pass++
+        } else {
+            Write-Host ("  FAIL  {0}`n        message did not match '{1}'`n        actual: {2}" -f `
+                $Label, $MessageLike, $_.Exception.Message)
+            $script:Fail++
+        }
+    }
+}
+
+# New-Sandbox LINES -- project root with a placeholder .env, returned as a path.
+# Each case gets its own directory so a stale .env cannot leak between cases.
+$script:Sandboxes = @()
+function New-Sandbox {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines)
+
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ("cd-isolation-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $script:Sandboxes += $dir
+    if ($Lines.Count -gt 0) {
+        Set-Content -Path (Join-Path $dir '.env') -Value $Lines -Encoding utf8
+    }
+    return $dir
+}
+
+# The environment must not leak into resolution: an ISOLATION_MODE left in the
+# caller's shell outranks .env by design, which would silently rewrite what
+# every case below means.
+$savedMode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
+$savedProjectDirA = [Environment]::GetEnvironmentVariable('PROJECT_DIR_A')
+$env:ISOLATION_MODE = ''
+$env:PROJECT_DIR_A = ''
+
+try {
+    Write-Host '== Test-IsolationModeKnown =='
+    foreach ($mode in @('shared', 'worktree', 'isolated')) {
+        Assert-Eq "known: $mode" $true (Test-IsolationModeKnown -Mode $mode)
+    }
+    foreach ($mode in @('', 'bogus', 'Shared', 'per-account')) {
+        Assert-Eq "not known: '$mode'" $false (Test-IsolationModeKnown -Mode $mode)
+    }
+
+    Write-Host '== Get-IsolationModeSummary =='
+    # The worktree summary must keep saying the tier is not a security
+    # boundary. That sentence is the only place a user is told what worktree
+    # mode does not do, and the issue makes stating it an acceptance criterion.
+    Assert-Eq 'worktree summary keeps its disclaimer' $true `
+        ((Get-IsolationModeSummary -Mode 'worktree') -like '*not a security boundary*')
+    Assert-Eq 'isolated summary says unimplemented' $true `
+        ((Get-IsolationModeSummary -Mode 'isolated') -like '*not implemented yet*')
+
+    Write-Host '== Get-IsolationMode: resolution order =='
+    Assert-Eq 'no .env at all defaults to shared' 'shared' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @()))
+
+    Assert-Eq 'plain .env defaults to shared' 'shared' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('PROJECT_DIR=/tmp/p')))
+
+    # Installs predating the key configured Tier B with PROJECT_DIR_A alone.
+    # Losing this inference would move every one of them onto the shared mount.
+    Assert-Eq 'PROJECT_DIR_A alone infers worktree' 'worktree' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('PROJECT_DIR=/tmp/p', 'PROJECT_DIR_A=/tmp/wt-a')))
+
+    Assert-Eq 'explicit worktree' 'worktree' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=worktree', 'PROJECT_DIR_A=/tmp/wt-a')))
+
+    Assert-Eq 'explicit shared outranks the inference' 'shared' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=shared', 'PROJECT_DIR_A=/tmp/wt-a')))
+
+    Assert-Eq 'case-insensitive' 'worktree' `
+        (Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=WorkTree')))
+
+    $sharedRoot = New-Sandbox @('ISOLATION_MODE=shared')
+    $env:ISOLATION_MODE = 'worktree'
+    Assert-Eq 'environment outranks .env' 'worktree' (Get-IsolationMode -ProjectRoot $sharedRoot)
+    $env:ISOLATION_MODE = ''
+
+    Write-Host '== rejected configurations =='
+    # An unknown mode must not degrade to shared.
+    Assert-Throws 'unknown mode throws and names the accepted values' `
+        { Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=bogus')) } `
+        '*must be shared, worktree or isolated*'
+
+    # `isolated` is a known name this build cannot start. It resolves, so
+    # status output can describe it, and the Supported variant refuses it.
+    $isolatedRoot = New-Sandbox @('ISOLATION_MODE=isolated')
+    Assert-Eq 'isolated resolves for display' 'isolated' (Get-IsolationMode -ProjectRoot $isolatedRoot)
+    Assert-Throws 'isolated is refused by the supported-mode gate' `
+        { Get-SupportedIsolationMode -ProjectRoot $isolatedRoot } `
+        '*not implemented yet*'
+    Assert-Throws 'isolated is refused by the compose argument builder' `
+        { Get-ComposeArgs -ProjectRoot $isolatedRoot } `
+        '*not implemented yet*'
+
+    Write-Host '== Get-ComposeArgs: overlay selection =='
+    # Get-ComposeArgs only adds the overlay when the file exists, so each case
+    # stages the file it expects to be selected.
+    $sharedProject = New-Sandbox @('PROJECT_DIR=/tmp/p')
+    New-Item -ItemType File -Path (Join-Path $sharedProject 'docker-compose.yml') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $sharedProject 'docker-compose.worktree.yml') | Out-Null
+    $sharedArgs = Get-ComposeArgs -ProjectRoot $sharedProject
+    Assert-Eq 'shared: overlay not selected even though the file exists' $false `
+        (($sharedArgs -join ' ') -like '*docker-compose.worktree.yml*')
+
+    $wtProject = New-Sandbox @('PROJECT_DIR=/tmp/p', 'PROJECT_DIR_A=/tmp/wt-a')
+    New-Item -ItemType File -Path (Join-Path $wtProject 'docker-compose.yml') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $wtProject 'docker-compose.worktree.yml') | Out-Null
+    $wtArgs = Get-ComposeArgs -ProjectRoot $wtProject
+    Assert-Eq 'worktree: overlay selected' $true `
+        (($wtArgs -join ' ') -like '*docker-compose.worktree.yml*')
+
+    # A worktree configuration whose overlay is missing must fail rather than
+    # quietly leaving every account on the shared /project mount.
+    $wtMissing = New-Sandbox @('PROJECT_DIR=/tmp/p', 'PROJECT_DIR_A=/tmp/wt-a')
+    New-Item -ItemType File -Path (Join-Path $wtMissing 'docker-compose.yml') | Out-Null
+    Assert-Throws 'worktree with a missing overlay is refused' `
+        { Get-ComposeArgs -ProjectRoot $wtMissing } `
+        '*docker-compose.worktree.yml is missing*'
+}
+finally {
+    $env:ISOLATION_MODE = $savedMode
+    $env:PROJECT_DIR_A = $savedProjectDirA
+    foreach ($dir in $script:Sandboxes) {
+        Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+    }
+}
+
+Write-Host ''
+Write-Host ("== Summary: PASS={0} FAIL={1} ==" -f $script:Pass, $script:Fail)
+if ($script:Fail -gt 0) { exit 1 }

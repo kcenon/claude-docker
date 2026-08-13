@@ -110,7 +110,30 @@ function New-MergedConfigDir {
 
 # --- Subcommands -------------------------------------------------------------
 
+function Show-IsolationMode {
+    <#
+    .SYNOPSIS
+    Print the active isolation mode and the trust boundary it provides.
+    .DESCRIPTION
+    Mirrors show_isolation_mode in scripts/claude-docker. Startup and `config`
+    both call it so the boundary a session runs under is stated rather than
+    inferred from which compose files the caller happened to pass.
+
+    Uses Get-IsolationMode, not the Supported variant: a user who set an
+    unimplemented mode should still be told what it means before
+    Get-ComposeArgs refuses it.
+    #>
+    $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
+    Write-Host "Isolation mode: $mode"
+    Write-Host "  $(Get-IsolationModeSummary -Mode $mode)" -ForegroundColor DarkGray
+    Write-UnusedWorktreePathWarning -ProjectRoot $ProjectRoot -Mode $mode
+}
+
 function Invoke-Up {
+    # Printed before the compose call so an unusable mode is diagnosed with
+    # its description already on screen.
+    Show-IsolationMode
+    Write-Host ''
     Write-Host 'Starting containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot up --detach @Arguments
     Write-Host 'Containers started.' -ForegroundColor Green
@@ -702,6 +725,8 @@ function Invoke-Scale {
 }
 
 function Invoke-Config {
+    Show-IsolationMode
+    Write-Host ''
     $baseArgs = Get-ComposeArgs -ProjectRoot $ProjectRoot
     Write-Host "Compose args: docker compose $($baseArgs -join ' ')" -ForegroundColor DarkGray
     Write-Host ''

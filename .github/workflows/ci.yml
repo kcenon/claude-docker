@@ -137,11 +137,17 @@ jobs:
   #
   # The committed compose files represent the generator's built-in defaults
   # with no `.env` present:
-  #   NUM_ACCOUNTS=2      (scripts/generate-compose.sh default)
+  #   NUM_ACCOUNTS=2       (scripts/generate-compose.sh default)
   #   AGENT_RUNTIME=claude (scripts/lib/runtime.sh default)
-  #   IMAGE_TAG           read from the repo-root VERSION file
+  #   ISOLATION_MODE=shared (scripts/lib/isolation.sh default)
+  #   IMAGE_TAG            read from the repo-root VERSION file
   # A VERSION bump therefore requires regenerating the compose files in the
   # same change, because the committed files embed the tag as a default.
+  #
+  # The file list in "Assert no drift" is the tracked generated set. Every mode
+  # generates all three, so the mode does not change what belongs here -- but a
+  # stage that adds a generated isolated stack must add it to that list too, or
+  # the new file gets no drift coverage while the job stays green.
   compose-freshness:
     name: Compose files are current
     runs-on: ubuntu-latest
@@ -173,6 +179,7 @@ jobs:
           - tests/test_parse_env_equivalence.sh
           - tests/test_runtime_registry_equivalence.sh
           - tests/test_compose_generator_equivalence.sh
+          - tests/test_isolation_modes.sh
           - tests/test_github_per_account_compose.sh
           - tests/test_github_account_selection.sh
           - tests/test_entrypoint_github_auth.sh
@@ -196,6 +203,7 @@ jobs:
       matrix:
         test:
           - tests/test_parse_env.ps1
+          - tests/test_isolation_modes.ps1
           - tests/test_powershell_platform_guard.ps1
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
