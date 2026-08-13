@@ -83,20 +83,69 @@ func (c *Cache) put(path string, size, modUnix int64, s Session) {
 	c.entries[path] = cacheEntry{size: size, modUnix: modUnix, session: s}
 }
 
-// prune removes cache entries whose paths are not present in seen. This
-// drops entries for files that have been deleted or moved out of the
-// projects tree, keeping cache memory bounded by current state.
-func (c *Cache) prune(seen map[string]struct{}) {
+// pruneScope removes cache entries under root whose paths are not present
+// in seen. This drops entries for files that have been deleted or moved
+// out of that projects tree, keeping cache memory bounded by current state.
+//
+// Entries outside root are deliberately left alone. One Cache is shared by
+// every account in a dashboard refresh, but a scan only ever builds a seen
+// set for its own projects tree, so sweeping the whole map here would make
+// every sibling account collateral damage of scanning one account. Roots
+// that stop being scanned entirely are released by RetainRoots instead.
+func (c *Cache) pruneScope(root string, seen map[string]struct{}) {
 	if c == nil {
 		return
 	}
+	prefix := rootPrefix(root)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for path := range c.entries {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
 		if _, ok := seen[path]; !ok {
 			delete(c.entries, path)
 		}
 	}
+}
+
+// RetainRoots drops every cache entry that does not live under one of the
+// given roots. Callers that scan a set of projects directories per refresh
+// call this once afterwards with the roots they actually scanned, so an
+// account that has gone away releases its sessions; scoped pruning alone
+// would keep them for the process lifetime because nothing scans that tree
+// any more. Passing no roots empties the cache.
+func (c *Cache) RetainRoots(roots []string) {
+	if c == nil {
+		return
+	}
+	prefixes := make([]string, 0, len(roots))
+	for _, root := range roots {
+		prefixes = append(prefixes, rootPrefix(root))
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for path := range c.entries {
+		keep := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(path, prefix) {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			delete(c.entries, path)
+		}
+	}
+}
+
+// rootPrefix returns root cleaned and terminated with a separator. The
+// trailing separator is what stops a prefix test from matching a sibling
+// whose name merely starts with the root: ".../projects" must not capture
+// ".../projects-archive/x.jsonl". Cached paths come from filepath.Join
+// during the walk, so they are already in this cleaned form.
+func rootPrefix(root string) string {
+	return filepath.Clean(root) + string(filepath.Separator)
 }
 
 // Len returns the number of cached entries. Intended for tests and
@@ -121,20 +170,19 @@ func ScanAccountSessions(projectsDir string) ([]Session, error) {
 // ScanAccountSessionsWithCache walks the projects dir and returns parsed
 // sessions for every .jsonl file. When cache is non-nil, files whose
 // path, size, and mtime match a cached entry are returned from the
-// cache without re-reading the file. After the scan, cache entries for
-// files no longer present on disk are pruned.
+// cache without re-reading the file. After the scan, cache entries under
+// projectsDir for files no longer present on disk are pruned; entries
+// belonging to other projects directories are left untouched so one cache
+// can serve several accounts.
 func ScanAccountSessionsWithCache(projectsDir string, cache *Cache) ([]Session, error) {
 	var sessions []Session
 	if _, err := os.Stat(projectsDir); err != nil {
 		if os.IsNotExist(err) {
-			// Even with a missing dir we should prune anything still in
-			// the cache that pointed under this tree, otherwise switching
-			// away from a state dir would leak entries. Callers that share
-			// one cache across multiple projects dirs handle this via the
-			// per-call seen set returned to prune below.
-			if cache != nil {
-				cache.prune(map[string]struct{}{})
-			}
+			// A tree that has disappeared has no live files, so everything
+			// cached under it is stale. Scope the sweep to that tree only:
+			// the caller may be mid-way through a refresh whose remaining
+			// accounts still have valid entries in this same cache.
+			cache.pruneScope(projectsDir, nil)
 			return nil, nil
 		}
 		return nil, err
@@ -186,7 +234,7 @@ func ScanAccountSessionsWithCache(projectsDir string, cache *Cache) ([]Session, 
 		return nil, fmt.Errorf("walk projects dir: %w", err)
 	}
 
-	cache.prune(seen)
+	cache.pruneScope(projectsDir, seen)
 	return sessions, nil
 }
 

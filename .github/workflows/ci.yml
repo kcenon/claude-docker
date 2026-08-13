@@ -97,6 +97,14 @@ jobs:
       - name: Run Go unit tests
         working-directory: ./tui
         run: go test ./...
+      # `go test ./...` compiles benchmark functions but never executes them,
+      # so a benchmark harness that panics at runtime stays green forever.
+      # -benchtime=1x runs each benchmark exactly once: enough to catch that,
+      # too few iterations for the timing to be a flaky gate. Results are not
+      # asserted on here; the numbers of record live in docs/PERFORMANCE.md.
+      - name: Smoke-run Go benchmarks
+        working-directory: ./tui
+        run: go test ./... -run '^$' -bench . -benchtime=1x
       # Formatting is checked here rather than in a separate job because the Go
       # toolchain is already provisioned. The job name stays "Go tests (TUI)"
       # so any branch-protection rule referencing it keeps matching; the step

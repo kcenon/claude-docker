@@ -230,25 +230,176 @@ func TestNilCacheParsesEveryTime(t *testing.T) {
 	}
 }
 
-// TestCacheMissingDirReturnsNil verifies that a missing projects dir
-// is not an error and pruning still empties the cache so callers that
-// switch state directories do not leak stale entries.
-func TestCacheMissingDirReturnsNil(t *testing.T) {
+// TestCacheMissingDirPrunesOnlyThatTree verifies that a missing projects
+// dir is not an error and that entries cached under it are dropped, while
+// entries belonging to another account survive.
+//
+// The earlier version of this test asserted that a missing dir empties the
+// whole cache. That assertion was the defect rather than the contract: the
+// manager shares one cache across accounts, so the account whose state dir
+// happens to be missing would take every sibling's entries with it.
+func TestCacheMissingDirPrunesOnlyThatTree(t *testing.T) {
+	root := t.TempDir()
+	live := filepath.Join(root, "account-a", "projects")
+	gone := filepath.Join(root, "account-b", "projects")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeJSONL(t, live, "a.jsonl")
+
 	cache := NewCache()
-	// Pre-seed cache so prune has something to do.
-	cache.put("/non/existent/seed.jsonl", 1, 2, Session{Path: "/non/existent/seed.jsonl"})
-	if cache.Len() != 1 {
-		t.Fatalf("seed Len = %d, want 1", cache.Len())
+	if _, err := ScanAccountSessionsWithCache(live, cache); err != nil {
+		t.Fatalf("scan live: %v", err)
+	}
+	// Seed an entry under the tree that is about to be reported missing.
+	stale := filepath.Join(gone, "old.jsonl")
+	cache.put(stale, 1, 2, Session{Path: stale})
+	if cache.Len() != 2 {
+		t.Fatalf("cache.Len after seeding = %d, want 2", cache.Len())
 	}
 
-	got, err := ScanAccountSessionsWithCache(filepath.Join(t.TempDir(), "does-not-exist"), cache)
+	got, err := ScanAccountSessionsWithCache(gone, cache)
 	if err != nil {
 		t.Fatalf("scan missing dir: err = %v, want nil", err)
 	}
 	if got != nil {
 		t.Errorf("scan missing dir sessions = %v, want nil", got)
 	}
+	if cache.Len() != 1 {
+		t.Fatalf("cache.Len after missing-dir scan = %d, want 1", cache.Len())
+	}
+	// The survivor must be the live account's entry, not the stale one.
+	if _, hit := cache.get(stale, 1, 2); hit {
+		t.Errorf("stale entry under the missing tree survived; want it pruned")
+	}
+}
+
+// TestCacheAlternatingAccountsRetainEntries is the regression test for the
+// dashboard refresh loop. One Cache is shared by every account, but a scan
+// can only build a seen set for its own projects tree, so scanning account
+// B must not evict account A. Without that scoping the two accounts evict
+// each other on every refresh and the cache degrades to no cache at all,
+// which gets worse as history grows.
+func TestCacheAlternatingAccountsRetainEntries(t *testing.T) {
+	root := t.TempDir()
+	rootA := filepath.Join(root, "account-a", "projects")
+	rootB := filepath.Join(root, "account-b", "projects")
+	for _, dir := range []string{rootA, rootB} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		writeJSONL(t, dir, "s1.jsonl")
+		writeJSONL(t, dir, "s2.jsonl")
+	}
+
+	cache := NewCache()
+	firstA, err := ScanAccountSessionsWithCache(rootA, cache)
+	if err != nil {
+		t.Fatalf("scan A: %v", err)
+	}
+	if len(firstA) != 2 {
+		t.Fatalf("scan A len = %d, want 2", len(firstA))
+	}
+	if _, err := ScanAccountSessionsWithCache(rootB, cache); err != nil {
+		t.Fatalf("scan B: %v", err)
+	}
+	if cache.Len() != 4 {
+		t.Fatalf("cache.Len after A then B = %d, want 4 (scanning B must not evict A)", cache.Len())
+	}
+
+	// Entry-slice identity is what distinguishes a cache hit from a silent
+	// reparse; a count alone would pass on a cache that refilled itself.
+	entryPtrs := make(map[string]*SessionEntry, len(firstA))
+	for i := range firstA {
+		if len(firstA[i].Entries) > 0 {
+			entryPtrs[firstA[i].Path] = &firstA[i].Entries[0]
+		}
+	}
+
+	secondA, err := ScanAccountSessionsWithCache(rootA, cache)
+	if err != nil {
+		t.Fatalf("rescan A: %v", err)
+	}
+	if len(secondA) != 2 {
+		t.Fatalf("rescan A len = %d, want 2", len(secondA))
+	}
+	for i := range secondA {
+		want, ok := entryPtrs[secondA[i].Path]
+		if !ok {
+			t.Errorf("rescan A returned unexpected path %q", secondA[i].Path)
+			continue
+		}
+		if len(secondA[i].Entries) == 0 {
+			t.Errorf("rescan A: %q has no entries", secondA[i].Path)
+			continue
+		}
+		if &secondA[i].Entries[0] != want {
+			t.Errorf("rescan A: %q was reparsed after scanning B; the cached entry did not survive", secondA[i].Path)
+		}
+	}
+}
+
+// TestCachePruneScopeIgnoresPrefixSiblings guards the prefix comparison
+// itself. Two projects trees whose paths share a textual prefix belong to
+// different accounts, so a scan of the shorter path must not sweep the
+// longer one.
+func TestCachePruneScopeIgnoresPrefixSiblings(t *testing.T) {
+	root := t.TempDir()
+	proj := filepath.Join(root, "projects")
+	sibling := filepath.Join(root, "projects-archive")
+	for _, dir := range []string{proj, sibling} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		writeJSONL(t, dir, "a.jsonl")
+	}
+
+	cache := NewCache()
+	if _, err := ScanAccountSessionsWithCache(sibling, cache); err != nil {
+		t.Fatalf("scan sibling: %v", err)
+	}
+	if _, err := ScanAccountSessionsWithCache(proj, cache); err != nil {
+		t.Fatalf("scan proj: %v", err)
+	}
+	if cache.Len() != 2 {
+		t.Errorf("cache.Len = %d, want 2 (%q must not prune %q)", cache.Len(), proj, sibling)
+	}
+}
+
+// TestCacheRetainRootsReleasesUnscannedTrees covers the release path used
+// at the end of a refresh. Scoped pruning cannot reclaim a tree that is no
+// longer scanned at all, because nothing walks it; RetainRoots is what
+// keeps an account that has gone away from occupying memory forever.
+func TestCacheRetainRootsReleasesUnscannedTrees(t *testing.T) {
+	root := t.TempDir()
+	rootA := filepath.Join(root, "account-a", "projects")
+	rootB := filepath.Join(root, "account-b", "projects")
+	for _, dir := range []string{rootA, rootB} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		writeJSONL(t, dir, "a.jsonl")
+	}
+
+	cache := NewCache()
+	for _, dir := range []string{rootA, rootB} {
+		if _, err := ScanAccountSessionsWithCache(dir, cache); err != nil {
+			t.Fatalf("scan %s: %v", dir, err)
+		}
+	}
+	if cache.Len() != 2 {
+		t.Fatalf("cache.Len after scanning both = %d, want 2", cache.Len())
+	}
+
+	// Account B disappears: the next refresh only reports root A.
+	cache.RetainRoots([]string{rootA})
+	if cache.Len() != 1 {
+		t.Errorf("cache.Len after retaining A = %d, want 1", cache.Len())
+	}
+
+	// No roots at all means nothing is being scanned, so nothing is kept.
+	cache.RetainRoots(nil)
 	if cache.Len() != 0 {
-		t.Errorf("cache.Len after missing-dir scan = %d, want 0", cache.Len())
+		t.Errorf("cache.Len after retaining nothing = %d, want 0", cache.Len())
 	}
 }

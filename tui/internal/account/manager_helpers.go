@@ -54,6 +54,9 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 	runtime := m.env.AgentRuntime()
 	servicePrefix := m.env.ServicePrefix()
 	claudeUsage := m.env.SupportsClaudeUsage()
+	// Projects trees visited by this refresh. Each scan only prunes inside
+	// its own tree, so accounts that have gone away are released here.
+	scannedRoots := make([]string, 0, n)
 	for i := 1; i <= n; i++ {
 		letter := config.IndexToLetter(i)
 		svcName := servicePrefix + "-" + letter
@@ -77,7 +80,9 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 			// Uses the manager-scoped cache so unchanged session files are
 			// not re-read and re-decoded on every dashboard refresh.
 			if claudeUsage {
-				if sessions, err := usage.ScanAccountSessionsWithCache(sd.ProjectsDir(), m.usageCache); err == nil && len(sessions) > 0 {
+				projectsDir := sd.ProjectsDir()
+				scannedRoots = append(scannedRoots, projectsDir)
+				if sessions, err := usage.ScanAccountSessionsWithCache(projectsDir, m.usageCache); err == nil && len(sessions) > 0 {
 					opts := usage.AllTimeOptions()
 					tokens := usage.AggregateSessions(sessions, opts)
 					count := usage.CountFilteredSessions(sessions, opts)
@@ -103,6 +108,7 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 
 		accounts[i-1] = acct
 	}
+	m.usageCache.RetainRoots(scannedRoots)
 	return accounts
 }
 
