@@ -83,6 +83,14 @@ Two things to read out of this:
   fixing rather than the wall time: a dashboard refreshing on a timer was
   producing that garbage repeatedly.
 
+The CI smoke run prints the same benchmark on a very different machine — a
+4-CPU Linux runner, one iteration rather than a timed sample — and is worth
+comparing against as a second data point. At 400 files per account it
+reported 325 ms against 3.35 ms, and 862 MB against 675 KB. The absolute
+times and the ratio both move (97x rather than 313x); the shape does not.
+That is the sense in which these figures travel and the exact numbers do
+not.
+
 ### What a regression looks like
 
 If per-account scoping regresses to a whole-cache sweep, the two accounts
