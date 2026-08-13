@@ -146,6 +146,13 @@ ISOLATION_MODE_RESOLVED="$(require_supported_isolation_mode "$NUM_ACCOUNTS")" ||
 
 warn_unused_workspace_paths "$ISOLATION_MODE_RESOLVED"
 
+# The network policy is resolved unconditionally, even under shared or worktree,
+# because docker-compose.isolated.yml is written in every mode. Resolving it
+# only when the mode is isolated would leave an invalid value undetected until
+# somebody switched modes, which is the point at which a wrong network policy is
+# hardest to notice.
+ISOLATED_NETWORK_MODE_RESOLVED="$(resolve_isolated_network_mode)" || exit 1
+
 # index_to_letter and index_to_upper provided by scripts/lib/index.sh.
 
 # --- Shared emitters ----------------------------------------------------------
@@ -181,7 +188,8 @@ emit_account_volumes() {
     # bootstrap-claude.sh returns early when the config source is missing -- so
     # the container still starts, with no shared hooks, skills, commands,
     # statusline or CLAUDE.md. Restoring that through an allowlisted
-    # per-account import is stage 4; see docs/ISOLATION.md.
+    # per-account import is still open -- it is optional in the issue's own
+    # wording and depends on a cross-repository decision; see docs/ISOLATION.md.
     if [[ "$mode" != "isolated" ]]; then
         echo "      - \${HOME}/${RT_HOST_CONFIG_BASENAME}:${RT_HOST_CONFIG_MOUNT}:ro"
         # The agents/skills volume is bound only for runtimes whose registry
@@ -195,6 +203,97 @@ emit_account_volumes() {
     fi
 
     echo "      - node_modules_${letter}:${project_target}/node_modules"
+}
+
+# emit_account_environment MODE UPPER
+# Print the complete environment list for one account service, indented for an
+# `environment:` block.
+#
+# Both the base config and the isolated overlay come through here, and the
+# isolated overlay tags its block `!override`. That tag is not decoration: an
+# untagged block MERGES by key, so the base's shared-token entry would survive
+# into an isolated service. Compose offers no way to remove a single inherited
+# key -- `!reset` on an individual environment entry is ignored outright, and
+# `!override` replaces the whole list -- so the isolated environment has to be
+# re-emitted in full. Emitting both from one function is what keeps that
+# duplication honest: a variable added below reaches every mode, and a
+# credential withheld below is withheld everywhere it should be.
+#
+# The withholding is deliberately fail-closed. Anything not listed here never
+# reaches an isolated service, so a credential added to the base later cannot
+# leak into the isolated profile by being forgotten -- only by being written
+# into the isolated branch on purpose.
+emit_account_environment() {
+    local mode="$1" upper="$2"
+
+    echo "      - TERM=xterm-256color"
+    echo "      - TZ=\${TZ:-UTC}"
+    # When the container runs as the host UID instead of node(1000),
+    # the passwd entry for that UID is missing, so \$HOME defaults
+    # to /. Pinning HOME keeps runtime state, ~/.config, etc.
+    # resolvable.
+    echo "      - HOME=/home/node"
+    # AGENT_RUNTIME is now always emitted (previously codex-only).
+    # The entrypoint defaults to claude when unset, so emitting it
+    # for claude too is functionally inert and keeps the env block
+    # uniform across runtimes.
+    echo "      - AGENT_RUNTIME=${AGENT_RUNTIME}"
+    echo "      - ${RT_CONFIG_DIR_ENV}=${RT_CONFIG_DIR_ENV_VALUE}"
+    echo "      - ${RT_CONFIG_SOURCE_ENV}=\${${RT_CONFIG_SOURCE_ENV}:-}"
+    # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
+    # the entrypoint, no codex equivalent). The registry has no field
+    # for it, so this one line stays gated on the runtime id.
+    if [[ "$AGENT_RUNTIME" == "claude" ]]; then
+        echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
+    fi
+    echo "      - NODE_OPTIONS=--max-old-space-size=4096"
+
+    # Only emit provider API keys when a per-account key is set at
+    # generate time. Emitting an empty key makes SDKs prefer the
+    # blank env var over persisted credentials. The variable read is
+    # already per-account, so this needs no isolated-mode branch.
+    local key_var="${RT_API_KEY_PREFIX}${upper}"
+    if [[ -n "${!key_var:-}" ]]; then
+        echo "      - ${RT_SDK_API_KEY_VAR}=\${${key_var}}"
+    fi
+
+    # GIT_USER_NAME/EMAIL are committer identity, not credentials: they name the
+    # human rather than an account, and an isolated account still has to commit.
+    # They are emitted in all three cases below.
+    if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+        # Already scoped: every account reads its own token variable, which is
+        # exactly the contract issue #331 established. Isolated services reuse
+        # it unchanged rather than growing a second mechanism.
+        echo "      - GH_AUTH_MODE=per-account"
+        echo "      - GH_USER=\${GH_USER_${upper}}"
+        echo "      - GH_TOKEN=\${GH_TOKEN_${upper}}"
+        echo "      - GIT_USER_NAME=\${GIT_USER_NAME_${upper}:-\${GIT_USER_NAME:-}}"
+        echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL_${upper}:-\${GIT_USER_EMAIL:-}}"
+    elif [[ "$mode" == "isolated" ]]; then
+        # No GitHub credential at all. The shared GH_TOKEN identifies one
+        # account to GitHub, so handing the same value to every isolated
+        # service would make the boundary decorative on the one surface that
+        # carries write access to remote repositories (issue #335, stage 4).
+        # The entrypoint already treats an unset GH_TOKEN as "no token": it
+        # falls through to hosts.yml, which an isolated account does not have
+        # either, and reports unauthenticated rather than failing to start.
+        echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
+        echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
+    else
+        echo "      - GH_TOKEN=\${GH_TOKEN:-}"
+        echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
+        echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
+    fi
+
+    if [[ "$mode" == "isolated" ]]; then
+        # $HOME is on the read-only root filesystem, so `git config --global`
+        # and `gh auth setup-git` cannot write ~/.gitconfig. Redirect the
+        # global config into the per-account state mount, which is writable
+        # and already account-private. Without this the entrypoint's
+        # credential-helper setup fails silently and `git push` breaks with
+        # no diagnostic. Requires git 2.32+ (image ships 2.39 on bookworm).
+        echo "      - GIT_CONFIG_GLOBAL=${RT_CONTAINER_CONFIG_MOUNT}/gitconfig"
+    fi
 }
 
 # emit_isolated_tmpfs
@@ -229,6 +328,54 @@ emit_isolated_tmpfs() {
     echo "      - /home/node/.cache:${owner}"
     echo "      - /home/node/.npm:${owner}"
     echo "      - /home/node/.agents:${owner}"
+}
+
+# emit_isolated_service_network LETTER
+# Print the network attachment for one isolated account service.
+#
+# The base stack declares no networks at all, so every service lands on the
+# project-wide implicit `default` bridge and siblings can reach each other by
+# service name. Declaring an explicit network here REPLACES that attachment
+# rather than adding to it, which is what makes the separation real.
+#
+# `networks` and `network_mode` are mutually exclusive keys -- a service
+# carrying both is rejected -- so the policy has to pick one at generate time
+# and cannot be expressed as an interpolated ${VAR}. That is the same shape
+# NUM_ACCOUNTS and GH_AUTH_MODE already have: the generated file is correct for
+# the configuration it was generated from, and changing the key means
+# regenerating.
+emit_isolated_service_network() {
+    local letter="$1"
+
+    if [[ "$ISOLATED_NETWORK_MODE_RESOLVED" == "none" ]]; then
+        echo "    network_mode: none"
+    else
+        echo "    networks:"
+        echo "      - isolated_net_${letter}"
+    fi
+}
+
+# emit_isolated_networks
+# Print the top-level `networks:` block declaring one bridge per account.
+#
+# Ordinary bridges, not `internal: true`: outbound access to the model API and
+# to git remotes has to keep working. What this buys is that A and B sit on
+# different bridges, so neither appears in the other's DNS and neither can open
+# a direct connection to it. Blocking egress is a proxy/firewall concern and is
+# deliberately not attempted here.
+emit_isolated_networks() {
+    if [[ "$ISOLATED_NETWORK_MODE_RESOLVED" == "none" ]]; then
+        return 0
+    fi
+
+    echo ""
+    echo "networks:"
+    local i letter
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        letter=$(index_to_letter "$i")
+        echo "  isolated_net_${letter}:"
+        echo "    driver: bridge"
+    done
 }
 
 # --- Generate docker-compose.yml ---------------------------------------------
@@ -279,49 +426,7 @@ generate_base() {
             echo "    volumes:"
             emit_account_volumes shared "$letter" '${PROJECT_DIR}' '${CONTAINER_PROJECT_DIR:-/project}'
             echo "    environment:"
-            echo "      - TERM=xterm-256color"
-            echo "      - TZ=\${TZ:-UTC}"
-            # When the container runs as the host UID instead of node(1000),
-            # the passwd entry for that UID is missing, so \$HOME defaults
-            # to /. Pinning HOME keeps runtime state, ~/.config, etc.
-            # resolvable.
-            echo "      - HOME=/home/node"
-            # AGENT_RUNTIME is now always emitted (previously codex-only).
-            # The entrypoint defaults to claude when unset, so emitting it
-            # for claude too is functionally inert and keeps the env block
-            # uniform across runtimes.
-            echo "      - AGENT_RUNTIME=${AGENT_RUNTIME}"
-            echo "      - ${RT_CONFIG_DIR_ENV}=${RT_CONFIG_DIR_ENV_VALUE}"
-            echo "      - ${RT_CONFIG_SOURCE_ENV}=\${${RT_CONFIG_SOURCE_ENV}:-}"
-            # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
-            # the entrypoint, no codex equivalent). The registry has no field
-            # for it, so this one line stays gated on the runtime id.
-            if [[ "$AGENT_RUNTIME" == "claude" ]]; then
-                echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
-            fi
-            echo "      - NODE_OPTIONS=--max-old-space-size=4096"
-            # Only emit provider API keys when a per-account key is set at
-            # generate time. Emitting an empty key makes SDKs prefer the
-            # blank env var over persisted credentials.
-            local key_var="${RT_API_KEY_PREFIX}${upper}"
-            if [[ -n "${!key_var:-}" ]]; then
-                echo "      - ${RT_SDK_API_KEY_VAR}=\${${key_var}}"
-            fi
-            if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
-                local gh_user_var="GH_USER_${upper}"
-                local gh_token_var="GH_TOKEN_${upper}"
-                local git_name_var="GIT_USER_NAME_${upper}"
-                local git_email_var="GIT_USER_EMAIL_${upper}"
-                echo "      - GH_AUTH_MODE=per-account"
-                echo "      - GH_USER=\${${gh_user_var}}"
-                echo "      - GH_TOKEN=\${${gh_token_var}}"
-                echo "      - GIT_USER_NAME=\${${git_name_var}:-\${GIT_USER_NAME:-}}"
-                echo "      - GIT_USER_EMAIL=\${${git_email_var}:-\${GIT_USER_EMAIL:-}}"
-            else
-                echo "      - GH_TOKEN=\${GH_TOKEN:-}"
-                echo "      - GIT_USER_NAME=\${GIT_USER_NAME:-}"
-                echo "      - GIT_USER_EMAIL=\${GIT_USER_EMAIL:-}"
-            fi
+            emit_account_environment shared "$upper"
             echo "    deploy:"
             echo "      resources:"
             echo "        limits:"
@@ -423,8 +528,21 @@ generate_isolated() {
         echo "# mounts is a bounded tmpfs; \$HOME itself stays read-only, so the global"
         echo "# git config is redirected into the per-account state mount."
         echo "#"
-        echo "# Credential environment variables and per-account networks are NOT yet"
-        echo "# scoped. See docs/ISOLATION.md."
+        echo "# The environment lists carry !override for the same reason the volume"
+        echo "# lists do. An untagged block merges by key, so the base stack's shared"
+        echo "# GH_TOKEN would survive into every isolated service; Compose cannot"
+        echo "# remove a single inherited key, so the list is re-emitted in full and"
+        echo "# whatever is absent below is absent from the resolved service."
+        echo "#"
+        if [[ "$ISOLATED_NETWORK_MODE_RESOLVED" == "none" ]]; then
+            echo "# ISOLATED_NETWORK_MODE=none: every account is detached from all"
+            echo "# networks. Outbound agent, API and git access do not work. Regenerate"
+            echo "# with ISOLATED_NETWORK_MODE=bridge to restore them."
+        else
+            echo "# Each account is on its own bridge network, so outbound access keeps"
+            echo "# working while siblings cannot resolve or connect to each other."
+            echo "# Egress allowlisting is a separate proxy/firewall concern."
+        fi
         echo ""
         echo "services:"
 
@@ -453,14 +571,9 @@ generate_isolated() {
             echo "        limits:"
             echo "          pids: \${ISOLATED_PIDS_LIMIT:-1024}"
             emit_isolated_tmpfs
-            echo "    environment:"
-            # $HOME is on the read-only root filesystem, so `git config --global`
-            # and `gh auth setup-git` cannot write ~/.gitconfig. Redirect the
-            # global config into the per-account state mount, which is writable
-            # and already account-private. Without this the entrypoint's
-            # credential-helper setup fails silently and `git push` breaks with
-            # no diagnostic. Requires git 2.32+ (image ships 2.39 on bookworm).
-            echo "      - GIT_CONFIG_GLOBAL=${RT_CONTAINER_CONFIG_MOUNT}/gitconfig"
+            emit_isolated_service_network "$letter"
+            echo "    environment: !override"
+            emit_account_environment isolated "$upper"
             echo "    volumes: !override"
             emit_account_volumes isolated "$letter" \
                 "\${ISOLATED_WORKSPACE_${upper}}" \
@@ -470,6 +583,8 @@ generate_isolated() {
                 echo ""
             fi
         done
+
+        emit_isolated_networks
     } > "$outfile"
 
     echo "Generated: $outfile ($NUM_ACCOUNTS services)"

@@ -1,5 +1,5 @@
 # test_isolation_modes.ps1 — ISOLATION_MODE contract parity for the PowerShell
-# layer (issue #335, stages 1 to 3).
+# layer (issue #335, stages 1 to 4).
 #
 # Run:  pwsh -NoProfile -File tests/test_isolation_modes.ps1
 # Exits non-zero on any failure.
@@ -87,9 +87,11 @@ function New-Sandbox {
 $savedMode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
 $savedProjectDirA = [Environment]::GetEnvironmentVariable('PROJECT_DIR_A')
 $savedIsolatedA = [Environment]::GetEnvironmentVariable('ISOLATED_WORKSPACE_A')
+$savedNetworkMode = [Environment]::GetEnvironmentVariable('ISOLATED_NETWORK_MODE')
 $env:ISOLATION_MODE = ''
 $env:PROJECT_DIR_A = ''
 $env:ISOLATED_WORKSPACE_A = ''
+$env:ISOLATED_NETWORK_MODE = ''
 
 try {
     Write-Host '== Test-IsolationModeKnown =='
@@ -149,7 +151,51 @@ try {
     Assert-Eq 'environment outranks .env' 'worktree' (Get-IsolationMode -ProjectRoot $sharedRoot)
     $env:ISOLATION_MODE = ''
 
+    Write-Host '== Test-IsolatedNetworkModeKnown =='
+    foreach ($netMode in @('bridge', 'none')) {
+        Assert-Eq "network known: $netMode" $true (Test-IsolatedNetworkModeKnown -Mode $netMode)
+    }
+    # 'Bridge' is rejected on purpose: the bash `case` is case-sensitive, so
+    # accepting it here would let a Windows user configure a value the Linux
+    # generator refuses -- the asymmetry this contract exists to prevent.
+    foreach ($netMode in @('', 'bogus', 'Bridge', 'internal')) {
+        Assert-Eq "network not known: '$netMode'" $false (Test-IsolatedNetworkModeKnown -Mode $netMode)
+    }
+
+    Write-Host '== Get-IsolatedNetworkModeSummary =='
+    # bridge is the one whose limits are easy to overstate: it separates the
+    # accounts from each other, it does not restrict what they can reach
+    # outside. The summary has to say the first part without implying the
+    # second.
+    Assert-Eq 'bridge summary says outbound access still works' $true `
+        ((Get-IsolatedNetworkModeSummary -Mode 'bridge') -like '*outbound access works*')
+    Assert-Eq 'none summary says there is no outbound access' $true `
+        ((Get-IsolatedNetworkModeSummary -Mode 'none') -like '*no outbound*')
+
+    Write-Host '== Get-IsolatedNetworkMode: resolution order =='
+    Assert-Eq 'no .env at all defaults to bridge' 'bridge' `
+        (Get-IsolatedNetworkMode -ProjectRoot (New-Sandbox @()))
+    Assert-Eq 'plain .env defaults to bridge' 'bridge' `
+        (Get-IsolatedNetworkMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=isolated')))
+    Assert-Eq 'explicit none' 'none' `
+        (Get-IsolatedNetworkMode -ProjectRoot (New-Sandbox @('ISOLATED_NETWORK_MODE=none')))
+    Assert-Eq 'case-insensitive input is normalized' 'bridge' `
+        (Get-IsolatedNetworkMode -ProjectRoot (New-Sandbox @('ISOLATED_NETWORK_MODE=BRIDGE')))
+
+    $bridgeRoot = New-Sandbox @('ISOLATED_NETWORK_MODE=bridge')
+    $env:ISOLATED_NETWORK_MODE = 'none'
+    Assert-Eq 'environment outranks .env' 'none' `
+        (Get-IsolatedNetworkMode -ProjectRoot $bridgeRoot)
+    $env:ISOLATED_NETWORK_MODE = ''
+
     Write-Host '== rejected configurations =='
+    # An unknown network policy must not degrade to bridge. A rejected value
+    # that quietly became bridge would attach every account to a network while
+    # the user believed they had asked for an offline profile.
+    Assert-Throws 'unknown network mode throws and names the accepted values' `
+        { Get-IsolatedNetworkMode -ProjectRoot (New-Sandbox @('ISOLATED_NETWORK_MODE=bogus')) } `
+        '*must be bridge or none*'
+
     # An unknown mode must not degrade to shared.
     Assert-Throws 'unknown mode throws and names the accepted values' `
         { Get-IsolationMode -ProjectRoot (New-Sandbox @('ISOLATION_MODE=bogus')) } `
@@ -239,6 +285,7 @@ finally {
     $env:ISOLATION_MODE = $savedMode
     $env:PROJECT_DIR_A = $savedProjectDirA
     $env:ISOLATED_WORKSPACE_A = $savedIsolatedA
+    $env:ISOLATED_NETWORK_MODE = $savedNetworkMode
     foreach ($dir in $script:Sandboxes) {
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     }

@@ -126,6 +126,13 @@ function Show-IsolationMode {
     $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
     Write-Host "Isolation mode: $mode"
     Write-Host "  $(Get-IsolationModeSummary -Mode $mode)" -ForegroundColor DarkGray
+    # Only under isolated: no other mode reads the network policy, and printing
+    # it elsewhere would suggest it applies when it does not.
+    if ($mode -eq 'isolated') {
+        $net = Get-IsolatedNetworkMode -ProjectRoot $ProjectRoot
+        Write-Host "Network policy: $net"
+        Write-Host "  $(Get-IsolatedNetworkModeSummary -Mode $net)" -ForegroundColor DarkGray
+    }
     Write-UnusedWorkspacePathWarning -ProjectRoot $ProjectRoot -Mode $mode
 }
 

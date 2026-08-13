@@ -21,6 +21,17 @@
 #             shared host configuration. Clones come from
 #             scripts/setup-isolated.sh; see docs/ISOLATION.md.
 #
+# ISOLATED_NETWORK_MODE names the network policy the isolated mode applies. It
+# is a separate axis from ISOLATION_MODE because it constrains reachability
+# rather than the workspace, and only the isolated mode reads it.
+#
+#   bridge    Each account is attached to its own ordinary bridge network.
+#             Outbound agent/API/git access keeps working; sibling service
+#             discovery and direct lateral connections do not.
+#   none      Each account is detached from every network, for workloads that
+#             need no external access. Egress allowlisting is a separate
+#             proxy/firewall concern and is not what this provides.
+#
 # Public functions:
 #   isolation_mode_is_known MODE       # 0 when MODE is one of the three names
 #   isolation_mode_summary MODE        # one-line trust-boundary description
@@ -28,6 +39,9 @@
 #   resolve_isolation_mode             # environment -> .env -> inference -> shared
 #   require_supported_isolation_mode   # resolve, then check per-account inputs
 #   warn_unused_workspace_paths MODE   # flag per-account paths MODE ignores
+#   isolated_network_mode_is_known M   # 0 when M is bridge or none
+#   isolated_network_mode_summary M    # one-line reachability description
+#   resolve_isolated_network_mode      # environment -> .env -> bridge
 #
 # Requires: scripts/lib/parse_env.sh and scripts/lib/index.sh sourced before
 # this file.
@@ -40,6 +54,11 @@ _CLAUDE_DOCKER_ISOLATION_SH_SOURCED=1
 
 # Backward-compatible default for installations that never set the key.
 ISOLATION_MODE_DEFAULT="shared"
+
+# bridge, not none: an isolated agent still has to reach the model API and its
+# git remote, so detaching by default would break every ordinary workload while
+# looking like a stricter setting.
+ISOLATED_NETWORK_MODE_DEFAULT="bridge"
 
 # isolation_mode_is_known MODE
 # Return 0 when MODE is one of the three contract names.
@@ -149,6 +168,58 @@ resolve_isolation_mode() {
 
     if ! isolation_mode_is_known "$mode"; then
         echo "Error: ISOLATION_MODE must be shared, worktree or isolated (got: $mode)" >&2
+        return 1
+    fi
+
+    printf '%s' "$mode"
+}
+
+# isolated_network_mode_is_known MODE
+# Return 0 when MODE is one of the two network policy names.
+isolated_network_mode_is_known() {
+    case "${1:-}" in
+        bridge|none) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# isolated_network_mode_summary MODE
+# Print a one-line description of the reachability MODE provides, for the same
+# reason isolation_mode_summary exists: the policy should be stated rather than
+# read out of a generated compose file.
+isolated_network_mode_summary() {
+    case "${1:-}" in
+        bridge)
+            printf '%s' "each account is on its own bridge network; outbound access works, sibling discovery and direct connections do not"
+            ;;
+        none)
+            printf '%s' "each account is detached from every network; no outbound agent, API or git access"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# resolve_isolated_network_mode
+# Print the configured network policy: environment, then .env, then the default.
+#
+# There is no inference leg and no per-account variant. Unlike ISOLATION_MODE
+# this key predates nothing, so an unset value means "never configured" rather
+# than "configured the old way".
+#
+# An unrecognized value fails rather than falling back to the default, matching
+# resolve_isolation_mode: ISOLATED_NETWORK_MODE=non silently attaching every
+# account to a network is the failure this contract exists to prevent, and it
+# is worse here than a typo elsewhere because nothing downstream looks wrong.
+resolve_isolated_network_mode() {
+    local mode
+    mode="$(_isolation_lookup ISOLATED_NETWORK_MODE)"
+    mode="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+    mode="${mode:-$ISOLATED_NETWORK_MODE_DEFAULT}"
+
+    if ! isolated_network_mode_is_known "$mode"; then
+        echo "Error: ISOLATED_NETWORK_MODE must be bridge or none (got: $mode)" >&2
         return 1
     fi
 
