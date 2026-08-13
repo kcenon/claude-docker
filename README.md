@@ -683,7 +683,7 @@ against are in [`docs/ISOLATION.md`](docs/ISOLATION.md).
 |---|---|---|
 | `shared` (default) | Tier A | One read-write project mount shared by every account. |
 | `worktree` | Tier B | Each account mounts only its own worktree. Git metadata stays shared. |
-| `isolated` | Tier C | Each account mounts its own independent clone, with its own git metadata and no shared host configuration. Credentials and networks are not yet scoped. |
+| `isolated` | Tier C | Each account mounts its own independent clone, with its own git metadata and no shared host configuration, under a hardened container profile. Credentials and networks are not yet scoped. |
 
 An unrecognized value is refused, and so is a mode whose per-account workspace
 paths are missing. The active mode and its boundary are printed by
@@ -744,11 +744,17 @@ Isolated accounts receive no shared host configuration, which means no shared
 hooks, skills, commands, statusline or `CLAUDE.md`. GitHub authentication still
 works through `GH_TOKEN`.
 
+The container profile is hardened: a read-only root filesystem, every capability
+dropped, `no-new-privileges`, an init process, and a bounded PID limit
+(`ISOLATED_PIDS_LIMIT`, default 1024). The paths the entrypoint and toolchain
+have to write — `/tmp`, the npm and tool caches, the XDG config directory — are
+bounded tmpfs mounts, and the global git config is redirected into the account's
+own state mount so `git push` keeps working.
+
 > **What this tier does not yet do.** Credentials and networks are not scoped:
 > an isolated account cannot reach another account's source, but still sees the
-> same `GH_TOKEN` and can reach sibling containers. The container also still
-> runs with a writable root filesystem and full default capabilities. Those are
-> the next stage of [#335](https://github.com/kcenon/claude-docker/issues/335);
+> same `GH_TOKEN` and can reach sibling containers. Those are the remainder of
+> stage 4 of [#335](https://github.com/kcenon/claude-docker/issues/335);
 > [`docs/ISOLATION.md`](docs/ISOLATION.md) has the per-concern table.
 
 ## Scaling Accounts

@@ -251,6 +251,49 @@ function Get-AccountVolumeLines {
     return $lines
 }
 
+function Get-IsolatedTmpfsLines {
+    <#
+    .SYNOPSIS
+    Return the tmpfs block for one isolated service, including its `tmpfs:` key.
+    .DESCRIPTION
+    Mirrors emit_isolated_tmpfs in generate-compose.sh.
+
+    Every path below is an image layer rather than a mount, so with
+    read_only: true the first write to it fails. The inventory is what the
+    entrypoint and toolchain actually write outside the account's own mounts:
+
+      /tmp                 general tool scratch
+      /home/node/.config   bootstrap-claude.sh creates the ccstatusline XDG link
+      /home/node/.cache    generic tool caches
+      /home/node/.npm      npm cache
+      /home/node/.agents   bootstrap-codex/gemini create skills/ under it
+
+    /home/node/.local is deliberately absent: the agent CLI is installed there
+    (Dockerfile) and is on PATH, so covering it with a tmpfs would hide the
+    binary. $HOME itself is likewise left read-only; the one thing that needed
+    to write there, the global git config, is redirected via GIT_CONFIG_GLOBAL.
+
+    uid/gid repeat the host-user defaults the base stack uses for `user:`.
+    Without them a tmpfs mounts root-owned with mode 1777 — writable by the
+    service, but world-writable, which contradicts the point of this profile.
+    /tmp keeps the conventional 1777 with its sticky bit instead, because tools
+    expect a shared scratch there.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $owner = 'uid=${UID:-1000},gid=${GID:-1000},mode=0700'
+
+    return @(
+        '    tmpfs:'
+        '      - /tmp:mode=1777'
+        "      - /home/node/.config:$owner"
+        "      - /home/node/.cache:$owner"
+        "      - /home/node/.npm:$owner"
+        "      - /home/node/.agents:$owner"
+    )
+}
+
 # --- Generate docker-compose.yml ---------------------------------------------
 
 function New-BaseCompose {
@@ -443,8 +486,15 @@ function New-IsolatedCompose {
     [void]$sb.AppendLine('# Shared host-home mounts are absent by design: no read-only host config')
     [void]$sb.AppendLine('# tree, no agents/skills tree, no shared gh config. An isolated account')
     [void]$sb.AppendLine('# therefore has no shared hooks, skills, commands, statusline or CLAUDE.md.')
+    [void]$sb.AppendLine('#')
+    [void]$sb.AppendLine('# The container profile is hardened: read-only root filesystem, all')
+    [void]$sb.AppendLine('# capabilities dropped, no-new-privileges, an init process and a bounded')
+    [void]$sb.AppendLine('# PID limit. Every path the entrypoint writes to outside the account''s own')
+    [void]$sb.AppendLine('# mounts is a bounded tmpfs; $HOME itself stays read-only, so the global')
+    [void]$sb.AppendLine('# git config is redirected into the per-account state mount.')
+    [void]$sb.AppendLine('#')
     [void]$sb.AppendLine('# Credential environment variables and per-account networks are NOT yet')
-    [void]$sb.AppendLine('# scoped — that is stage 4. See docs/ISOLATION.md.')
+    [void]$sb.AppendLine('# scoped. See docs/ISOLATION.md.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('services:')
 
@@ -455,6 +505,32 @@ function New-IsolatedCompose {
 
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine("    working_dir: `${CONTAINER_ISOLATED_DIR_${upper}:-/workspace-$letter}")
+        [void]$sb.AppendLine('    read_only: true')
+        [void]$sb.AppendLine('    init: true')
+        [void]$sb.AppendLine('    cap_drop:')
+        [void]$sb.AppendLine('      - ALL')
+        [void]$sb.AppendLine('    security_opt:')
+        [void]$sb.AppendLine('      - no-new-privileges:true')
+        # The PID cap goes under deploy.resources.limits, not the legacy
+        # top-level pids_limit key. The base stack already declares
+        # deploy.resources.limits (cpus, memory); Compose treats the legacy key
+        # and the deploy field as the same setting and rejects the merged
+        # project outright when both appear.
+        [void]$sb.AppendLine('    deploy:')
+        [void]$sb.AppendLine('      resources:')
+        [void]$sb.AppendLine('        limits:')
+        [void]$sb.AppendLine('          pids: ${ISOLATED_PIDS_LIMIT:-1024}')
+        foreach ($tmpfsLine in (Get-IsolatedTmpfsLines)) {
+            [void]$sb.AppendLine($tmpfsLine)
+        }
+        [void]$sb.AppendLine('    environment:')
+        # $HOME is on the read-only root filesystem, so "git config --global"
+        # and "gh auth setup-git" cannot write ~/.gitconfig. Redirect the global
+        # config into the per-account state mount, which is writable and already
+        # account-private. Without this the entrypoint's credential-helper setup
+        # fails silently and git push breaks with no diagnostic. Requires git
+        # 2.32+ (image ships 2.39 on bookworm).
+        [void]$sb.AppendLine("      - GIT_CONFIG_GLOBAL=${RtContainerConfigMount}/gitconfig")
         [void]$sb.AppendLine('    volumes: !override')
         foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'isolated' -Letter $letter `
                     -ProjectSource "`${ISOLATED_WORKSPACE_${upper}}" `

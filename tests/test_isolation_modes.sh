@@ -447,9 +447,9 @@ else
     echo "  SKIP  resolved-compose assertions (docker or jq unavailable)"
 fi
 
-# --- 4. Resolved isolated mounts ----------------------------------------------
+# --- 4. Resolved isolated mounts and container hardening ----------------------
 
-echo "== resolved isolated mounts =="
+echo "== resolved isolated mounts and hardening =="
 
 if compose_assert_requires; then
     dir="$(make_sandbox resolved-isolated)"
@@ -532,6 +532,80 @@ if compose_assert_requires; then
         else
             fail "control: generator failed for a plain shared configuration"
             sed 's/^/        /' "$dup_control/.gen.log"
+        fi
+
+        # --- Container hardening --------------------------------------------
+        # Asserted on the resolved model rather than the overlay, for the same
+        # reason the mounts are: the base stack contributes fields of its own,
+        # and only the merged project shows which value actually wins.
+        hardening="$(resolved_service_hardening "$dir" claude-a "${iso_files[@]}")"
+
+        for expected in 'read_only=true' 'init=true' 'cap_drop=["ALL"]' \
+                        'security_opt=["no-new-privileges:true"]'; do
+            if grep -qxF "$expected" <<<"$hardening"; then
+                pass "isolated: $expected"
+            else
+                fail "isolated: expected $expected"
+                printf '%s\n' "$hardening" | sed 's/^/        /'
+            fi
+        done
+
+        # The profile must not run as root. It pins the host user's uid/gid
+        # rather than the image's `node` account, because the per-account state
+        # directory is a host bind mount and a fixed uid 1000 would make it
+        # unwritable wherever the host user is not uid 1000. Either identity
+        # satisfies the requirement this asserts, which is that uid 0 is not it.
+        user_field="$(grep -m1 '^user=' <<<"$hardening" | cut -d= -f2-)"
+        case "$user_field" in
+            '') fail "isolated: no effective user is declared" ;;
+            0|0:*|root|root:*) fail "isolated: service runs as root ($user_field)" ;;
+            *) pass "isolated: effective user is non-root ($user_field)" ;;
+        esac
+
+        pids_field="$(grep -m1 '^pids=' <<<"$hardening" | cut -d= -f2-)"
+        if [[ "$pids_field" =~ ^[0-9]+$ ]] && [[ "$pids_field" -gt 0 ]]; then
+            pass "isolated: PID limit is bounded ($pids_field)"
+        else
+            fail "isolated: PID limit is not a positive integer ($pids_field)"
+        fi
+
+        # $HOME sits on the read-only root filesystem, so the global git config
+        # has to be redirected into something writable. Without it the
+        # entrypoint's `gh auth setup-git` fails silently -- the container still
+        # starts and still prints an authenticated banner, but git push has no
+        # credential helper. Requiring the path to be inside a declared mount is
+        # what makes this a real check rather than a spelling test.
+        git_cfg="$(grep -m1 '^git_config_global=' <<<"$hardening" | cut -d= -f2-)"
+        if [[ -z "$git_cfg" ]]; then
+            fail "isolated: GIT_CONFIG_GLOBAL is unset; \$HOME/.gitconfig is read-only"
+        elif grep -qxF "${git_cfg%/*}" <<<"$targets"; then
+            pass "isolated: GIT_CONFIG_GLOBAL is inside a writable mount ($git_cfg)"
+        else
+            fail "isolated: GIT_CONFIG_GLOBAL ($git_cfg) is not inside any mount"
+        fi
+
+        # Under a read-only root every image-layer path the entrypoint or the
+        # toolchain writes to needs a tmpfs. A missing one can fail silently:
+        # ccstatusline falls back to a hardcoded layout when its XDG directory
+        # is unwritable, so the container looks healthy and the user just loses
+        # their configuration.
+        tmpfs_mounts="$(resolved_service_tmpfs "$dir" claude-a "${iso_files[@]}" | cut -d: -f1)"
+        for required in /tmp /home/node/.config /home/node/.cache \
+                        /home/node/.npm /home/node/.agents; do
+            if grep -qxF "$required" <<<"$tmpfs_mounts"; then
+                pass "isolated: $required is writable under a read-only root"
+            else
+                fail "isolated: $required has no tmpfs under a read-only root"
+            fi
+        done
+
+        # The agent CLI is installed into /home/node/.local and is on PATH, so a
+        # tmpfs there would hide the binary. Its absence from the list is
+        # load-bearing, not an oversight.
+        if grep -qxF /home/node/.local <<<"$tmpfs_mounts"; then
+            fail "isolated: /home/node/.local is masked by a tmpfs; the agent CLI would disappear"
+        else
+            pass "isolated: /home/node/.local is not masked by a tmpfs"
         fi
     fi
 else
