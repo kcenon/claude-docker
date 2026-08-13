@@ -636,6 +636,12 @@ Release automation currently publishes Linux `amd64`/`arm64`, macOS
 `amd64`/`arm64`, and Windows `amd64` assets. Other targets must build from
 source.
 
+Token usage is recomputed on every refresh from each account's JSONL session
+files and memoized per file, so an unchanged history is not reparsed. The
+cache is shared across accounts and pruned per account; the measurements and
+the benchmark that produces them are in
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+
 ### Rebuilding the Image
 
 ```bash
