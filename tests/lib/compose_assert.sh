@@ -294,6 +294,13 @@ duplicate_writable_sources() {
 #
 # Either field is empty when the service does not declare it, which callers
 # should treat as a failure rather than as "no assertion applies".
+#
+# The heap extraction guards `capture` with `test` rather than suppressing its
+# no-match error with the optional operator. `capture(...)?.mib` reads better
+# and works locally on jq 1.8, but optional chaining is a 1.8 addition and
+# ubuntu-latest ships 1.7.1, which rejects it at parse time -- so the whole
+# filter fails to compile and every field comes back empty. Nothing here needs
+# syntax newer than jq 1.5.
 resolved_memory_envelope() {
     local dir="$1" service="$2"
     shift 2
@@ -306,11 +313,12 @@ resolved_memory_envelope() {
     (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
         | jq -r --arg svc "$service" '
             .services[$svc] as $s
-            | ($s.environment.NODE_OPTIONS // "")
-            | capture("--max-old-space-size=(?<mib>[0-9]+)")?.mib // ""
-            | . as $heap
-            | ($s.deploy.resources.limits.memory // "")
-            | (if . == "" then "" else ((tonumber / 1048576) | floor | tostring) end)
-            | "\($heap) \(.)"
+            | ($s.environment.NODE_OPTIONS // "") as $opts
+            | (if ($opts | test("--max-old-space-size=[0-9]+"))
+               then ($opts | capture("--max-old-space-size=(?<mib>[0-9]+)") | .mib)
+               else "" end) as $heap
+            | ($s.deploy.resources.limits.memory // "") as $mem
+            | (if $mem == "" then "" else (($mem | tonumber) / 1048576 | floor | tostring) end) as $cap
+            | "\($heap) \($cap)"
         '
 }
