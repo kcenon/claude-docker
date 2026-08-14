@@ -61,7 +61,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
-      - NODE_OPTIONS=--max-old-space-size=4096
+      - NODE_OPTIONS=--max-old-space-size=3072
       - GIT_USER_NAME=${GIT_USER_NAME:-}
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig
@@ -98,7 +98,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
-      - NODE_OPTIONS=--max-old-space-size=4096
+      - NODE_OPTIONS=--max-old-space-size=3072
       - GIT_USER_NAME=${GIT_USER_NAME:-}
       - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
       - GIT_CONFIG_GLOBAL=/home/node/.claude/gitconfig

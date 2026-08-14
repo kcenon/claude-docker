@@ -37,6 +37,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/runtime.sh"
 # shellcheck source=lib/isolation.sh
 . "$SCRIPT_DIR/lib/isolation.sh"
+# shellcheck source=lib/resources.sh
+. "$SCRIPT_DIR/lib/resources.sh"
 
 # --- Read configuration -------------------------------------------------------
 
@@ -100,6 +102,18 @@ CPU_LIMIT="${CONTAINER_CPU_LIMIT:-2}"
 CPU_RESERVATION="${CONTAINER_CPU_RESERVATION:-1}"
 MEM_LIMIT="${CONTAINER_MEM_LIMIT:-4G}"
 MEM_RESERVATION="${CONTAINER_MEM_RESERVATION:-2G}"
+
+# Node old-space limit, derived from the memory cap unless it is set
+# explicitly. This one does NOT reproduce its historical value: the old
+# hardcoded 4096 MiB heap sat exactly on the 4G cap, which is the defect
+# issue #335 records rather than a default worth preserving. Regenerating
+# lowers the heap to 3072 MiB at the default cap.
+#
+# Validated here, next to GH_AUTH_MODE and ISOLATION_MODE, for the same
+# reason: the pair (cap, heap) is baked into the output as two literals, so a
+# combination that would OOM-kill has to be rejected before the first output
+# file is opened rather than discovered by a container dying under load.
+NODE_HEAP_MB="$(resolve_node_heap_mib "$MEM_LIMIT" "${CONTAINER_NODE_HEAP_MB:-}")" || exit 1
 
 # GitHub authentication is shared by default for backward compatibility.
 # Per-account mode is validated before any compose file is opened so a missing
@@ -246,7 +260,11 @@ emit_account_environment() {
     if [[ "$AGENT_RUNTIME" == "claude" ]]; then
         echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
     fi
-    echo "      - NODE_OPTIONS=--max-old-space-size=4096"
+    # Baked as a literal, like the memory cap it is derived from. Emitting
+    # \${CONTAINER_NODE_HEAP_MB:-...} instead would let the heap be changed in
+    # .env without the cap moving with it, which is precisely the pairing this
+    # value is validated to preserve.
+    echo "      - NODE_OPTIONS=--max-old-space-size=${NODE_HEAP_MB}"
 
     # Only emit provider API keys when a per-account key is set at
     # generate time. Emitting an empty key makes SDKs prefer the

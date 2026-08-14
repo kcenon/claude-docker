@@ -190,6 +190,7 @@ jobs:
           - tests/test_runtime_registry_equivalence.sh
           - tests/test_compose_generator_equivalence.sh
           - tests/test_isolation_modes.sh
+          - tests/test_container_memory.sh
           - tests/test_github_per_account_compose.sh
           - tests/test_github_account_selection.sh
           - tests/test_entrypoint_github_auth.sh
@@ -214,6 +215,7 @@ jobs:
         test:
           - tests/test_parse_env.ps1
           - tests/test_isolation_modes.ps1
+          - tests/test_container_memory.ps1
           - tests/test_powershell_platform_guard.ps1
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
