@@ -387,7 +387,24 @@ Issue #335 is delivered in six stages. Each is a separate PR.
 3. **Independent workspace setup and isolated mount generation.** ✅
 4. **Runtime, configuration, credential and network hardening.** ✅
 5. Resource validation, transactional scaling, TUI cache correction, benchmarks.
+   Partly delivered — see below.
 6. Cross-platform rollout, migration documentation, final benchmark report.
+
+Stage 5 is not one piece of work either. It bundles five independent axes
+across three languages, and they are landing separately for the same reason
+stage 4 split in two:
+
+| Axis | State |
+|---|---|
+| TUI usage-cache correction and large-history benchmark | ✅ |
+| Node heap limit validated below the container memory cap | ✅ |
+| Per-account and aggregate resource budgets surfaced before startup | open |
+| Transactional `scale` | open |
+| 1/2/4-account benchmark matrix and reviewed budgets | open |
+
+The heap axis is documented under
+[Node heap headroom](../README.md#node-heap-headroom) rather than here: it
+applies to every mode, not only to `isolated`.
 
 `isolated` became usable at stage 3, which removed a refusal rather than adding
 a name — the contract had accepted the value since stage 1 precisely so that

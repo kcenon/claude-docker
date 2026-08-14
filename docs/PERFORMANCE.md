@@ -101,12 +101,20 @@ the benchmark is corroboration rather than the gate.
 
 ## Not covered yet
 
-Issue #335 stage 5 also asks for a Node heap limit validated against the
-container memory cap, per-account and aggregate resource budgets surfaced
-before startup, transactional `scale`, and a reproducible 1/2/4-account
-benchmark matrix across all three isolation modes recording startup time,
-idle and peak memory, CPU and wall time for a representative workload, and
-disk usage. None of that is measured here. Until it is, this file is not a
-capacity statement, and the syntactic account ceiling described in
-[`README.md`](../README.md) remains a parser range rather than a supported
+Issue #335 stage 5 also asks for per-account and aggregate resource budgets
+surfaced before startup, transactional `scale`, and a reproducible
+1/2/4-account benchmark matrix across all three isolation modes recording
+startup time, idle and peak memory, CPU and wall time for a representative
+workload, and disk usage. None of that is measured here. Until it is, this
+file is not a capacity statement, and the syntactic account ceiling described
+in [`README.md`](../README.md) remains a parser range rather than a supported
 simultaneous capacity.
+
+The stage-5 item this file used to list first — a Node heap limit validated
+against the container memory cap — has since been implemented and is
+documented under [Node heap headroom](../README.md#node-heap-headroom). It is
+worth being precise about what that did and did not settle: the heap now
+cannot exceed the cap, but the headroom it reserves is a stated convention
+rather than a measured non-heap footprint. Measuring it is part of the
+benchmark matrix above, and one of the things this file will be able to
+replace a convention with once that exists.

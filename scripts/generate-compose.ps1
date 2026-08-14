@@ -138,6 +138,24 @@ $CpuReservation = Resolve-EnvOrDefault 'CONTAINER_CPU_RESERVATION' '1'
 $MemLimit       = Resolve-EnvOrDefault 'CONTAINER_MEM_LIMIT' '4G'
 $MemReservation = Resolve-EnvOrDefault 'CONTAINER_MEM_RESERVATION' '2G'
 
+# Node old-space limit, derived from the memory cap unless it is set
+# explicitly. This one does NOT reproduce its historical value: the old
+# hardcoded 4096 MiB heap sat exactly on the 4G cap, which is the defect issue
+# #335 records rather than a default worth preserving. Regenerating lowers the
+# heap to 3072 MiB at the default cap.
+#
+# Validated here, next to GH_AUTH_MODE and ISOLATION_MODE, for the same
+# reason: the pair (cap, heap) is baked into the output as two literals, so a
+# combination that would OOM-kill has to be rejected before the first output
+# file is opened rather than discovered by a container dying under load.
+try {
+    $NodeHeapMb = Resolve-NodeHeapMib -MemLimit $MemLimit -ConfiguredHeapMb (Resolve-EnvOrDefault 'CONTAINER_NODE_HEAP_MB' '')
+}
+catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+
 # GitHub authentication is shared by default for backward compatibility.
 # Validate per-account mappings before opening any output file so failures do
 # not leave partially regenerated compose files behind.
@@ -314,7 +332,11 @@ function Get-AccountEnvironmentLines {
     if ($AgentRuntime -eq 'claude') {
         $lines.Add('      - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}')
     }
-    $lines.Add('      - NODE_OPTIONS=--max-old-space-size=4096')
+    # Baked as a literal, like the memory cap it is derived from. Emitting
+    # ${CONTAINER_NODE_HEAP_MB:-...} instead would let the heap be changed in
+    # .env without the cap moving with it, which is precisely the pairing this
+    # value is validated to preserve.
+    $lines.Add("      - NODE_OPTIONS=--max-old-space-size=${NodeHeapMb}")
     # Only emit provider API keys when a per-account key is set at
     # generate time. Emitting an empty key makes SDKs prefer the blank env
     # var over persisted credentials in the mounted state dir. The variable

@@ -787,6 +787,160 @@ function Write-UnusedWorkspacePathWarning {
     }
 }
 
+# --- Container Resource Envelope ---------------------------------------------
+#
+# Bash mirror: scripts/lib/resources.sh. The generated compose files carry the
+# container memory cap and the Node old-space limit as two literals that have
+# to agree; until issue #335 both were fixed values that happened to be equal,
+# so V8 was allowed to grow its heap to the whole cgroup limit and the kernel
+# reached the OOM killer before V8 reached the ceiling that would have made it
+# collect garbage instead. The heap is therefore derived from the cap, and an
+# explicitly configured heap is checked against it before any file is written.
+
+# Smallest slice of the cap that must stay outside the Node heap. A floor
+# rather than the whole rule: a percentage alone collapses to nothing on small
+# caps, where the fixed costs (V8 itself, the runtime's node processes, git)
+# do not shrink with the cap.
+$script:NodeHeapMinHeadroomMib = 512
+
+# Fraction of the cap reserved when that exceeds the floor, as a divisor.
+# 25% is a convention, not a measurement -- see the note in
+# scripts/lib/resources.sh, which this mirrors.
+$script:NodeHeapHeadroomDivisor = 4
+
+# Fractional digits kept when a byte value carries a decimal point. Three is
+# 1 MiB of precision at GiB scale, and it is also what keeps the arithmetic
+# inside [long] at the largest unit this accepts.
+$script:ResourceFractionDigits = 3
+
+function ConvertTo-MebibyteCount {
+    <#
+    .SYNOPSIS
+    Convert a Docker byte value to a whole number of MiB.
+    .DESCRIPTION
+    The accepted syntax is the one Docker itself parses
+    (go-units.RAMInBytes, reached through deploy.resources.limits.memory): a
+    number with an optional k/m/g/t/p scale, an optional 'i', an optional 'b',
+    and optional spaces, all case-insensitive -- 4G, 4g, 4GB, 4GiB, 4 g and
+    4294967296 are the same value. Decimals are accepted for the same reason:
+    1.5G is a working CONTAINER_MEM_LIMIT today, and this validator has no
+    business rejecting a cap Docker would have taken.
+
+    Returns $null when Value is not one of those, so the caller owns the
+    diagnostic and can name the key the value came from.
+
+    The result is floored, which is the conservative direction for every
+    caller here: a cap reads as smaller than it is, never as larger.
+
+    Arithmetic is [long]. A 4G cap is 4294967296 bytes, which overflows [int].
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    $normalized = ($Value -replace '\s', '').ToLowerInvariant()
+    if ([string]::IsNullOrEmpty($normalized)) { return $null }
+
+    # Group 1 whole part, group 3 fractional digits, group 5 the scale letter
+    # (empty for plain bytes, whether written as 4 or 4b).
+    if ($normalized -notmatch '^([0-9]+)(\.([0-9]+))?(([kmgtp])i?b?|b)?$') { return $null }
+
+    [long]$intPart = $Matches[1]
+    # A group that did not participate is absent from $Matches rather than
+    # present and empty, so both optional groups are read defensively. Reading
+    # them directly would make an absent scale $null, which the switch below
+    # would fall through, leaving the multiplier 0 and the whole value silently
+    # wrong instead of rejected.
+    $frac = if ($Matches.Contains(3)) { [string]$Matches[3] } else { '' }
+    $scale = if ($Matches.Contains(5)) { [string]$Matches[5] } else { '' }
+
+    [long]$mult = switch ($scale) {
+        ''  { 1 }
+        'k' { 1KB }
+        'm' { 1MB }
+        'g' { 1GB }
+        't' { 1TB }
+        'p' { 1PB }
+    }
+
+    [long]$bytes = $intPart * $mult
+    if (-not [string]::IsNullOrEmpty($frac)) {
+        if ($frac.Length -gt $script:ResourceFractionDigits) {
+            $frac = $frac.Substring(0, $script:ResourceFractionDigits)
+        }
+        [long]$denominator = [math]::Pow(10, $frac.Length)
+        # Floor, not a [long] cast: PowerShell rounds half to even on a cast,
+        # so 1.5 would become 2 where the bash mirror truncates to 1.
+        $bytes += [long][math]::Floor(([long]$frac * $mult) / $denominator)
+    }
+
+    return [long]([math]::Floor($bytes / 1MB))
+}
+
+function Get-NodeHeapHeadroomMib {
+    <#
+    .SYNOPSIS
+    MiB that should stay outside the Node heap for a container capped at CapMib.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][long]$CapMib)
+
+    $headroom = [math]::Floor($CapMib / $script:NodeHeapHeadroomDivisor)
+    if ($headroom -lt $script:NodeHeapMinHeadroomMib) {
+        $headroom = $script:NodeHeapMinHeadroomMib
+    }
+    return [long]$headroom
+}
+
+function Resolve-NodeHeapMib {
+    <#
+    .SYNOPSIS
+    Validated Node old-space limit, in MiB, for a container capped at MemLimit.
+    .DESCRIPTION
+    With ConfiguredHeapMb empty the value is derived from the cap; otherwise
+    ConfiguredHeapMb is used as given. Either way the result is checked
+    against the cap, and an unusable combination throws so the generator can
+    refuse to open the first output file rather than write a stack that
+    OOM-kills at run time.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$MemLimit,
+        [AllowEmptyString()][string]$ConfiguredHeapMb = ''
+    )
+
+    $capMib = ConvertTo-MebibyteCount -Value $MemLimit
+    if ($null -eq $capMib) {
+        throw "CONTAINER_MEM_LIMIT must be a byte value such as 4G, 4096m or 4294967296 (got: $MemLimit)"
+    }
+
+    # Checked before the heap so the advice below can always name a positive
+    # ceiling to lower the heap to.
+    if ($capMib -le $script:NodeHeapMinHeadroomMib) {
+        throw ("CONTAINER_MEM_LIMIT=$MemLimit ($capMib MiB) leaves no room for a Node heap. " +
+            "At least $($script:NodeHeapMinHeadroomMib) MiB of the cap must stay outside the heap, so the cap has to exceed that.")
+    }
+
+    if (-not [string]::IsNullOrEmpty($ConfiguredHeapMb)) {
+        if ($ConfiguredHeapMb -notmatch '^[0-9]+$' -or [long]$ConfiguredHeapMb -eq 0) {
+            throw "CONTAINER_NODE_HEAP_MB must be a positive whole number of MiB (got: $ConfiguredHeapMb)"
+        }
+        [long]$heap = $ConfiguredHeapMb
+    }
+    else {
+        [long]$heap = $capMib - (Get-NodeHeapHeadroomMib -CapMib $capMib)
+    }
+
+    $headroom = $capMib - $heap
+    if ($headroom -lt $script:NodeHeapMinHeadroomMib) {
+        throw ("The Node heap limit does not leave enough of the container memory cap free. " +
+            "CONTAINER_MEM_LIMIT=$MemLimit is $capMib MiB; a $heap MiB heap leaves $headroom MiB, " +
+            "and at least $($script:NodeHeapMinHeadroomMib) MiB is required. " +
+            "Set CONTAINER_NODE_HEAP_MB to at most $($capMib - $script:NodeHeapMinHeadroomMib), or raise CONTAINER_MEM_LIMIT.")
+    }
+
+    return $heap
+}
+
 # --- Docker Compose Helpers --------------------------------------------------
 
 function Get-ComposeArgs {
@@ -910,6 +1064,8 @@ Export-ModuleMember -Function @(
     'Get-SupportedIsolationMode', 'Write-UnusedWorkspacePathWarning',
     'Test-IsolatedNetworkModeKnown', 'Get-IsolatedNetworkModeSummary',
     'Get-IsolatedNetworkMode',
+    # Container resource envelope
+    'ConvertTo-MebibyteCount', 'Get-NodeHeapHeadroomMib', 'Resolve-NodeHeapMib',
     # .env
     'Read-EnvFile', 'Get-EnvValue', 'Write-EnvContent', 'Set-EnvValue',
     # Docker Compose

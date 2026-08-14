@@ -123,7 +123,15 @@ RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
     fi \
     && npm cache clean --force
 
-# Memory heap limit
+# Memory heap limit — image default only.
+#
+# Every compose service overrides this with a value the generator derived from
+# that service's own memory cap and validated to leave headroom for native
+# allocations, subprocesses and page cache (scripts/lib/resources.sh). This
+# line is what a plain `docker run` of the image gets, where there is no
+# declared cap to derive from. Running it that way, set --max-old-space-size
+# to roughly three quarters of whatever --memory is passed; see "Resource
+# Requirements" in README.md.
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
 # Pre-create ccstatusline XDG config dir world-writable.

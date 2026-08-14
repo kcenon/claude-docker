@@ -278,3 +278,47 @@ duplicate_writable_sources() {
         | sort \
         | uniq -d
 }
+
+# resolved_memory_envelope DIR SERVICE FILE...
+# Print "HEAP_MIB CAP_MIB" for SERVICE in the resolved model: the heap ceiling
+# carried by NODE_OPTIONS and the container memory cap, both in MiB.
+#
+# Compose normalizes each of these away from the form the generator wrote.
+# `memory: 4G` resolves to the byte-count string "4294967296", and the
+# environment list resolves to an object, so neither value can be read out of
+# the generated YAML in the shape it is asserted in here.
+#
+# Printing this environment value is safe in a way the generic helper's
+# key-only rule is not: NODE_OPTIONS is a resource setting, and the whole point
+# of the assertion is the number it carries.
+#
+# Either field is empty when the service does not declare it, which callers
+# should treat as a failure rather than as "no assertion applies".
+#
+# The heap extraction guards `capture` with `test` rather than suppressing its
+# no-match error with the optional operator. `capture(...)?.mib` reads better
+# and works locally on jq 1.8, but optional chaining is a 1.8 addition and
+# ubuntu-latest ships 1.7.1, which rejects it at parse time -- so the whole
+# filter fails to compile and every field comes back empty. Nothing here needs
+# syntax newer than jq 1.5.
+resolved_memory_envelope() {
+    local dir="$1" service="$2"
+    shift 2
+
+    local file_args=() f
+    for f in "$@"; do
+        file_args+=(-f "$f")
+    done
+
+    (cd "$dir" && docker compose "${file_args[@]}" config --format json) \
+        | jq -r --arg svc "$service" '
+            .services[$svc] as $s
+            | ($s.environment.NODE_OPTIONS // "") as $opts
+            | (if ($opts | test("--max-old-space-size=[0-9]+"))
+               then ($opts | capture("--max-old-space-size=(?<mib>[0-9]+)") | .mib)
+               else "" end) as $heap
+            | ($s.deploy.resources.limits.memory // "") as $mem
+            | (if $mem == "" then "" else (($mem | tonumber) / 1048576 | floor | tostring) end) as $cap
+            | "\($heap) \($cap)"
+        '
+}
