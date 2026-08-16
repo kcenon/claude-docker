@@ -72,9 +72,6 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_STEP/$TOTAL_STEPS] $1${NC}"; }
 
-# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
-# shellcheck source=lib/tui-release.sh
-. "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/runtime.sh
@@ -912,17 +909,10 @@ build_tui() {
 
     if ! check_go; then
         log_warn "Go toolchain not available."
-        if prompt_confirm "Download prebuilt TUI binary from GitHub Releases?" "y"; then
-            if download_tui_release "$tui_dir/claude-docker-tui"; then
-                local size
-                size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
-                log_success "TUI dashboard installed: tui/claude-docker-tui ($size)"
-                log_info "Launch with: scripts/claude-docker tui"
-                return 0
-            fi
-            log_warn "Prebuilt download failed."
-        fi
-        log_info "Install Go 1.24+ and re-run 'scripts/claude-docker build-tui' later."
+        # The prebuilt-binary offer that used to be here fetched
+        # releases/latest, and this repository publishes no releases -- so it
+        # could only fail, after asking the user to wait for it.
+        log_info "The TUI is built from source; install Go 1.24+ and re-run 'scripts/claude-docker build-tui' later."
         if prompt_confirm "Install Go automatically now?" "y"; then
             install_prerequisite go || {
                 log_warn "Failed to install Go. Skipping TUI build."

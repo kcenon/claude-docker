@@ -178,8 +178,8 @@ scripts/claude-docker help       # Show all available commands
 | | `exec <service> [command...]` | Open a shell or run a command in a container |
 | | `gh-auth [target]` | Import shared or per-account host `gh` credentials |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
-| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI; the bash wrapper auto-downloads if missing |
-| | `build-tui` | Build the TUI from source; the bash wrapper downloads a release when Go is unavailable |
+| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI (build it first with `build-tui`) |
+| | `build-tui` | Build the TUI from source; requires Go 1.24+ |
 | **Scaling** | `scale <N>` | Set 1-702 accounts and regenerate Compose files |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
@@ -624,28 +624,22 @@ the `g` action refreshes only the selected account and recreates only that
 service when it is running.
 
 ```bash
-scripts/claude-docker tui            # Launch dashboard (auto-fetches binary if missing)
+scripts/claude-docker tui            # Launch dashboard
 scripts/claude-docker dashboard      # Alias of tui
-scripts/claude-docker build-tui      # Build from source (Go 1.24+) or fetch a release
+scripts/claude-docker build-tui      # Build from source (requires Go 1.24+)
 ```
 
-On Linux and macOS, `tui` first looks for `tui/claude-docker-tui`. If it is
-missing, the bash wrapper calls `download_tui_release`
-(`scripts/lib/tui-release.sh`) to fetch the matching
-`claude-docker-tui-<os>-<arch>` asset from the latest GitHub Release, verifies
-its `.sha256`, and installs it in place. The asset and checksum come from the
-same release: this detects corruption or an incomplete download, but it is not
-an independent cryptographic signature.
+**The TUI is built from source, and Go 1.24+ is required for it.** `tui` looks
+for `tui/claude-docker-tui` and tells you to run `build-tui` if it is not
+there.
 
-On native Windows, the interactive PowerShell installer offers the same
-checksum-verified release download. The PowerShell `tui` command itself does
-not auto-download a missing binary; rerun `install.ps1` and accept the prebuilt
-download, or install Go 1.24+ and run
-`.\scripts\claude-docker.ps1 build-tui`.
-
-Release automation currently publishes Linux `amd64`/`arm64`, macOS
-`amd64`/`arm64`, and Windows `amd64` assets. Other targets must build from
-source.
+There is no prebuilt-binary download. The wrappers used to offer one, pointed
+at this repository's `releases/latest` — and this repository has never
+published a release, so the offer could only fail after a network round trip.
+Removing it means a host without Go is told what it actually needs on the first
+try. `.github/workflows/release-tui.yml` is retained and is triggered by a `v*`
+tag; if releases are published later, a verified download path can be
+reintroduced against a real tag rather than against `latest`.
 
 Token usage is recomputed on every refresh from each account's JSONL session
 files and memoized per file, so an unchanged history is not reparsed. The
@@ -1169,8 +1163,7 @@ claude-docker/
 |   +-- test-concurrent-git.ps1        E2E test (PowerShell)
 |   +-- test-entrypoint-settings.sh    Entrypoint settings normalization test (bash)
 |   +-- lib/
-|       +-- tui-release.sh             Download + SHA256-verify prebuilt TUI binary (bash)
-|       +-- tui-release.ps1            Same, PowerShell port
+|       +-- worktrees.sh               Which git worktrees the removers may delete (bash)
 |       +-- parse_env.sh               Shared .env parser (bash)
 |       +-- index.sh / index.ps1       Excel-style account index helpers
 |       +-- runtime.sh                 Runtime registry reader (jq, awk fallback)
