@@ -175,8 +175,10 @@ fi
 if [ "$CONFIRM" = "yes" ]; then
     # Remove every registered runtime's state directory, not just Claude's,
     # so a codex/gemini install is fully cleaned up (see #273).
+    runtimes_seen=0
     while IFS= read -r runtime; do
         [ -z "$runtime" ] && continue
+        runtimes_seen=$((runtimes_seen + 1))
         state_dir="$(runtime_field "$runtime" "stateDir")"
         [ -z "$state_dir" ] && continue
         if [ -d "${HOME}/${state_dir}" ]; then
@@ -184,6 +186,16 @@ if [ "$CONFIRM" = "yes" ]; then
             echo "  Removed: ~/${state_dir}"
         fi
     done < <(runtime_list)
+
+    # runtime_list returns nothing and exits 0 when the registry is
+    # unreadable, so this loop could iterate zero times and the line below
+    # would still announce a completed removal. Reporting "removed" having
+    # examined no runtime at all is how state survives a cleanup silently.
+    if [ "$runtimes_seen" -eq 0 ]; then
+        echo "  Error: no runtimes found in the registry; no state directory was examined." >&2
+        echo "         Expected ${PROJECT_ROOT}/tui/internal/config/runtimes.json." >&2
+        exit 1
+    fi
     echo "  State directories removed."
 else
     echo "  Skipped."

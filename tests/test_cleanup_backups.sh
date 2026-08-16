@@ -121,8 +121,55 @@ echo "== Running: cleanup.sh --backups --yes --backup-age-days 7 =="
 # redirects the script to the temp fixture root.
 # docker compose calls error harmlessly to /dev/null inside cleanup.sh.
 FAKE_HOME="$(mktemp -d)"
+
+# FAKE_HOME used to be an empty mktemp -d, so cleanup.sh's
+# `[ -d "${HOME}/${state_dir}" ]` was false for every runtime and the
+# destructive branch this run is supposed to exercise was never entered
+# (#354, item 3). The whole state-removal half of the script was uncovered.
+#
+# The directories come from the registry rather than a hardcoded list, so a
+# runtime added to runtimes.json is covered here the moment it is added --
+# and a broken runtime_list / runtime_field(stateDir) link fails instead of
+# quietly shrinking the set.
+# The fixture root needs the registry. cleanup.sh resolves state-directory
+# names through it, and PROJECT_ROOT_OVERRIDE points the script at a bare
+# temp directory -- so runtime_list returned nothing, the removal loop
+# iterated zero times, and the script still printed "State directories
+# removed." Populating the fixture is what makes this run reach the code.
+mkdir -p "$TMPDIR_FAKE_ROOT/tui/internal/config"
+cp "$PROJECT_ROOT/tui/internal/config/runtimes.json" \
+   "$TMPDIR_FAKE_ROOT/tui/internal/config/runtimes.json"
+
+# shellcheck source=../scripts/lib/runtime.sh
+. "$PROJECT_ROOT/scripts/lib/runtime.sh"
+
+STATE_DIRS=()
+while IFS= read -r rt; do
+    [ -z "$rt" ] && continue
+    sd="$(runtime_field "$rt" "stateDir")"
+    [ -z "$sd" ] && continue
+    mkdir -p "$FAKE_HOME/$sd/account-a"
+    printf 'placeholder\n' > "$FAKE_HOME/$sd/account-a/marker"
+    STATE_DIRS+=("$sd")
+done < <(runtime_list)
+
+if [ "${#STATE_DIRS[@]}" -eq 0 ]; then
+    printf '  FAIL  no runtime state directories were derived from the registry\n'
+    FAIL=$((FAIL + 1))
+fi
+
+cleanup_status=0
 HOME="$FAKE_HOME" PROJECT_ROOT_OVERRIDE="$TMPDIR_FAKE_ROOT" \
-    bash "$CLEANUP" --backups --yes --backup-age-days 7 >/dev/null 2>&1 || true
+    bash "$CLEANUP" --backups --yes --backup-age-days 7 >/dev/null 2>&1 || cleanup_status=$?
+
+echo "== State directories =="
+# The exit code was discarded with `|| true`, so cleanup.sh could fail
+# outright and every assertion below would still describe a clean run.
+assert_eq "cleanup.sh exits 0" "0" "$cleanup_status"
+for sd in "${STATE_DIRS[@]}"; do
+    assert_missing "state dir $sd removed" "$FAKE_HOME/$sd"
+done
+
 rm -rf "$FAKE_HOME"
 
 echo "== Post-conditions =="

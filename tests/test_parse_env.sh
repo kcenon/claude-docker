@@ -96,6 +96,47 @@ assert_eq "hash value round-trip" "val#1" \
     "$(parse_env_value "$SET_FIXTURE" HASH_KEY)"
 rm -f "$SET_FIXTURE"
 
+echo "== set_env_value: the bytes it writes =="
+
+# Reading back through parse_env_value hid two things at once, because the
+# parser's behaviour was substituted for the file's contents (#354, item 8).
+# These assertions look at the file.
+
+BYTES_FIXTURE="$(mktemp)"
+printf 'A=1\n' > "$BYTES_FIXTURE"
+
+# 1. No blank line is inserted before an appended key. `$(tail -c1 file)`
+#    strips the trailing newline, so the "does it end in a newline" check was
+#    always true and .env grew a gap per key.
+set_env_value "$BYTES_FIXTURE" B 2
+set_env_value "$BYTES_FIXTURE" C 3
+assert_eq "appending does not insert blank lines" \
+    "A=1|B=2|C=3" "$(tr '\n' '|' < "$BYTES_FIXTURE" | sed 's/|$//')"
+
+# 2. A file that genuinely lacks a trailing newline still gets one, so the
+#    fix above did not trade one bug for the other.
+NONL_FIXTURE="$(mktemp)"
+printf 'A=1' > "$NONL_FIXTURE"
+set_env_value "$NONL_FIXTURE" B 2
+assert_eq "a missing trailing newline is still added" \
+    "A=1|B=2" "$(tr '\n' '|' < "$NONL_FIXTURE" | sed 's/|$//')"
+rm -f "$NONL_FIXTURE"
+
+# 3. The quoting and escaping, asserted as written rather than as parsed.
+set_env_value "$BYTES_FIXTURE" QUOTED 'say "hi" now'
+assert_eq "an embedded quote is escaped inside the wrapper" \
+    'QUOTED="say \"hi\" now"' "$(grep '^QUOTED=' "$BYTES_FIXTURE")"
+
+# 4. And the read side, stated as it is rather than as the docstring used to
+#    claim. parse_env_value strips the wrapper but does not unescape, so this
+#    round-trip is lossy. Read-EnvFile and the Go LoadEnv agree with it.
+#    Pinned so that making it lossless -- a change to all three readers,
+#    tracked in #356 -- shows up here instead of passing silently.
+assert_eq "the read-back value keeps the backslashes (known, see #356)" \
+    'say \"hi\" now' "$(parse_env_value "$BYTES_FIXTURE" QUOTED)"
+
+rm -f "$BYTES_FIXTURE"
+
 echo
 echo "== Summary: PASS=$PASS FAIL=$FAIL =="
 if (( FAIL > 0 )); then

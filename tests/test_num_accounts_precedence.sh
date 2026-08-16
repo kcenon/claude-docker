@@ -251,6 +251,10 @@ scale_out=$(env -u NUM_ACCOUNTS -u AGENT_RUNTIME HOME="$scale_dir/home" \
 scale_status=$?
 check "scale-27" "bash-exit" "$scale_status" "0"
 check "scale-27" "bash-aa-dir" "$([[ -d "$scale_dir/home/.claude-state/account-aa" ]] && echo 1 || echo 0)" "1"
+# The captured output was discarded, which shellcheck reported as an unused
+# variable once tests/ came into its scope (#354). A successful scale has to
+# say so, or a silent no-op looks the same as the real thing.
+check_contains "scale-27" "bash-reported" "$scale_out" "Scaled to 27 account(s)."
 
 max_dir=$(make_sandbox "scale-max" "-")
 bash_max_out=$(run_with_env "-" bash "$max_dir/scripts/claude-docker" scale 702 2>&1)
@@ -267,8 +271,25 @@ bash_help=$(run_with_env "-" bash "$max_dir/scripts/claude-docker" help 2>&1)
 check_contains "scale-help" "bash" "$bash_help" "Set number of accounts (1-702)"
 pwsh_source=$(tr -d '\r' < "$max_dir/scripts/claude-docker.ps1")
 check_contains "scale-help" "pwsh" "$pwsh_source" "Set number of accounts (1-702)"
-pwsh_scale=$(sed -n '/^function Invoke-Scale {/,/^}/p' "$max_dir/scripts/claude-docker.ps1")
-check_contains "scale-702" "pwsh" "$pwsh_scale" '$newCount -gt 702'
+# The pwsh leg used to grep Invoke-Scale's source for the literal
+# `$newCount -gt 702`. That passes for a body which contains the literal but
+# never applies it, and fails for a valid refactor that extracts 702 into a
+# named constant -- it blocked good changes and caught no defects (#354,
+# item 10). It now runs the same two cases the bash leg runs, through the real
+# entry point.
+#
+# The platform guard is bypassed the same way test_compose_generator_equivalence.sh
+# does it: the child process presents a Windows OS value for that invocation
+# only. There is no production bypass flag for a caller to inherit.
+pwsh_over_out=$(pwsh -NoProfile -Command \
+    "\$PSVersionTable.OS = 'Microsoft Windows'; & '$max_dir/scripts/claude-docker.ps1' scale 703" \
+    2>&1 | tr -d '\r')
+check_contains "scale-703" "pwsh" "$pwsh_over_out" "between 1 and 702"
+
+pwsh_max_out=$(pwsh -NoProfile -Command \
+    "\$PSVersionTable.OS = 'Microsoft Windows'; & '$max_dir/scripts/claude-docker.ps1' scale 702" \
+    2>&1 | tr -d '\r')
+check_contains "scale-702" "pwsh" "$pwsh_max_out" ".env not found"
 
 printf '\n-- checkout untouched\n'
 if [[ "$(compose_digest)" == "$DIGEST_BEFORE" ]]; then

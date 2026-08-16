@@ -19,7 +19,21 @@ case "$(uname -s)" in
 esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# REPO_ROOT, not PROJECT_DIR. This used to be PROJECT_DIR, and the export
+# further down sets PROJECT_DIR to the *compose volume source* -- one name for
+# two things. Every `docker compose -f "$PROJECT_DIR/docker-compose.yml"`
+# after that point resolved to the temporary test repo, which has no compose
+# file, so under `set -euo pipefail` this script could not run past its first
+# container start (#354, item 13).
+#
+# It stays unregistered in CI on purpose. This is a concurrency stress tool:
+# it builds the image, creates N worktrees and starts N containers, which is
+# the cost of gemini-up-smoke multiplied by the account count. Running it per
+# PR buys little that isolated-up-smoke and the compose suites do not already
+# cover. What was wrong was that being unregistered *hid a defect*; the defect
+# is fixed, and tests/test_workflow_contracts.sh enforces registration for
+# tests/ so nothing lands there unrun.
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMP_DIR="$(mktemp -d)"
 REPO_DIR="$TEMP_DIR/test-repo"
 NUM_TEST_ACCOUNTS="${NUM_TEST_ACCOUNTS:-2}"
@@ -36,8 +50,8 @@ to_upper() {
 # Cleanup on exit
 cleanup() {
     echo "=== Cleaning up ==="
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-        -f "$PROJECT_DIR/docker-compose.worktree.yml" \
+    docker compose -f "$REPO_ROOT/docker-compose.yml" \
+        -f "$REPO_ROOT/docker-compose.worktree.yml" \
         down --remove-orphans 2>/dev/null || true
     rm -rf "$TEMP_DIR"
     echo "Done."
@@ -63,7 +77,7 @@ done
 
 echo "=== Building image ==="
 NUM_ACCOUNTS="$NUM_TEST_ACCOUNTS" "$SCRIPT_DIR/generate-compose.sh"
-docker compose -f "$PROJECT_DIR/docker-compose.yml" build
+docker compose -f "$REPO_ROOT/docker-compose.yml" build
 
 echo "=== Starting containers with worktree override ==="
 # Set env vars for docker compose
@@ -74,8 +88,8 @@ for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     export "PROJECT_DIR_${upper}=${REPO_DIR}-${letter}"
 done
 
-docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-    -f "$PROJECT_DIR/docker-compose.worktree.yml" \
+docker compose -f "$REPO_ROOT/docker-compose.yml" \
+    -f "$REPO_ROOT/docker-compose.worktree.yml" \
     up -d
 
 echo "=== Running parallel commits ==="
@@ -85,8 +99,8 @@ for i in $(seq 1 "$NUM_TEST_ACCOUNTS"); do
     upper=$(to_upper "$letter")
     svc="claude-${letter}"
 
-    docker compose -f "$PROJECT_DIR/docker-compose.yml" \
-        -f "$PROJECT_DIR/docker-compose.worktree.yml" \
+    docker compose -f "$REPO_ROOT/docker-compose.yml" \
+        -f "$REPO_ROOT/docker-compose.worktree.yml" \
         exec -T "$svc" bash -c "
             git config user.email '${letter}@test.com'
             git config user.name 'Agent ${upper}'

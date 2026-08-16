@@ -16,6 +16,15 @@ permissions:
   contents: read
 
 jobs:
+  # Scans the whole repository, not just ./scripts. The 16 .sh files under
+  # tests/ plus tests/lib/compose_assert.sh were linted by nothing, and those
+  # files hold the assertion helpers -- an SC2086 or SC2181 defect there
+  # presents as "the test passes" (#354, item 11).
+  #
+  # It cost three findings, all SC2034, and one of them was evidence of a
+  # separate defect: SCRIPT_DIR computed and never used in
+  # test_transform_syntax_check.sh, the fingerprint of a test that once
+  # intended to read the source it was checking.
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest
@@ -26,7 +35,7 @@ jobs:
           # SC1091: sourced files are resolved at runtime, not checkable in lint
           SHELLCHECK_OPTS: -e SC1091
         with:
-          scandir: "./scripts"
+          scandir: "."
           severity: warning
 
   hadolint:
@@ -79,13 +88,23 @@ jobs:
           # - PSAvoidUsingEmptyCatchBlock: best-effort cleanup blocks
           #   deliberately swallow non-fatal errors to keep the CLI usable
           #   when optional steps fail.
-          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Warning `
-            -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
-              PSUseShouldProcessForStateChangingFunctions, `
-              PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
-              PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
-              PSUseUsingScopeModifierInNewRunspaces, `
-              PSAvoidUsingEmptyCatchBlock
+          # tests/ is analyzed too, for the same reason shellcheck now scans
+          # it: the five .ps1 files there hold assertion helpers, and a defect
+          # in one of those presents as "the test passes" (#354, item 11).
+          #
+          # One invocation per directory: -Path is [string], not [string[]],
+          # so `-Path scripts, tests` fails to bind with "Cannot convert
+          # System.Object[] to the type System.String".
+          $results = @()
+          foreach ($dir in @('scripts', 'tests')) {
+            $results += Invoke-ScriptAnalyzer -Path $dir -Recurse -Severity Warning `
+              -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
+                PSUseShouldProcessForStateChangingFunctions, `
+                PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
+                PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
+                PSUseUsingScopeModifierInNewRunspaces, `
+                PSAvoidUsingEmptyCatchBlock
+          }
           if ($results) {
             $results | Format-Table -AutoSize
             exit 1
@@ -274,6 +293,7 @@ jobs:
           - tests/test_install_start_containers.sh
           - tests/test_install_tier_b.sh
           - tests/test_scale_prevalidation.sh
+          - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
           - tests/test_workflow_contracts.sh
           - scripts/test-entrypoint-settings.sh
