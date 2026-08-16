@@ -493,10 +493,16 @@ content type:
 The default read-only host mount is never modified. Account credentials,
 memory, sessions, and logs remain writable and per-container. The managed
 `hooks/` and `scripts/` destinations are clean mirrors and replace existing
-same-named account directories on startup. For `skills/`, `commands/`, and
-`ccstatusline/`, an existing plain target is moved to `<name>.stale.<epoch>`
-before linking. Non-empty per-account instruction files are preserved, but do
-not use the managed directories for persistent per-account overrides.
+same-named account directories on startup. For `skills/`, `commands/`,
+`ccstatusline/` and `settings.json`, an existing plain target is moved to
+`<name>.stale.<epoch>` before linking, and the move is logged. Non-empty
+per-account instruction files are preserved, but do not use the managed
+directories for persistent per-account overrides.
+
+The account state directory itself is created `0700`. On Linux and macOS the
+installer already sets that host-side; on Windows `chmod` is meaningless
+against NTFS and Docker Desktop typically exposes bind mounts as `0777` inside
+the container, so the entrypoint applies it on every start.
 
 `CLAUDE_CONFIG_SOURCE` changes this behavior. An explicit source is treated as
 writable, force-linked on every startup, and its `.sh` files are normalized to
@@ -511,7 +517,7 @@ mount and an explicit `CLAUDE_CONFIG_SOURCE`, it writes a container-local
 working copy before Claude Code starts. The transform performs four operations:
 
 1. sets `sandbox.enabled` to `false`;
-2. removes wildcard entries from `permissions.deny`;
+2. removes wildcard `permissions.deny` entries for the file tools;
 3. replaces a PowerShell `statusLine.command` with the Linux statusline script;
 4. rewrites PowerShell hook commands to their bash equivalents.
 
@@ -535,13 +541,29 @@ If you run claude-docker in any of those modes you lose the host sandbox
 without warning. Either keep the outer Docker isolation strict or edit the
 entrypoint to leave `sandbox.enabled` untouched for that profile.
 
-**2. Wildcard deny rules are removed.**
+**2. Wildcard deny rules for the file tools are removed.**
 
-Entries in `permissions.deny` containing `*` are stripped. The claude-config
-integration expects `sensitive-file-guard.sh` to provide the corresponding
-sensitive-file protection. If a custom config source does not ship and enable
-that hook, those wildcard restrictions are not replaced; do not assume the
-host deny list remains effective inside the container.
+Entries in `permissions.deny` that name `Read(`, `Edit(`, `Write(`, `Glob(` or
+`Grep(` **and** contain `*` are stripped. The claude-config integration expects
+`sensitive-file-guard.sh` to provide the corresponding sensitive-file
+protection. If a custom config source does not ship and enable that hook, those
+wildcard restrictions are not replaced; do not assume the host deny list remains
+effective inside the container.
+
+Rules for every other tool are kept, wildcard or not — `Bash(sudo:*)` and
+`WebFetch(domain:*)` survive into the container. Until #357 the filter dropped
+*any* rule containing `*`, which took those with it even though
+`sensitive-file-guard.sh` substitutes for the file tools only. A `Bash(...)`
+rule written against a Windows host path may not match anything on Linux, but a
+rule that does not match is inert, while one that was silently removed is not
+there to match.
+
+Each removed rule is now named on its own line at startup:
+
+```
+[entrypoint] settings.json: container-optimized (sandbox=off, file-tool glob deny rules stripped)
+[entrypoint]   removed deny rule: Read(./secrets/**)
+```
 
 **3. A PowerShell statusline command is replaced.**
 
@@ -563,14 +585,40 @@ patterns are not supported reliably:
 | Quoted paths with spaces | `pwsh -File "C:\\Program Files\\..."` | not supported |
 | `Join-Path` outside the statusLine slot | inside a hook array | not supported |
 
-After transformation, startup runs `bash -n -c` against every generated command
-and logs a warning for invalid shell syntax. A syntactically valid but
-semantically incorrect rewrite can still fail only when the hook runs. If a
-hook works on the host but not in the container, check the startup logs and the
-patterns above. The workaround is to provide Linux-native commands through
-`CLAUDE_CONFIG_SOURCE`, so the PowerShell rewriter has nothing to change. The
-sandbox and wildcard-deny transforms still apply, and `.sh` files in that
-explicit source are CRLF-normalized in place.
+Only commands that *begin* with `pwsh` are rewritten. A Linux-native command
+that merely mentions the word passes through untouched. Statement separators are
+preserved as written: `;` stays `;` and `&&` stays `&&`, so a hook chain does
+not change from sequential to exit-code-dependent (or the reverse) in the
+container.
+
+After transformation, startup runs `bash -n -c` against every generated command.
+A syntactically valid but semantically incorrect rewrite can still fail only
+when the hook runs. If a hook works on the host but not in the container, check
+the startup logs and the patterns above. The workaround is to provide
+Linux-native commands through `CLAUDE_CONFIG_SOURCE`, so the PowerShell rewriter
+has nothing to change. The sandbox and file-tool deny transforms still apply,
+and `.sh` files in that explicit source are CRLF-normalized in place.
+
+**Degraded settings stop the container.**
+
+`sandbox.enabled = false` and the deny stripping are applied first and cannot
+fail; only the compensating hook rewrite can. A container that started anyway
+would be running with the sandbox off, deny rules stripped, and the guard hook
+that was supposed to make that safe not firing — previously behind a single
+warning line. The entrypoint now refuses to `exec` when any of these applied:
+
+- one or more transformed hook commands failed the `bash -n -c` check;
+- the generated `settings.container.json` was not valid JSON;
+- the transform failed, or `jq` is missing, so the raw host settings are in use.
+
+Set `CLAUDE_ALLOW_DEGRADED_SETTINGS=1` in `.env` to start anyway. The list is
+printed in that case too, so the choice stays visible on every start.
+
+One degradation is reported but does **not** block: a hook script named by
+`settings.json` that is not present on disk. That verdict comes from grepping a
+path-shaped token out of a free-form command string rather than from anything
+the transform observed, and a false positive there would cost a container that
+will not start rather than a stray warning line.
 
 ### Running Commands Inside Containers
 

@@ -37,7 +37,7 @@ runtime_bootstrap() {
 
     if [ -d "$CODEX_SOURCE" ]; then
         local FORCE_CODEX_LINK="${CODEX_CONFIG_SOURCE:+true}"
-        local target backup
+        local target
 
         if [ -f "$CODEX_SOURCE/config.toml" ]; then
             bootstrap_link_item "$CODEX_SOURCE/config.toml" "$CODEX_ACCOUNT_DIR/config.toml" "$FORCE_CODEX_LINK"
@@ -50,14 +50,24 @@ runtime_bootstrap() {
         fi
 
         if [ -d "$CODEX_SOURCE/hooks" ]; then
+            # One copy per boot, no backup branch.
+            #
+            # This used to guard on `[ ! -L "$target" ]` and back the target up
+            # to hooks.stale.<epoch> first. But bootstrap_copy_dir makes the
+            # target a *directory*, never a symlink, so the guard was true
+            # again on the very next boot and the backup branch re-entered --
+            # leaking one hooks.stale.* directory per container restart,
+            # forever, onto the bind-mounted host state directory (#357,
+            # item 1).
+            #
+            # bootstrap_copy_dir already begins with `rm -rf "$dst"`, so the
+            # copy is a clean mirror on its own. bootstrap-claude.sh calls it
+            # in the same situation with no backup branch and does not leak;
+            # this is now the same shape.
             target="$CODEX_ACCOUNT_DIR/hooks"
-            if [ "$FORCE_CODEX_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
-                if [ -e "$target" ] && [ ! -L "$target" ]; then
-                    backup="${target}.stale.$(date +%s)"
-                    mv "$target" "$backup"
-                    echo "[entrypoint] codex hooks: backed up stale copy to $backup"
-                fi
-                bootstrap_copy_dir "$CODEX_SOURCE/hooks" "$target"
+            if ! bootstrap_copy_dir "$CODEX_SOURCE/hooks" "$target"; then
+                echo "[entrypoint] WARNING: codex hooks copy reported errors" >&2
+            else
                 echo "[entrypoint] codex hooks: copied and CRLF-normalized"
             fi
         fi

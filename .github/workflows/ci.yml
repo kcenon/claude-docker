@@ -296,6 +296,9 @@ jobs:
           - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
           - tests/test_workflow_contracts.sh
+          # Linux-only on purpose: this covers container bootstrap code, the
+          # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
+          - tests/test_bootstrap_helpers.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

@@ -147,4 +147,49 @@ if command -v gh >/dev/null 2>&1; then
     fi
 fi
 
+# --- Degraded-settings gate --------------------------------------------------
+# Refuse to exec when bootstrap recorded a blocking degradation (#357, item 8).
+# Until now each of these printed one warning and fell through to `exec "$@"`.
+# Because the transform applies `sandbox.enabled = false` and the deny stripping
+# *before* anything can fail, and only the compensating hook rewrite can fail,
+# the surviving state was "sandbox off, deny rules stripped, and the guard hook
+# that was supposed to make that safe does not fire" -- behind a line that had
+# already scrolled away by the time the prompt appeared.
+#
+# The cost is real: a malformed host settings.json now stops the container
+# instead of starting a weaker one. CLAUDE_ALLOW_DEGRADED_SETTINGS=1 is the way
+# through, and the message names every degradation so the choice is informed
+# rather than a reflex.
+#
+# Advisory degradations are printed alongside but never block on their own --
+# see the tier note in bootstrap-common.sh.
+print_degradations() {
+    local _list="$1" _deg
+    [ -z "$_list" ] && return 0
+    while IFS= read -r _deg; do
+        [ -z "$_deg" ] && continue
+        echo "[entrypoint]   - $_deg" >&2
+    done <<< "$_list"
+}
+
+if [ -n "${CLAUDE_DOCKER_DEGRADATIONS_BLOCKING:-}" ]; then
+    if [ "${CLAUDE_ALLOW_DEGRADED_SETTINGS:-0}" = "1" ]; then
+        echo "[entrypoint] WARNING: starting with degraded settings (CLAUDE_ALLOW_DEGRADED_SETTINGS=1):" >&2
+        print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_BLOCKING"
+        print_degradations "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}"
+    else
+        echo "[entrypoint] ERROR: refusing to start — bootstrap could not fully prepare this container:" >&2
+        print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_BLOCKING"
+        print_degradations "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}"
+        echo "[entrypoint]" >&2
+        echo "[entrypoint] Fix the host configuration, or point CLAUDE_CONFIG_SOURCE at a" >&2
+        echo "[entrypoint] Linux-native config tree to bypass the pwsh rewriter." >&2
+        echo "[entrypoint] To start anyway, set CLAUDE_ALLOW_DEGRADED_SETTINGS=1 in .env." >&2
+        exit 1
+    fi
+elif [ -n "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}" ]; then
+    echo "[entrypoint] WARNING: starting with degraded settings:" >&2
+    print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_ADVISORY"
+fi
+
 exec "$@"

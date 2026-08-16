@@ -260,6 +260,14 @@ emit_account_environment() {
     if [[ "$AGENT_RUNTIME" == "claude" ]]; then
         echo "      - CLAUDE_NORMALIZE_CRLF=\${CLAUDE_NORMALIZE_CRLF:-}"
     fi
+    # CLAUDE_ALLOW_DEGRADED_SETTINGS is the opt-out for the pre-exec gate
+    # (#357). Not gated on the runtime id: the gate lives in entrypoint.sh
+    # itself, so a module that starts recording degradations later needs no
+    # change here. The CLAUDE_ prefix is the name the issue settled on, not a
+    # statement about scope. Without this line the .env variable never reaches
+    # the container and the escape hatch the refusal message names would not
+    # exist.
+    echo "      - CLAUDE_ALLOW_DEGRADED_SETTINGS=\${CLAUDE_ALLOW_DEGRADED_SETTINGS:-}"
     # Baked as a literal, like the memory cap it is derived from. Emitting
     # \${CONTAINER_NODE_HEAP_MB:-...} instead would let the heap be changed in
     # .env without the cap moving with it, which is precisely the pairing this
