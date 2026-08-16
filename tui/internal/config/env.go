@@ -17,11 +17,18 @@ import (
 const (
 	// DefaultNumAccounts matches the compose generator fallback.
 	DefaultNumAccounts = 2
-	RuntimeClaude      = "claude"
-	RuntimeCodex       = "codex"
-	RuntimeGemini      = "gemini"
-	GHAuthShared       = "shared"
-	GHAuthPerAccount   = "per-account"
+
+	// MaxAccounts is the highest index the Excel-style letter scheme can
+	// name: 702 is "zz". Shared with normalize_account_count in
+	// scripts/lib/index.sh and its PowerShell counterpart, which cap at the
+	// same value; above it IndexToLetter returns "" and every service
+	// collapses onto the same name.
+	MaxAccounts      = 702
+	RuntimeClaude    = "claude"
+	RuntimeCodex     = "codex"
+	RuntimeGemini    = "gemini"
+	GHAuthShared     = "shared"
+	GHAuthPerAccount = "per-account"
 
 	// Isolation modes name the workspace trust boundary a set of accounts
 	// runs under. Kept in lockstep with scripts/lib/isolation.sh and the
@@ -48,6 +55,20 @@ const (
 // Moving the write onto the event loop would not be enough: the refresh Cmd
 // still reads from its own goroutine, so the collision would move rather than
 // go away. The lock covers every reader, present and future.
+//
+// # Nil receiver
+//
+// Every method on *Env is safe to call on a nil receiver and behaves as if
+// the file were empty: readers return their documented defaults, Set is a
+// no-op, and Save returns an error. Model.env can be nil, so this is a
+// property callers rely on rather than a courtesy.
+//
+// Seven methods guarded nil and twelve did not (#358, item 15). Because the
+// twelve were all built on Get, and Get was one of the unguarded ones, the
+// split was not "these are safe and those are not" -- it was that a nil Env
+// panicked on almost everything while looking as though the case had been
+// considered. The guard is on Get, Set and Save now, which is every path that
+// touches the fields; the pre-existing per-method guards are left in place.
 type Env struct {
 	mu      sync.RWMutex
 	path    string
@@ -179,7 +200,17 @@ func (e *Env) CanPersist() bool {
 }
 
 // Get returns the value of a key, or empty string if not set.
+//
+// Nil-safe, which is what makes the contract on Env uniform (#358, item 15):
+// every accessor on this type is built on Get, so guarding here is what lets
+// NumAccounts, IsolationMode, ServicePrefix and the rest answer their
+// documented defaults on a nil receiver instead of each needing its own
+// guard. The seven methods that already had one keep it -- they are correct
+// and cost nothing -- but they are no longer the only ones that are safe.
 func (e *Env) Get(key string) string {
+	if e == nil {
+		return ""
+	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if i, ok := e.index[key]; ok {
@@ -197,6 +228,12 @@ func (e *Env) Get(key string) string {
 // appends -- and .env.example ships all three token keys commented out, which
 // LoadEnv does not index, so even shared mode appends on the first press.
 func (e *Env) Set(key, value string) {
+	if e == nil {
+		// Nothing to write to and nothing that could later read it. Save on a
+		// nil receiver returns an error, so a lost write here cannot become a
+		// silently successful one.
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if i, ok := e.index[key]; ok {
@@ -212,6 +249,9 @@ func (e *Env) Set(key, value string) {
 // Save writes the env file back to disk, preserving order/comments.
 // Uses atomic rename + 0600 permissions because the file holds secrets.
 func (e *Env) Save() error {
+	if e == nil {
+		return fmt.Errorf("no env loaded")
+	}
 	// Snapshot under the read lock, then write without holding it. The write
 	// includes a temp file, a rename and -- on Windows -- an icacls exec;
 	// holding the lock across that would stall every render for as long as
@@ -330,17 +370,52 @@ func hardenSecretFile(path string) error {
 	return nil
 }
 
-// NumAccounts returns the NUM_ACCOUNTS value from .env (default 2).
+// NumAccounts returns the NUM_ACCOUNTS value from .env (default 2), clamped
+// to the range the letter generator can name.
+//
+// The lower bound was here already; the upper one was not (#358, item 12).
+// IndexToLetter returns "" above MaxAccounts, so NUM_ACCOUNTS=1000 produced
+// accounts 703 and up with an empty letter -- and every one of them then
+// built the same service name, `claude-`, because the name is
+// prefix + "-" + letter. Duplicate service names in a dashboard whose primary
+// action is "attach to the selected one" is worse than refusing the value.
+//
+// Clamped rather than rejected, to match normalize_account_count in
+// scripts/lib/index.sh, which caps at the same 702. NumAccountsWarning
+// reports the clamp; the dashboard renders it in the banner.
 func (e *Env) NumAccounts() int {
+	n, _ := e.numAccounts()
+	return n
+}
+
+// NumAccountsWarning returns a human-readable note when NUM_ACCOUNTS was not
+// usable as written, or "" when it was. Empty for an unset value: the default
+// is not a problem to report.
+func (e *Env) NumAccountsWarning() string {
+	_, warning := e.numAccounts()
+	return warning
+}
+
+func (e *Env) numAccounts() (int, string) {
 	v := e.Get("NUM_ACCOUNTS")
 	if v == "" {
-		return DefaultNumAccounts
+		return DefaultNumAccounts, ""
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 {
-		return DefaultNumAccounts
+	if err != nil {
+		return DefaultNumAccounts, fmt.Sprintf(
+			"NUM_ACCOUNTS=%s is not a number; using %d", v, DefaultNumAccounts)
 	}
-	return n
+	if n < 1 {
+		return DefaultNumAccounts, fmt.Sprintf(
+			"NUM_ACCOUNTS=%d is below 1; using %d", n, DefaultNumAccounts)
+	}
+	if n > MaxAccounts {
+		return MaxAccounts, fmt.Sprintf(
+			"NUM_ACCOUNTS=%d exceeds the %d accounts the letter scheme can name; using %d",
+			n, MaxAccounts, MaxAccounts)
+	}
+	return n, ""
 }
 
 // AgentRuntime returns the selected agent runtime. Claude is the default.
@@ -546,10 +621,10 @@ func IsolationModeTagline(mode string) string {
 // IndexToLetter converts a 1-based account index to its Excel-style
 // letter name: 1 -> "a", 26 -> "z", 27 -> "aa", 52 -> "az", 702 -> "zz".
 // Values 1-26 are bit-for-bit identical to the previous single-letter impl.
-// Returns "" for non-positive input. Upper bound is 702 (zz) to match the
-// bash/PowerShell generators; larger values also return "".
+// Returns "" for non-positive input. Upper bound is MaxAccounts (702, "zz")
+// to match the bash/PowerShell generators; larger values also return "".
 func IndexToLetter(i int) string {
-	if i < 1 || i > 702 {
+	if i < 1 || i > MaxAccounts {
 		return ""
 	}
 	var buf []byte

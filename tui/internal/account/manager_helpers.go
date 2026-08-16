@@ -12,7 +12,6 @@ import (
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
-	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
 
 // ghAuthTimeout bounds the in-container `gh api user` call (#358, item 1).
@@ -58,28 +57,35 @@ func (m *Manager) discoverStateDirs() (map[string]config.StateDir, int) {
 }
 
 // fetchContainerStatus queries docker compose and returns container info
-// keyed by service name. A docker error degrades to an empty map so listing
-// still works when the daemon is unreachable.
-func (m *Manager) fetchContainerStatus() map[string]docker.ContainerInfo {
-	containers, _ := m.client.PS()
+// keyed by service name, plus whatever went wrong.
+//
+// The error is still not fatal -- listing degrades to "no containers" so the
+// dashboard works with an unreachable daemon -- but it is no longer discarded
+// (#358, item 9). Swallowed, a dead docker daemon rendered identically to
+// "the containers have not been created yet", and Model.err had no writer
+// anywhere, so the error screen in view.go was unreachable code.
+func (m *Manager) fetchContainerStatus() (map[string]docker.ContainerInfo, error) {
+	containers, err := m.client.PS()
 	out := make(map[string]docker.ContainerInfo, len(containers))
 	for _, c := range containers {
 		out[c.Service] = c
 	}
-	return out
+	return out, err
 }
 
 // buildAccounts constructs the Account skeletons for indexes 1..n with
-// state-dir resolution, auth type, limitline cache, JSONL token summary,
-// and container status applied.
+// state-dir resolution, auth type, limitline cache, and container status
+// applied.
+//
+// It also used to build a JSONL token summary per account, walking
+// ~/.claude-state/account-*/projects/**.jsonl on every refresh. Nothing read
+// the result -- see the note on Account -- so the walk and its cache are gone
+// (#358, item 14).
 func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, containerMap map[string]docker.ContainerInfo) []Account {
 	accounts := make([]Account, n)
 	runtime := m.env.AgentRuntime()
 	servicePrefix := m.env.ServicePrefix()
 	claudeUsage := m.env.SupportsClaudeUsage()
-	// Projects trees visited by this refresh. Each scan only prunes inside
-	// its own tree, so accounts that have gone away are released here.
-	scannedRoots := make([]string, 0, n)
 	for i := 1; i <= n; i++ {
 		letter := config.IndexToLetter(i)
 		svcName := servicePrefix + "-" + letter
@@ -99,24 +105,6 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 				acct.FiveHourUsage, acct.SevenDayUsage = parseLimitlineCache(sd.LimitlineCachePath())
 			}
 
-			// JSONL token summary (always populated when session data exists).
-			// Uses the manager-scoped cache so unchanged session files are
-			// not re-read and re-decoded on every dashboard refresh.
-			if claudeUsage {
-				projectsDir := sd.ProjectsDir()
-				scannedRoots = append(scannedRoots, projectsDir)
-				if sessions, err := usage.ScanAccountSessionsWithCache(projectsDir, m.usageCache); err == nil && len(sessions) > 0 {
-					opts := usage.AllTimeOptions()
-					tokens := usage.AggregateSessions(sessions, opts)
-					count := usage.CountFilteredSessions(sessions, opts)
-					acct.Tokens = &TokenSummary{
-						InputTokens:  tokens.InputTokens,
-						OutputTokens: tokens.OutputTokens,
-						CacheTokens:  tokens.CacheCreationInputTokens + tokens.CacheReadInputTokens,
-						SessionCount: count,
-					}
-				}
-			}
 		}
 
 		if ci, ok := containerMap[svcName]; ok {
@@ -131,7 +119,6 @@ func (m *Manager) buildAccounts(n int, stateDirs map[string]config.StateDir, con
 
 		accounts[i-1] = acct
 	}
-	m.usageCache.RetainRoots(scannedRoots)
 	return accounts
 }
 

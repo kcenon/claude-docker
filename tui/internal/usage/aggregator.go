@@ -20,12 +20,12 @@ func AllTimeOptions() AggregateOptions {
 	return AggregateOptions{}
 }
 
-// DailyOptions returns options for today's entries (KST local).
-func DailyOptions() AggregateOptions {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	return AggregateOptions{Since: &start}
-}
+// DailyOptions was removed in #358 (item 13). Its doc comment promised
+// "today's entries (KST local)" while the body used time.Now().Location(),
+// the machine-local zone -- so on any host not set to Asia/Seoul it silently
+// selected a different day than it claimed. It had no caller outside its own
+// test, so there was nothing to make correct: a KST-fixed version would have
+// been dead code that merely told the truth.
 
 // AggregateSessions sums token usage across all entries matching options.
 func AggregateSessions(sessions []Session, opts AggregateOptions) TokenTotals {

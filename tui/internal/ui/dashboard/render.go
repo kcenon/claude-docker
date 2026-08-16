@@ -48,6 +48,15 @@ func renderIsolationBanner(env *config.Env) string {
 	for _, w := range env.UnusedWorkspaceWarnings() {
 		out += "\n" + warnStyle.Render("  Warning: "+w)
 	}
+	// A clamped NUM_ACCOUNTS belongs in the same place and for the same
+	// reason: it is a property of .env rather than of an operation, so it
+	// stays visible for as long as it is true (#358, item 12). Silently
+	// clamping is what the shell generators do; silently clamping with
+	// nothing on screen is what left the dashboard disagreeing with the
+	// number in the file.
+	if w := env.NumAccountsWarning(); w != "" {
+		out += "\n" + warnStyle.Render("  Warning: "+w)
+	}
 
 	return out + "\n\n"
 }

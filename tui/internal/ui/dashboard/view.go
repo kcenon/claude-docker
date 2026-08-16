@@ -14,7 +14,17 @@ func (m Model) View() string {
 	if m.loading {
 		return "  Loading accounts..."
 	}
-	if m.err != nil {
+	// Three outcomes, three screens (#358, item 9). ListAccounts used to
+	// return a nil error unconditionally, so this branch had no writer and a
+	// dead docker daemon was indistinguishable from an install whose
+	// containers had simply never been created -- two states whose fix is
+	// entirely different.
+	//
+	// The error screen is only for the case with nothing else to draw. When
+	// accounts were discovered from the state directories, they are worth
+	// showing even though their container column is unknown, so the table
+	// wins and the error becomes the banner below it.
+	if m.err != nil && len(m.accounts) == 0 {
 		return fmt.Sprintf("  Error: %v\n\n  Press [r] to retry", m.err)
 	}
 	if len(m.accounts) == 0 {
@@ -28,6 +38,15 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString(renderIsolationBanner(m.env))
+
+	// A degraded listing, drawn above the table it degrades. The STATUS
+	// column reads "--" for every row in this state, which on its own looks
+	// like "not created yet"; this line is what separates the two.
+	if m.err != nil {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).
+			Render(fmt.Sprintf("  Warning: %v", m.err)) + "\n\n")
+	}
+
 	b.WriteString(renderAccountTable(m.accounts, m.cursor, m.width))
 	b.WriteString("\n")
 
