@@ -112,8 +112,19 @@ load_env_file() {
 
 # set_env_value FILE KEY VALUE
 # Insert or update KEY=VALUE in FILE. If FILE does not exist, creates it.
-# Values containing whitespace or '#' are surrounded with double quotes so
-# the round-trip through parse_env_value() is lossless.
+#
+# Values containing whitespace or '#' are surrounded with double quotes, and
+# an embedded double quote is backslash-escaped inside them.
+#
+# The round-trip is NOT lossless for a value containing a double quote. This
+# used to claim it was. parse_env_value strips the wrapping quotes but does
+# not unescape, so `say "hi" now` is written as `"say \"hi\" now"` and read
+# back as `say \"hi\" now`; Read-EnvFile and the Go LoadEnv behave the same
+# way. Making it lossless means changing all three readers in lockstep, which
+# belongs with the SSOT work in #356 -- so the claim is corrected here rather
+# than left as documentation that is simply untrue (#354, item 8).
+# tests/test_parse_env.sh pins the written bytes and the read-back value, so
+# whichever way that decision goes, the change is visible.
 set_env_value() {
     local file="$1" key="$2" value="$3"
     local formatted="$value"
@@ -149,7 +160,18 @@ set_env_value() {
         ' "$file" > "$tmp" && mv "$tmp" "$file"
     else
         # Ensure the file ends with a newline before appending.
-        [[ -s "$file" && "$(tail -c1 "$file")" != $'\n' ]] && printf '\n' >> "$file"
+        #
+        # `$(tail -c1 "$file")` cannot be compared against $'\n': command
+        # substitution strips trailing newlines, so it yields '' for a file
+        # that already ends in one and the comparison was always true. Every
+        # append therefore inserted a blank line first, and .env grew a gap
+        # per key (#354, item 8).
+        #
+        # `tail -c1 | wc -l` answers the actual question: 1 when the last byte
+        # is a newline, 0 when it is not.
+        if [[ -s "$file" ]] && [[ "$(tail -c1 "$file" | wc -l)" -eq 0 ]]; then
+            printf '\n' >> "$file"
+        fi
         printf '%s\n' "$line" >> "$file"
     fi
 }

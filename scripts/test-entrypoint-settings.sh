@@ -12,13 +12,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Resolution order:
 #   1. Explicit positional argument (developer override).
-#   2. CI fixture under tests/entrypoint_fixtures/global when running in
-#      GitHub Actions, where claude-config/ is not checked out alongside
-#      the project (issue #232).
-#   3. Default ../claude-config/global relative to repo (developer host).
+#   2. The in-repo fixture under tests/entrypoint_fixtures/global.
+#   3. ../claude-config/global relative to the repo, if the fixture is gone.
+#
+# The fixture used to be selected only when $GITHUB_ACTIONS was set, so a
+# developer with a claude-config checkout alongside this repo ran the suite
+# against *their own configuration* while CI ran it against the fixture. The
+# two asserted different inputs, and only one of them was reviewable -- which
+# is why this file could carry an assertion anchored to the wrong deny list
+# and still pass locally (#354, item 7).
+#
+# The fixture is the default now. Pass a path as $1 to check a real config.
 if [ -n "${1:-}" ]; then
     CLAUDE_CONFIG="$1"
-elif [ -n "${GITHUB_ACTIONS:-}" ] && [ -d "$PROJECT_ROOT/tests/entrypoint_fixtures/global" ]; then
+elif [ -d "$PROJECT_ROOT/tests/entrypoint_fixtures/global" ]; then
     CLAUDE_CONFIG="$PROJECT_ROOT/tests/entrypoint_fixtures/global"
 else
     CLAUDE_CONFIG="$(cd "$SCRIPT_DIR/../.." && pwd)/claude-config/global"
@@ -95,13 +102,23 @@ else
     val=$(jq -r '.sandbox.enabled' "$OUT")
     assert_eq "sandbox.enabled = false" "false" "$val"
 
-    # no glob patterns in permissions.deny
-    glob_count=$(jq '[.permissions.deny[]? | select(test("[*]"))] | length' "$OUT")
-    assert_zero "no glob patterns in permissions.deny" "$glob_count"
-
-    # non-glob deny rules preserved
-    deny_count=$(jq '.permissions.deny | length' "$OUT")
-    assert_nonzero "non-glob deny rules preserved" "$deny_count"
+    # The deny-rule filter, asserted against the set that must survive rather
+    # than by re-applying the filter's own predicate.
+    #
+    # This used to count `select(test("[*]"))` survivors and require zero --
+    # the same expression generate_container_settings uses to remove them, so
+    # the assertion could not disagree with the implementation. A filter whose
+    # regex matched nothing at all would satisfy it (#354, item 7).
+    #
+    # The fixture's deny list is:
+    #   Read(./.env*)            glob  -> removed
+    #   Read(./secrets/**)       glob  -> removed
+    #   Read(./.aws/credentials) plain -> kept
+    #   Bash(rm -rf /)           plain -> kept
+    expected_deny='["Read(./.aws/credentials)","Bash(rm -rf /)"]'
+    actual_deny=$(jq -c '.permissions.deny' "$OUT")
+    assert_eq "permissions.deny keeps exactly the non-glob rules" \
+        "$expected_deny" "$actual_deny"
 
     # no pwsh anywhere
     pwsh_count=$(jq '[.. | strings | select(test("pwsh"))] | length' "$OUT")

@@ -286,6 +286,7 @@ jobs:
           - tests/test_install_start_containers.sh
           - tests/test_install_tier_b.sh
           - tests/test_scale_prevalidation.sh
+          - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
           - tests/test_workflow_contracts.sh
           - scripts/test-entrypoint-settings.sh
