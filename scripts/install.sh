@@ -1055,13 +1055,14 @@ start_containers() {
 
     cd "$PROJECT_ROOT"
 
+    # build_compose_cmd exports UID/GID itself when it selects the Linux
+    # overlay, using the readonly-safe `: "${UID:=$(id -u)}"` form. The block
+    # that used to be here duplicated that job with a plain `UID=$(id -u)`,
+    # which bash refuses because UID is a readonly special variable -- and
+    # under `set -euo pipefail` that ended the install one line before
+    # `docker compose up -d`, on native Linux only. install_dependencies has
+    # always relied on build_compose_cmd alone; this call site now matches it.
     build_compose_cmd
-
-    if [[ "$PLATFORM" == "linux" ]]; then
-        export UID GID
-        UID=$(id -u)
-        GID=$(id -g)
-    fi
 
     log_info "Compose command: ${COMPOSE_CMD[*]} up -d"
     "${COMPOSE_CMD[@]}" up -d 2>&1
