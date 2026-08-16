@@ -150,7 +150,15 @@ read_pwsh_gen() {
 
 # Digest the committed compose files so the closing assertion can prove no
 # reader wrote into the checkout.
-OUTPUTS=(docker-compose.yml docker-compose.worktree.yml docker-compose.linux.yml)
+# Every file the generators write. A new generated stack must be added here,
+# or this test's closing "no reader wrote into the checkout" assertion cannot
+# see it being clobbered. docker-compose.isolated.yml was missing until #353.
+OUTPUTS=(
+    docker-compose.yml
+    docker-compose.worktree.yml
+    docker-compose.isolated.yml
+    docker-compose.linux.yml
+)
 compose_digest() {
     local f
     for f in "${OUTPUTS[@]}"; do

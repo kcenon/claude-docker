@@ -63,8 +63,10 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Overlay selection logic:
 # 1. Base docker-compose.yml is always included
 # 2. docker-compose.linux.yml is added on Linux hosts when the file exists
-# 3. docker-compose.worktree.yml is added when the resolved ISOLATION_MODE is
-#    worktree (lib/isolation.sh)
+# 3. The overlay named by the resolved ISOLATION_MODE is added:
+#    docker-compose.worktree.yml for worktree, docker-compose.isolated.yml for
+#    isolated, none for shared (lib/isolation.sh). A mode whose overlay is
+#    missing is refused rather than silently downgraded.
 #
 # build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced above).
 COMPOSE_CMD=()

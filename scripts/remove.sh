@@ -86,7 +86,26 @@ detect_platform() {
 # remove.sh must catch containers/volumes from any configuration, so the
 # widest overlay set is included whenever the override files exist on disk.
 COMPOSE_CMD=()
-build_compose_cmd() {
+
+# build_compose_cmd_for_mode MODE
+# Populate COMPOSE_CMD for exactly one isolation mode.
+#
+# This used to attach base + linux + worktree unconditionally and call that the
+# "widest overlay set". It is not a valid set. The worktree and isolated
+# overlays both carry `!override` volume lists and disagree on working_dir, and
+# the worktree overlay interpolates ${PROJECT_DIR_A} -- which an isolated
+# install never sets:
+#
+#     $ docker compose config
+#     warning: The "PROJECT_DIR_A" variable is not set.
+#     invalid spec: :/project-a: empty section between colons
+#
+# That failure was discarded by `2>/dev/null || true`, so an isolated teardown
+# fell through to a bare `docker compose down` that did not know the isolated
+# overlay -- and the isolated_net_* bridge networks survived a run that
+# reported "Removal Complete".
+build_compose_cmd_for_mode() {
+    local mode="$1"
     COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
 
     local platform
@@ -96,9 +115,25 @@ build_compose_cmd() {
         COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
     fi
 
-    if [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
-    fi
+    case "$mode" in
+        worktree) COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml") ;;
+        isolated) COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.isolated.yml") ;;
+    esac
+}
+
+# teardown_modes
+# The modes worth attempting, one per line.
+#
+# Removal has to catch resources from whatever mode the installation is in now
+# *and* from modes it used to be in -- switching leaves the previous stack's
+# containers and networks behind, and this is the script that is supposed to
+# find them. So every mode whose overlay exists is attempted, one `down` each,
+# rather than one `down` carrying every overlay.
+teardown_modes() {
+    echo "shared"
+    [[ -f "${PROJECT_ROOT}/docker-compose.worktree.yml" ]] && echo "worktree"
+    [[ -f "${PROJECT_ROOT}/docker-compose.isolated.yml" ]] && echo "isolated"
+    return 0
 }
 
 # --- Main Removal Steps -------------------------------------------------------
@@ -108,14 +143,31 @@ remove_containers_and_volumes() {
 
     cd "$PROJECT_ROOT"
 
-    build_compose_cmd
+    # One `down` per mode. A mode the installation was never in will usually
+    # fail here on an unset per-account path, and that is fine and expected --
+    # what is not fine is the previous behaviour, where the *configured*
+    # mode's failure looked identical to it because both were discarded.
+    # Every attempt reports its outcome, and the summary names any that did
+    # not succeed.
+    local mode rc out
+    local -a failed=()
+    while IFS= read -r mode; do
+        build_compose_cmd_for_mode "$mode"
+        log_info "Stopping containers ($mode stack)..."
+        rc=0
+        out=$("${COMPOSE_CMD[@]}" down --remove-orphans -v 2>&1) || rc=$?
+        if [[ "$rc" -ne 0 ]]; then
+            failed+=("$mode")
+            log_warn "  $mode stack: docker compose down exited $rc"
+            printf '%s\n' "$out" | sed 's/^/      /' >&2
+        fi
+    done < <(teardown_modes)
 
-    # Stop all running containers from any compose config
-    log_info "Stopping containers..."
-    "${COMPOSE_CMD[@]}" down --remove-orphans -v 2>/dev/null || true
-
-    # Also try base compose alone (in case overlay files were deleted)
-    docker compose down --remove-orphans -v 2>/dev/null || true
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        log_warn "Teardown did not complete for: ${failed[*]}"
+        log_warn "  A mode this installation never used is expected to fail here."
+        log_warn "  Check 'docker ps -a' and 'docker network ls' if resources remain."
+    fi
 
     # Remove any dangling containers with the project prefix
     local project_containers
