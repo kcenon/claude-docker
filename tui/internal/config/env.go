@@ -52,6 +52,9 @@ type Env struct {
 	path    string
 	entries []entry
 	index   map[string]int // key -> entries[i]
+	// loadErr is non-nil when this Env stands in for a .env that could not be
+	// read. Reads answer with defaults; Save refuses. See NewUnloadableEnv.
+	loadErr error
 }
 
 type entry struct {
@@ -99,6 +102,34 @@ func NewEmptyEnv(path string) *Env {
 	return &Env{path: path, index: make(map[string]int)}
 }
 
+// NewUnloadableEnv returns an Env that answers reads with their defaults but
+// refuses to Save (#358, item 7).
+//
+// main.go falls back to an empty Env when LoadEnv fails, which is right for
+// reading -- the dashboard should still start and show what it can. It is
+// wrong for writing: the file on disk may be perfectly good and merely
+// unreadable by this process, and Save writes only the entries the Env holds.
+// A `g` press against that empty Env would replace the user's whole .env with
+// a single token line, silently destroying every key in it.
+//
+// The refusal lives in Save rather than at each caller so a future writer
+// cannot miss it.
+func NewUnloadableEnv(path string, cause error) *Env {
+	return &Env{path: path, index: make(map[string]int), loadErr: cause}
+}
+
+// CanPersist reports whether Save can write this Env. False when the file
+// could not be read, so callers can refuse before doing work whose only
+// outcome would be a failed write.
+func (e *Env) CanPersist() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.loadErr == nil
+}
+
 // Get returns the value of a key, or empty string if not set.
 func (e *Env) Get(key string) string {
 	e.mu.RLock()
@@ -139,9 +170,18 @@ func (e *Env) Save() error {
 	// the slowest of them.
 	e.mu.RLock()
 	path := e.path
+	loadErr := e.loadErr
 	snapshot := make([]entry, len(e.entries))
 	copy(snapshot, e.entries)
 	e.mu.RUnlock()
+
+	// Refuse rather than replace a file we could not read. Save writes only
+	// the entries this Env holds, and an Env standing in for an unreadable
+	// .env holds none of the user's (#358, item 7).
+	if loadErr != nil {
+		return fmt.Errorf("refusing to write %s: it could not be read (%v), "+
+			"so writing would discard whatever it contains", path, loadErr)
+	}
 
 	if path == "" {
 		return fmt.Errorf("env path not set")
@@ -160,7 +200,7 @@ func (e *Env) Save() error {
 	w := bufio.NewWriter(tmp)
 	for _, ent := range snapshot {
 		if ent.key != "" {
-			if _, err := fmt.Fprintf(w, "%s=%s\n", ent.key, ent.value); err != nil {
+			if _, err := fmt.Fprintf(w, "%s=%s\n", ent.key, formatEnvValue(ent.value)); err != nil {
 				tmp.Close()
 				return fmt.Errorf("write: %w", err)
 			}
@@ -188,6 +228,38 @@ func (e *Env) Save() error {
 		return err
 	}
 	return nil
+}
+
+// formatEnvValue restores the quoting LoadEnv strips, so a value survives the
+// round trip through this writer and back out through any of the three
+// readers (#358, item 8).
+//
+// LoadEnv strips surrounding quotes at env.go:87 and Save used to write the
+// bare value back, so `FOO="a # b"` became `FOO=a # b`. The Go reader would
+// still return `a # b`, but parse_env.sh strips an inline comment introduced
+// by whitespace-then-hash, so bash -- which is what every container actually
+// gets its environment from -- read `a`. Pressing `g` was enough to truncate
+// an unrelated value.
+//
+// The rule is set_env_value's, verbatim (scripts/lib/parse_env.sh:128-137):
+// quote when the value contains whitespace or '#', or begins with a quote
+// character; escape embedded double quotes inside the wrapper. Matching it
+// exactly is the point -- the two writers target the same file, and a value
+// written by one is read back by the other.
+//
+// Not lossless for a value containing a double quote, and deliberately so:
+// the readers strip the wrapper without unescaping, so `say "hi"` reads back
+// as `say \"hi\"`. All three implementations agree on that, and changing it
+// means changing all three in lockstep, which is #356's SSOT work.
+func formatEnvValue(value string) string {
+	needsQuote := strings.ContainsAny(value, " \t\n\r\v\f#")
+	if !needsQuote && value != "" && (value[0] == '"' || value[0] == '\'') {
+		needsQuote = true
+	}
+	if !needsQuote {
+		return value
+	}
+	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
 // hardenSecretFile preserves the Unix 0600 contract and applies the Windows

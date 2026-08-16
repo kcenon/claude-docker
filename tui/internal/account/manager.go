@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/auth"
@@ -24,11 +23,20 @@ type Manager struct {
 	// instead of being re-read and re-decoded, which keeps refresh cost
 	// proportional to changed data rather than total accumulated history.
 	usageCache *usage.Cache
+	// cooldowns tracks per-account API backoff in memory. It was a file in
+	// each state directory until #358; see apiCooldowns for why that was a
+	// worse place for a 25-second value with no cross-process reader.
+	cooldowns *apiCooldowns
 }
 
 // NewManager creates an account manager.
 func NewManager(env *config.Env, client *docker.Client) *Manager {
-	return &Manager{env: env, client: client, usageCache: usage.NewCache()}
+	return &Manager{
+		env:        env,
+		client:     client,
+		usageCache: usage.NewCache(),
+		cooldowns:  newAPICooldowns(),
+	}
 }
 
 // ListAccounts returns all configured accounts with enriched runtime status.
@@ -142,8 +150,11 @@ func isResetPassed(resetAt string, now time.Time) bool {
 	return now.After(t)
 }
 
-// writeLimitlineCache writes API response to disk in the same format as claude-limitline.
-func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) {
+// writeLimitlineCache writes API response to disk in the same format as
+// claude-limitline. Returns an error so the caller can decide; the write is
+// still best-effort, but "best-effort" now means a caller chose to ignore it
+// rather than the function having nothing to report.
+func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) error {
 	cache := map[string]interface{}{
 		"timestamp": time.Now().UnixMilli(),
 		"usage": map[string]interface{}{
@@ -172,41 +183,110 @@ func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) {
 
 	data, err := json.Marshal(cache)
 	if err != nil {
-		return
+		return fmt.Errorf("marshal limitline cache: %w", err)
 	}
-	os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data)
 }
 
-const apiCooldownFile = ".tui-api-cooldown"
+// writeFileAtomic writes data to path through a temp file in the same
+// directory, chmods it 0600, and renames it into place (#358, item 5).
+//
+// Two reasons, both real for limitline-usage-cache.json:
+//
+//   - The host's claude-limitline tool writes the same file. os.WriteFile
+//     truncates and then writes, so a read interleaved with it sees a
+//     truncated document; parseLimitlineCache returns (nil, nil) for that and
+//     the dashboard draws "--" with nothing said about why. A rename is
+//     atomic, so a reader sees either the old file or the new one.
+//   - 0644 made a file describing an account's API usage world-readable. 0600
+//     matches what Env.Save already does for .env, and what install.sh sets
+//     for the credentials file next to it.
+//
+// The sequence is Env.Save's; it existed in-tree and was simply not applied
+// here.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Removes the temp file on every failure path below; a no-op once the
+	// rename has consumed it.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		return fmt.Errorf("chmod tmp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
 const apiCooldownDuration = 25 * time.Second
 
-// isAPICooldownActive returns true if the API was recently rate-limited
-// and we should skip retrying for this account.
-func isAPICooldownActive(stateDirPath string) bool {
-	data, err := os.ReadFile(filepath.Join(stateDirPath, apiCooldownFile))
-	if err != nil {
-		return false
-	}
-	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return false
-	}
-	return time.Since(time.UnixMilli(ts)) < apiCooldownDuration
+// apiCooldowns records, per account letter, when the usage API last returned
+// 429 (#358, item 5).
+//
+// This used to be a .tui-api-cooldown file in each account state directory.
+// Nothing else in the repository reads that file -- no script, no other Go
+// package -- and the value lives for 25 seconds, so the filesystem bought
+// nothing and cost two things: a read-only state directory made every write
+// fail with no signal at all, and the stale files outlived the process that
+// wrote them.
+//
+// Guarded by its own mutex because enrichAPIUsage records a 429 from a
+// per-account goroutine while the others are still running.
+type apiCooldowns struct {
+	mu sync.Mutex
+	at map[string]time.Time
 }
 
-// writeAPICooldown records that the API returned 429 for this account.
-func writeAPICooldown(stateDirPath string) {
-	ts := fmt.Sprintf("%d", time.Now().UnixMilli())
-	os.WriteFile(filepath.Join(stateDirPath, apiCooldownFile), []byte(ts), 0644)
+func newAPICooldowns() *apiCooldowns {
+	return &apiCooldowns{at: make(map[string]time.Time)}
 }
 
-// ClearAPICooldowns removes all API cooldown files so the next refresh retries the API.
+// active reports whether this account is still inside its backoff window.
+func (c *apiCooldowns) active(letter string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t, ok := c.at[letter]
+	return ok && time.Since(t) < apiCooldownDuration
+}
+
+// record marks this account as rate-limited as of now.
+func (c *apiCooldowns) record(letter string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at[letter] = time.Now()
+}
+
+// clearExpired drops only the entries whose window has elapsed.
+func (c *apiCooldowns) clearExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for letter, t := range c.at {
+		if time.Since(t) >= apiCooldownDuration {
+			delete(c.at, letter)
+		}
+	}
+}
+
+// ClearAPICooldowns drops expired cooldowns so the next refresh retries the
+// API for those accounts.
+//
+// Expired ones only. The `r` key called this unconditionally, which cleared a
+// cooldown recorded a second ago and re-issued the call the 429 was telling us
+// to stop making -- the 25s backoff existed but any keypress skipped it
+// (#358, item 10 is the same defect seen from update.go).
 func (m *Manager) ClearAPICooldowns() {
-	if m.env != nil && !m.env.SupportsClaudeUsage() {
-		return
-	}
-	stateDirs, _ := config.DiscoverStateDirsForRuntime(config.RuntimeClaude)
-	for _, sd := range stateDirs {
-		os.Remove(filepath.Join(sd.Path, apiCooldownFile))
-	}
+	m.cooldowns.clearExpired()
 }
