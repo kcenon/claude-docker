@@ -28,6 +28,11 @@ Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 Initialize-StepCounter -Total 7
 
+# Worktrees this run decided not to delete, or tried to and could not. The
+# closing summary reports them; it used to assert unconditionally that nothing
+# outside this repository was touched.
+$script:WorktreesLeftBehind = @()
+
 # --- Compose Command Discovery ------------------------------------------------
 
 function Get-FullComposeArgs {
@@ -111,14 +116,41 @@ function Remove-DockerImage {
     }
 }
 
+function Get-ManagedWorktreePath {
+    <#
+    .SYNOPSIS
+    Paths this installer created, folded for comparison.
+    .DESCRIPTION
+    setup-worktrees and setup-isolated record every workspace they create
+    under PROJECT_DIR_<X> / ISOLATED_WORKSPACE_<X>, so .env is the
+    authoritative list of what this tool owns. Anything outside it belongs to
+    the user and must never reach a recursive delete.
+
+    Read from .env rather than derived from NUM_ACCOUNTS: at removal time the
+    count may already have been lowered, and a workspace dropped from the
+    count is still one this tool created.
+    #>
+    param([Parameter(Mandatory)][hashtable]$EnvData)
+
+    $managed = @()
+    foreach ($key in $EnvData.Keys) {
+        if ($key -match '^(PROJECT_DIR|ISOLATED_WORKSPACE)_[A-Z]+$' -and $EnvData[$key]) {
+            $managed += (ConvertTo-ComparablePath -Path $EnvData[$key])
+        }
+    }
+    return $managed
+}
+
 function Remove-Worktrees {
     Write-LogStep 'Removing git worktrees'
 
     $projectDir = ''
+    $managedPaths = @()
     $envFile = Join-Path $ProjectRoot '.env'
     if (Test-Path $envFile) {
         $envData = Read-EnvFile -Path $envFile
         $projectDir = $envData['PROJECT_DIR']
+        $managedPaths = @(Get-ManagedWorktreePath -EnvData $envData)
     }
 
     if (-not $projectDir) {
@@ -126,7 +158,17 @@ function Remove-Worktrees {
         return
     }
 
-    if (-not (Test-Path (Join-Path $projectDir '.git'))) {
+    # In a *linked* worktree `.git` is a file, and Test-Path without -PathType
+    # accepts it. That is how a user's own repository ended up one loop
+    # iteration away from deletion: git lists the main working tree first, so
+    # standing in a linked worktree points this function at somebody else's
+    # tree. remove.sh:169 requires a directory; match it.
+    $gitPath = Join-Path $projectDir '.git'
+    if (Test-Path $gitPath -PathType Leaf) {
+        Write-LogInfo "$projectDir is a linked git worktree, not a main repository - skipping worktree removal"
+        return
+    }
+    if (-not (Test-Path $gitPath -PathType Container)) {
         Write-LogInfo "$projectDir is not a git repository - no worktrees to remove"
         return
     }
@@ -134,21 +176,45 @@ function Remove-Worktrees {
     $worktreeCount = 0
     Push-Location $projectDir
     try {
-        $currentDir = (Get-Location).Path
-        $worktrees = & git worktree list --porcelain 2>$null |
+        $listed = @(& git worktree list --porcelain 2>$null |
             Where-Object { $_ -match '^worktree (.+)$' } |
-            ForEach-Object { $Matches[1] }
+            ForEach-Object { $Matches[1] })
 
-        foreach ($wtPath in $worktrees) {
-            if ($wtPath -ne $currentDir -and (Test-Path $wtPath)) {
-                Write-LogInfo "Removing worktree: $wtPath"
-                & git worktree remove $wtPath --force 2>$null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-LogWarn "Force removing: $wtPath"
-                    Remove-Item $wtPath -Recurse -Force -ErrorAction SilentlyContinue
-                    & git worktree prune 2>$null
-                }
+        $removable = @(Select-RemovableWorktree -WorktreePath $listed `
+            -CurrentPath (Get-Location).Path)
+
+        foreach ($wtPath in $removable) {
+            if (-not (Test-Path $wtPath)) { continue }
+
+            Write-LogInfo "Removing worktree: $wtPath"
+            & git worktree remove $wtPath --force 2>$null
+            if ($LASTEXITCODE -eq 0) {
                 $worktreeCount++
+                continue
+            }
+
+            # git refused. Before escalating to a recursive delete, require the
+            # path to be one this tool created -- git's refusal is often the
+            # last thing standing between the fallback and a directory that was
+            # never ours.
+            if ($managedPaths -notcontains (ConvertTo-ComparablePath -Path $wtPath)) {
+                Write-LogWarn "git refused to remove $wtPath, and it is not a workspace this installer created - left in place."
+                $script:WorktreesLeftBehind += $wtPath
+                continue
+            }
+
+            Write-LogWarn "Force removing: $wtPath"
+            try {
+                Remove-Item -LiteralPath $wtPath -Recurse -Force -ErrorAction Stop
+                & git worktree prune 2>$null
+                $worktreeCount++
+            }
+            catch {
+                # Swallowing this is what reduced a destroyed repository to one
+                # log line; a delete that fails at uninstall time is something
+                # the user has to be told about.
+                Write-LogError "Could not remove $($wtPath): $($_.Exception.Message)"
+                $script:WorktreesLeftBehind += $wtPath
             }
         }
     }
@@ -310,6 +376,15 @@ function Show-RemovalSummary {
     Write-Host '  - Docker Desktop itself'
     Write-Host '  - Your project source code'
     Write-Host ''
+
+    if ($script:WorktreesLeftBehind.Count -gt 0) {
+        Write-Host 'Worktrees left in place (review manually):' -ForegroundColor Yellow
+        foreach ($wt in $script:WorktreesLeftBehind) {
+            Write-Host "  - $wt"
+        }
+        Write-Host ''
+    }
+
     Write-Host 'To reinstall: .\scripts\install.ps1' -ForegroundColor DarkGray
     Write-Host ''
 }

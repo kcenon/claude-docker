@@ -74,16 +74,22 @@ try {
     if ($RepoDir -and (Test-Path (Join-Path $RepoDir '.git'))) {
         Push-Location $RepoDir
         try {
-            $currentDir = (Get-Location).Path
-            $worktrees = & git worktree list --porcelain 2>$null |
+            $listed = @(& git worktree list --porcelain 2>$null |
                 Where-Object { $_ -match '^worktree (.+)$' } |
-                ForEach-Object { $Matches[1] }
+                ForEach-Object { $Matches[1] })
 
-            foreach ($wt in $worktrees) {
-                if ($wt -ne $currentDir) {
-                    Write-Host "  Removing worktree: $wt"
-                    & git worktree remove $wt --force 2>$null
-                }
+            # The raw current-directory comparison this replaces could not
+            # match on Windows -- git reports forward slashes, Get-Location
+            # backslashes -- so -RepoDir itself was offered up for removal
+            # (#342). git refuses for a main working tree, but not when
+            # -RepoDir names a linked one, which is the tree the check
+            # existed to preserve.
+            $removable = @(Select-RemovableWorktree -WorktreePath $listed `
+                -CurrentPath (Get-Location).Path)
+
+            foreach ($wt in $removable) {
+                Write-Host "  Removing worktree: $wt"
+                & git worktree remove $wt --force 2>$null
             }
         }
         finally {
