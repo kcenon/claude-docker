@@ -37,7 +37,19 @@ func renderIsolationBanner(env *config.Env) string {
 	tagline := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).
 		Render("  " + config.IsolationModeTagline(mode))
 
-	return label + tagline + "\n\n"
+	out := label + tagline
+
+	// Paths the mode ignores are reported here rather than as a toast: the
+	// condition is a property of .env, not of an operation, so it should stay
+	// visible for as long as it is true. The shell layers print the same thing
+	// on every invocation (warn_unused_workspace_paths); the dashboard has a
+	// place to put it that does not repeat.
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#EAB308"))
+	for _, w := range env.UnusedWorkspaceWarnings() {
+		out += "\n" + warnStyle.Render("  Warning: "+w)
+	}
+
+	return out + "\n\n"
 }
 
 func renderAccountTable(accounts []account.Account, cursor int, width int) string {

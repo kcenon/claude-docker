@@ -32,7 +32,11 @@ type ContainerInfo struct {
 
 // PS returns the list of containers for this compose project.
 func (c *Client) PS() ([]ContainerInfo, error) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "ps", "--format", "json", "--all")
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return nil, err
+	}
+	args := append(base, "ps", "--format", "json", "--all")
 	cmd := exec.Command("docker", args...)
 	out, err := cmd.Output()
 	if err != nil {
@@ -74,49 +78,76 @@ func parseComposePS(out string) ([]ContainerInfo, error) {
 
 // Up starts all services detached.
 func (c *Client) Up() error {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d")
-	cmd := exec.Command("docker", args...)
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("docker", append(base, "up", "-d")...)
 	return cmd.Run()
 }
 
 // Down stops all services.
 func (c *Client) Down() error {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "down")
-	cmd := exec.Command("docker", args...)
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("docker", append(base, "down")...)
 	return cmd.Run()
 }
 
+// The *Args methods return (bin, args, error) rather than building a command.
+// The error is not decoration: the caller hands the result to tea.ExecProcess,
+// so a compose prefix that could not be resolved has to stop the caller before
+// a docker process is spawned. Returning args anyway and letting docker sort
+// it out is what started every account on the shared mount.
+
 // ExecArgs returns (bin, args) for running a command in a running service container.
 // Used with tea.ExecProcess for interactive terminal handoff.
-func (c *Client) ExecArgs(service string, cmd ...string) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "exec", service)
+func (c *Client) ExecArgs(service string, cmd ...string) (string, []string, error) {
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return "", nil, err
+	}
+	args := append(base, "exec", service)
 	args = append(args, cmd...)
-	return "docker", args
+	return "docker", args, nil
 }
 
 // BuildArgs returns (bin, args) for `docker compose build`.
 // When noCache is true, passes --no-cache to force a full rebuild.
-func (c *Client) BuildArgs(noCache bool) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "build")
+func (c *Client) BuildArgs(noCache bool) (string, []string, error) {
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return "", nil, err
+	}
+	args := append(base, "build")
 	if noCache {
 		args = append(args, "--no-cache")
 	}
-	return "docker", args
+	return "docker", args, nil
 }
 
 // UpRecreateArgs returns (bin, args) for `docker compose up -d --force-recreate`.
 // Used after image rebuild or .env change so containers pick up new config.
-func (c *Client) UpRecreateArgs(services ...string) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d", "--force-recreate")
+func (c *Client) UpRecreateArgs(services ...string) (string, []string, error) {
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return "", nil, err
+	}
+	args := append(base, "up", "-d", "--force-recreate")
 	args = append(args, services...)
-	return "docker", args
+	return "docker", args, nil
 }
 
 // RestartArgs returns (bin, args) for restarting a single service.
 // service must be a name produced by ServiceNames() (e.g. "claude-a").
-func (c *Client) RestartArgs(service string) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "restart", service)
-	return "docker", args
+func (c *Client) RestartArgs(service string) (string, []string, error) {
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return "", nil, err
+	}
+	return "docker", append(base, "restart", service), nil
 }
 
 // HasRunningContainers returns true if any compose service is currently up.

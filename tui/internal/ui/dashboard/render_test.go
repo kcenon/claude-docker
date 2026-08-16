@@ -49,6 +49,68 @@ var geminiRenderCases = []struct {
 	{letter: "b", withOAuthFile: false, wantService: "gemini-b", wantAuthCell: "--"},
 }
 
+// TestRenderIsolationBannerWarnsAboutUnusedPaths pins the banner's report of
+// per-account paths the active mode ignores.
+//
+// The shell layers print this on every invocation
+// (warn_unused_workspace_paths, Write-UnusedWorkspacePathWarning); the TUI had
+// no equivalent, so the one configuration where the mode and the paths
+// disagree -- a stale PROJECT_DIR_A left behind by a move to isolated -- read
+// as if the worktrees were still mounted. Asserted on the stripped frame
+// because the colour is styling, not content.
+func TestRenderIsolationBannerWarnsAboutUnusedPaths(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "isolated with a stale worktree path",
+			env:  map[string]string{"ISOLATION_MODE": "isolated", "PROJECT_DIR_A": "/stale/wt"},
+			want: []string{"Isolation: isolated", "PROJECT_DIR_A is set"},
+		},
+		{
+			name:    "worktree consumes its own paths",
+			env:     map[string]string{"ISOLATION_MODE": "worktree", "PROJECT_DIR_A": "/wt/a"},
+			want:    []string{"Isolation: worktree"},
+			notWant: []string{"Warning:"},
+		},
+		{
+			name:    "worktree with leftover clone paths",
+			env:     map[string]string{"ISOLATION_MODE": "worktree", "PROJECT_DIR_A": "/wt/a", "ISOLATED_WORKSPACE_A": "/old/clone"},
+			want:    []string{"ISOLATED_WORKSPACE_A is set"},
+			notWant: []string{"PROJECT_DIR_A is set"},
+		},
+		{
+			name:    "shared with nothing configured",
+			env:     map[string]string{},
+			want:    []string{"Isolation: shared"},
+			notWant: []string{"Warning:"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := config.NewEmptyEnv(filepath.Join(t.TempDir(), ".env"))
+			for k, v := range tc.env {
+				env.Set(k, v)
+			}
+			got := ansiEscape.ReplaceAllString(renderIsolationBanner(env), "")
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("banner missing %q:\n%s", w, got)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(got, w) {
+					t.Errorf("banner should not contain %q:\n%s", w, got)
+				}
+			}
+		})
+	}
+}
+
 // TestDashboardRendersGeminiAccounts drives the dashboard through a simulated
 // terminal and asserts that gemini accounts discovered from
 // $HOME/.gemini-state/account-* actually reach the rendered frame. This is the
