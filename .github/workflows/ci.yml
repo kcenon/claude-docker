@@ -334,6 +334,186 @@ jobs:
           done
           exit "$failed"
 
+  # Everything else that touches isolated mode asserts against
+  # `docker compose config` output -- the model Compose resolves, by design
+  # (tests/test_isolation_modes.sh says so in its header). That validates merge
+  # semantics. It does not validate that the kernel enforces any of it.
+  #
+  # So until this job, nobody had observed whether `read_only: true` actually
+  # blocks a write, whether separate bridges actually stop A from reaching B,
+  # or whether the per-account state mounts are actually separate. An isolation
+  # feature whose guarantees are only ever checked in YAML is a claim, not a
+  # control (issue #353).
+  #
+  # Budgeted like gemini-up-smoke: one image build, two containers. The second
+  # phase reuses the built image, so the network_mode: none variant is cheap.
+  isolated-up-smoke:
+    name: "Isolated mode: real containers"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Stage an isolated two-account configuration
+        run: |
+          set -euo pipefail
+          # Staged under the runner's real $HOME, not a sandbox path, because
+          # Compose resolves ${HOME} in the overlay from the *shell*
+          # environment before it looks at .env. Writing HOME=/tmp/... into
+          # .env therefore does not move the mount: the first run of this job
+          # staged markers in /tmp and Compose mounted ~/.claude-state, which
+          # Docker created empty, and the marker was simply not there.
+          #
+          # Worth knowing beyond this job: HOME in .env is inert whenever the
+          # shell exports one, which is always. It coincides with the right
+          # value on a real install only because that is what install.sh wrote
+          # it from.
+          home="$HOME"
+          mkdir -p "$home/.claude-state/account-a" \
+                   "$home/.claude-state/account-b" \
+                   "$home/clone-a" "$home/clone-b"
+
+          # The markers are how sibling state isolation is observed: each
+          # account should see exactly its own.
+          echo "account-a" > "$home/.claude-state/account-a/WHOAMI"
+          echo "account-b" > "$home/.claude-state/account-b/WHOAMI"
+
+          cat > .env <<EOF
+          HOME=$home
+          PROJECT_DIR=$home/clone-a
+          NUM_ACCOUNTS=2
+          AGENT_RUNTIME=claude
+          ISOLATION_MODE=isolated
+          ISOLATED_WORKSPACE_A=$home/clone-a
+          ISOLATED_WORKSPACE_B=$home/clone-b
+          EOF
+          bash scripts/generate-compose.sh
+
+      - name: Bring the isolated stack up
+        run: bash scripts/claude-docker up
+
+      - name: Both accounts are running
+        run: |
+          set -euo pipefail
+          for svc in claude-a claude-b; do
+            cid="$(bash scripts/claude-docker compose ps -q "$svc")"
+            if [[ -z "$cid" ]]; then
+              echo "::error::$svc was not created"
+              bash scripts/claude-docker compose logs "$svc" || true
+              exit 1
+            fi
+            running="$(docker inspect -f '{{.State.Running}}' "$cid")"
+            restarting="$(docker inspect -f '{{.State.Restarting}}' "$cid")"
+            echo "$svc: Running=$running Restarting=$restarting"
+            if [[ "$running" != "true" || "$restarting" != "false" ]]; then
+              echo "::error::$svc is not in a stable running state"
+              docker inspect -f '{{json .State}}' "$cid"
+              bash scripts/claude-docker compose logs "$svc" || true
+              exit 1
+            fi
+          done
+
+      - name: "Sibling state is separate"
+        run: |
+          set -euo pipefail
+          # A sees its own marker...
+          who="$(bash scripts/claude-docker compose exec -T claude-a cat /home/node/.claude/WHOAMI)"
+          echo "claude-a sees: $who"
+          if [[ "${who//[[:space:]]/}" != "account-a" ]]; then
+            echo "::error::claude-a is not mounting account-a's state"
+            exit 1
+          fi
+          # ...and nothing of B's. The account-b directory must not be
+          # reachable from inside A at all.
+          if bash scripts/claude-docker compose exec -T claude-a \
+               sh -c 'ls /home/node/.claude-state 2>/dev/null'; then
+            echo "::error::claude-a can see the shared state root"
+            exit 1
+          fi
+          echo "claude-a cannot reach the state root that holds account-b"
+
+      - name: "The root filesystem rejects writes with EROFS"
+        run: |
+          set -euo pipefail
+          # $HOME itself is read_only; only the declared tmpfs mounts and the
+          # account's own state mount are writable.
+          rc=0
+          out="$(bash scripts/claude-docker compose exec -T claude-a \
+                   sh -c 'touch /home/node/erofs-probe' 2>&1)" || rc=$?
+          echo "touch exit=$rc output=$out"
+          if [[ "$rc" -eq 0 ]]; then
+            echo "::error::a write to the read-only root succeeded"
+            exit 1
+          fi
+          if ! printf '%s' "$out" | grep -qi 'read-only'; then
+            echo "::error::the write failed, but not because the filesystem is read-only"
+            exit 1
+          fi
+          # The account's own state mount must still be writable, or the
+          # hardening would have broken the feature rather than secured it.
+          bash scripts/claude-docker compose exec -T claude-a \
+            sh -c 'touch /home/node/.claude/rw-probe && rm /home/node/.claude/rw-probe'
+          echo "the account's own state mount is still writable"
+
+      - name: "Siblings cannot reach each other on separate bridges"
+        run: |
+          set -euo pipefail
+          # Default ISOLATED_NETWORK_MODE is bridge: one bridge per account, so
+          # neither appears in the other's DNS. Outbound access is deliberately
+          # unaffected and is not asserted here.
+          if bash scripts/claude-docker compose exec -T claude-a \
+               getent hosts claude-b; then
+            echo "::error::claude-a resolved claude-b; the accounts share a network"
+            exit 1
+          fi
+          echo "claude-a cannot resolve claude-b"
+
+      - name: Tear the bridge stack down
+        run: bash scripts/claude-docker down -v --remove-orphans
+
+      - name: "ISOLATED_NETWORK_MODE=none detaches the account entirely"
+        run: |
+          set -euo pipefail
+          echo "ISOLATED_NETWORK_MODE=none" >> .env
+          bash scripts/generate-compose.sh
+          bash scripts/claude-docker up
+
+          cid="$(bash scripts/claude-docker compose ps -q claude-a)"
+          mode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$cid")"
+          echo "claude-a NetworkMode=$mode"
+          if [[ "$mode" != "none" ]]; then
+            echo "::error::expected NetworkMode=none, got $mode"
+            exit 1
+          fi
+          # Only loopback: the resolved model says network_mode: none, and this
+          # is the kernel agreeing with it.
+          links="$(bash scripts/claude-docker compose exec -T claude-a \
+                     sh -c 'ls /sys/class/net' | tr -d '\r' | tr '\n' ' ')"
+          echo "claude-a interfaces: $links"
+          if [[ "$(echo "$links" | tr -s ' ' | sed 's/ $//')" != "lo" ]]; then
+            echo "::error::claude-a has an interface other than loopback"
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always()
+        run: bash scripts/claude-docker down -v --remove-orphans || true
+
+      - name: No isolated network survives the teardown
+        if: always()
+        run: |
+          set -uo pipefail
+          # The leak this job exists to catch: remove.sh used to attach the
+          # worktree overlay to an isolated install, compose refused the whole
+          # file on the unset ${PROJECT_DIR_A}, the failure was discarded, and
+          # the isolated_net_* bridges outlived a run that said "Removal
+          # Complete".
+          left="$(docker network ls --format '{{.Name}}' | grep -i 'isolated_net' || true)"
+          if [[ -n "$left" ]]; then
+            echo "::error::isolated networks survived: $left"
+            exit 1
+          fi
+          echo "no isolated_net_* network remains"
+
   pwsh-tests:
     name: PowerShell Tests (${{ matrix.test }})
     runs-on: ubuntu-latest

@@ -35,7 +35,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 FIXTURE_DIR="$PROJECT_ROOT/tests/env_fixtures"
-OUTPUTS=(docker-compose.yml docker-compose.worktree.yml docker-compose.linux.yml)
+
+# Every file the generators write. A new generated stack must be added here,
+# or it is produced by two independent implementations and compared by
+# neither. That is not hypothetical: docker-compose.isolated.yml was added in
+# stage 3 of #335 and was missing from this list until #353 -- the file
+# carrying the isolation trust boundary was the one file whose bash and
+# PowerShell output nobody compared.
+OUTPUTS=(
+    docker-compose.yml
+    docker-compose.worktree.yml
+    docker-compose.isolated.yml
+    docker-compose.linux.yml
+)
 
 # name | .env fixture basename ('-' for no .env) | environment assignments
 #
@@ -47,6 +59,9 @@ OUTPUTS=(docker-compose.yml docker-compose.worktree.yml docker-compose.linux.yml
 # Excel-style enumeration added by #178 is two independent implementations and
 # n5 alone would only ever compare single letters. env-override covers the
 # environment path that #315 fixed.
+# The isolated cases carry no .env file on purpose: the values are the subject
+# of the comparison, so having them visible here beats a fixture nobody opens,
+# and the environment path is the one #315 fixed.
 FIXTURES=(
     "minimal|minimal.env|"
     "codex|codex.env|"
@@ -54,7 +69,12 @@ FIXTURES=(
     "github-per-account|github-per-account.env|"
     "n5|n5.env|"
     "n30|n30.env|"
+    "with-special-chars|with-special-chars.env|"
     "env-override|-|NUM_ACCOUNTS=5 IMAGE_TAG=probe-tag"
+    "isolated|-|ISOLATION_MODE=isolated ISOLATED_WORKSPACE_A=/tmp/iso-a ISOLATED_WORKSPACE_B=/tmp/iso-b"
+    "isolated-no-network|-|ISOLATION_MODE=isolated ISOLATED_WORKSPACE_A=/tmp/iso-a ISOLATED_WORKSPACE_B=/tmp/iso-b ISOLATED_NETWORK_MODE=none"
+    "isolated-n5|-|NUM_ACCOUNTS=5 ISOLATION_MODE=isolated ISOLATED_WORKSPACE_A=/tmp/iso-a ISOLATED_WORKSPACE_B=/tmp/iso-b ISOLATED_WORKSPACE_C=/tmp/iso-c ISOLATED_WORKSPACE_D=/tmp/iso-d ISOLATED_WORKSPACE_E=/tmp/iso-e"
+    "resources|-|CONTAINER_MEM_LIMIT=3g CONTAINER_NODE_HEAP_MB=2048"
 )
 
 PASS=0

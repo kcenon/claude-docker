@@ -854,7 +854,7 @@ and fails on any difference. Regenerating with your own `.env` during local work
 is expected, but do not commit the result — restore the committed copies first:
 
 ```bash
-git checkout -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml
+git checkout -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml docker-compose.isolated.yml
 ```
 
 ### `NUM_ACCOUNTS` precedence
@@ -892,7 +892,13 @@ table above and runs in the `Bash Tests` CI matrix.
 |------|---------|-------------|
 | `docker-compose.yml` | Base config (Tier A), incl. `user: ${UID:-1000}:${GID:-1000}` and `HOME=/home/node` | Always |
 | `docker-compose.linux.yml` | Legacy UID/GID + HOME override (kept for backward compat; base already carries it) | Optional |
-| `docker-compose.worktree.yml` | Per-container worktree paths | Tier B only |
+| `docker-compose.worktree.yml` | Per-container worktree paths | `ISOLATION_MODE=worktree` only |
+| `docker-compose.isolated.yml` | Per-container independent clone, hardened container profile (`read_only`, `cap_drop: ALL`, no-new-privileges, PID limit), per-account bridge, `environment: !override` | `ISOLATION_MODE=isolated` only |
+
+The worktree and isolated overlays are mutually exclusive: both replace the
+volume list with `!override` and they disagree on `working_dir`, so composing
+them together is not "the widest set" but a broken stack. All four files are
+generated in every mode; the resolved mode decides which one is selected.
 
 On native Linux, set `UID` / `GID` in `.env` (or export them before running
 `docker compose up`) to match the host user that owns the selected runtime's
@@ -1136,7 +1142,11 @@ claude-docker/
 +-- VERSION                            Release tag consumed by docker-compose IMAGE_TAG
 +-- docker-compose.yml                 Generated: base config (Tier A)
 +-- docker-compose.linux.yml           Generated: Linux override
-+-- docker-compose.worktree.yml        Generated: Tier B override
++-- docker-compose.worktree.yml        Generated: worktree-mode override
++-- docker-compose.isolated.yml        Generated: isolated-mode override (hardened profile)
++-- docs/
+|   +-- ISOLATION.md                   Workspace isolation modes and their trust boundaries
+|   +-- PERFORMANCE.md                 Benchmark numbers of record
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
@@ -1157,8 +1167,10 @@ claude-docker/
 |   +-- remove.ps1                     Complete removal (PowerShell)
 |   +-- cleanup.sh                     Container/volume/worktree/state cleanup (bash)
 |   +-- cleanup.ps1                    Same cleanup flow (PowerShell)
-|   +-- setup-worktrees.sh             Tier B worktree setup (bash)
-|   +-- setup-worktrees.ps1            Tier B worktree setup (PowerShell)
+|   +-- setup-worktrees.sh             worktree-mode setup (bash)
+|   +-- setup-worktrees.ps1            worktree-mode setup (PowerShell)
+|   +-- setup-isolated.sh              isolated-mode clone setup (bash)
+|   +-- setup-isolated.ps1             isolated-mode clone setup (PowerShell)
 |   +-- test-concurrent-git.sh         E2E test (bash)
 |   +-- test-concurrent-git.ps1        E2E test (PowerShell)
 |   +-- test-entrypoint-settings.sh    Entrypoint settings normalization test (bash)
@@ -1167,6 +1179,8 @@ claude-docker/
 |       +-- parse_env.sh               Shared .env parser (bash)
 |       +-- index.sh / index.ps1       Excel-style account index helpers
 |       +-- runtime.sh                 Runtime registry reader (jq, awk fallback)
+|       +-- isolation.sh               Isolation-mode resolution and the trust-boundary text
+|       +-- resources.sh               Memory cap to Node heap arithmetic
 |       +-- build-compose-cmd.sh       Compose overlay selection (bash)
 |       +-- bootstrap-common.sh        Shared entrypoint helpers
 |       +-- bootstrap-claude.sh        Per-runtime container bootstrap modules

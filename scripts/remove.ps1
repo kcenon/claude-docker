@@ -35,22 +35,51 @@ $script:WorktreesLeftBehind = @()
 
 # --- Compose Command Discovery ------------------------------------------------
 
-function Get-FullComposeArgs {
+function Get-ComposeArgsForMode {
     <#
     .SYNOPSIS
-    Build the widest compose command covering all possible overlays.
-    Ensures we catch containers/volumes from any configuration.
+    Build the compose command for exactly one isolation mode.
+    .DESCRIPTION
+    This used to attach base + worktree unconditionally and call it "the widest
+    compose command covering all possible overlays". It is not a valid set. The
+    worktree and isolated overlays both carry `!override` volume lists and
+    disagree on working_dir, and the worktree overlay interpolates
+    ${PROJECT_DIR_A} -- which an isolated install never sets, so compose
+    refuses the whole file with "invalid spec: :/project-a: empty section
+    between colons".
+
+    That failure was discarded by `2>$null`, so an isolated teardown fell
+    through to a bare `docker compose down` that did not know the isolated
+    overlay, and the isolated_net_* bridge networks survived a run that
+    reported "Removal Complete".
+
+    Windows never needs the linux override.
     #>
+    param([Parameter(Mandatory)][string]$Mode)
+
     $args_ = @('-f', (Join-Path $ProjectRoot 'docker-compose.yml'))
-
-    # Windows never needs linux override
-    # Always include worktree overlay if it exists (to catch Tier B resources)
-    $wtFile = Join-Path $ProjectRoot 'docker-compose.worktree.yml'
-    if (Test-Path $wtFile) {
-        $args_ += @('-f', $wtFile)
+    switch ($Mode) {
+        'worktree' { $args_ += @('-f', (Join-Path $ProjectRoot 'docker-compose.worktree.yml')) }
+        'isolated' { $args_ += @('-f', (Join-Path $ProjectRoot 'docker-compose.isolated.yml')) }
     }
-
     return $args_
+}
+
+function Get-TeardownMode {
+    <#
+    .SYNOPSIS
+    The modes worth attempting, in order.
+    .DESCRIPTION
+    Removal has to catch resources from whatever mode the installation is in
+    now and from modes it used to be in -- switching leaves the previous
+    stack's containers and networks behind, and this is the script meant to
+    find them. So every mode whose overlay exists gets its own `down`, rather
+    than one `down` carrying every overlay.
+    #>
+    $modes = @('shared')
+    if (Test-Path (Join-Path $ProjectRoot 'docker-compose.worktree.yml')) { $modes += 'worktree' }
+    if (Test-Path (Join-Path $ProjectRoot 'docker-compose.isolated.yml')) { $modes += 'isolated' }
+    return $modes
 }
 
 # --- Removal Steps ------------------------------------------------------------
@@ -60,12 +89,28 @@ function Remove-ContainersAndVolumes {
 
     Push-Location $ProjectRoot
     try {
-        Write-LogInfo 'Stopping containers...'
-        $fullArgs = @(Get-FullComposeArgs)
-        & docker compose @fullArgs down --remove-orphans -v 2>$null
+        # One `down` per mode. A mode this installation was never in will
+        # usually fail on an unset per-account path, and that is expected --
+        # what is not acceptable is the previous behaviour, where the
+        # configured mode's failure looked identical to it because both were
+        # discarded.
+        $failed = @()
+        foreach ($mode in Get-TeardownMode) {
+            $modeArgs = @(Get-ComposeArgsForMode -Mode $mode)
+            Write-LogInfo "Stopping containers ($mode stack)..."
+            $out = & docker compose @modeArgs down --remove-orphans -v 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $failed += $mode
+                Write-LogWarn "  $mode stack: docker compose down exited $LASTEXITCODE"
+                foreach ($line in @($out)) { Write-Host "      $line" -ForegroundColor DarkGray }
+            }
+        }
 
-        # Also try base compose alone (in case overlay files were deleted)
-        & docker compose down --remove-orphans -v 2>$null
+        if ($failed.Count -gt 0) {
+            Write-LogWarn "Teardown did not complete for: $($failed -join ', ')"
+            Write-LogWarn '  A mode this installation never used is expected to fail here.'
+            Write-LogWarn "  Check 'docker ps -a' and 'docker network ls' if resources remain."
+        }
 
         # Remove any dangling containers with the project prefix
         $containers = & docker ps -a --filter 'label=com.docker.compose.project=claude-docker' -q 2>$null
