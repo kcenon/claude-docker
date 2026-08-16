@@ -41,7 +41,6 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 
 Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 . (Join-Path $PSScriptRoot 'lib' 'index.ps1')
-. (Join-Path $PSScriptRoot 'lib' 'tui-release.ps1')
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
@@ -703,17 +702,10 @@ function Invoke-TUIBuild {
 
     if (-not (Test-GoInstalled)) {
         Write-LogWarn 'Go toolchain not available.'
-        if (Read-Confirmation -Question 'Download prebuilt TUI binary from GitHub Releases?' -Default 'y') {
-            $binary = Join-Path $tuiDir 'claude-docker-tui.exe'
-            if (Install-TuiRelease -Destination $binary) {
-                $size = [math]::Round((Get-Item $binary).Length / 1MB, 1)
-                Write-LogSuccess "TUI dashboard installed: tui\claude-docker-tui.exe (${size}MB)"
-                Write-LogInfo 'Launch with: scripts\claude-docker.ps1 tui'
-                return
-            }
-            Write-LogWarn 'Prebuilt download failed.'
-        }
-        Write-LogInfo "Install Go 1.24+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
+        # The prebuilt-binary offer that used to be here fetched
+        # releases/latest, and this repository publishes no releases -- so it
+        # could only fail, after asking the user to wait for it.
+        Write-LogInfo "The TUI is built from source; install Go 1.24+ and re-run 'scripts\claude-docker.ps1 build-tui' later."
         if (Read-Confirmation -Question 'Install Go automatically now?' -Default 'y') {
             if (-not (Install-Prerequisite -Tool 'go')) {
                 Write-LogWarn 'Failed to install Go. Skipping TUI build.'

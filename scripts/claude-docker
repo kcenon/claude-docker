@@ -44,9 +44,6 @@ log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
-# shellcheck source=lib/tui-release.sh
-. "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/index.sh
@@ -980,13 +977,13 @@ cmd_usage() {
 cmd_tui() {
     local tui_bin="$PROJECT_ROOT/tui/claude-docker-tui"
     if [[ ! -x "$tui_bin" ]]; then
-        log_warn "TUI binary not found at $tui_bin."
-        if download_tui_release "$tui_bin"; then
-            exec "$tui_bin" "$@"
-        fi
-        log_error "Could not install TUI binary automatically."
-        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build from source."
-        echo -e "  Requires Go 1.24+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
+        # No download fallback. This repository publishes no releases, so the
+        # `releases/latest` fetch that used to run here could only 404 -- it
+        # cost a network round trip to arrive at the same message, and told
+        # the user their download had failed rather than that they need Go.
+        log_error "TUI binary not found at $tui_bin."
+        echo -e "  Run ${GREEN}scripts/claude-docker build-tui${NC} to build it."
+        echo -e "  Requires a Go 1.24+ toolchain. Install with ${DIM}brew install go${NC} or ${DIM}apt install golang-go${NC}."
         exit 1
     fi
     exec "$tui_bin" "$@"
@@ -1000,12 +997,8 @@ cmd_build_tui() {
     fi
     local tui_bin="$tui_dir/claude-docker-tui"
     if ! command -v go >/dev/null 2>&1; then
-        log_warn "Go toolchain not found. Attempting to download prebuilt release binary..."
-        if download_tui_release "$tui_bin"; then
-            return 0
-        fi
-        log_error "Release download failed and Go toolchain is unavailable."
-        echo -e "  Install Go 1.24+ to build from source:"
+        log_error "Go toolchain not found; the TUI is built from source."
+        echo -e "  Install Go 1.24+:"
         echo -e "  macOS:  ${DIM}brew install go${NC}"
         echo -e "  Linux:  ${DIM}sudo apt install golang-go${NC}"
         exit 1

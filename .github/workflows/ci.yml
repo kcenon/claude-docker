@@ -195,6 +195,58 @@ jobs:
             exit 1
           fi
 
+  # compose-freshness above enforces the forward direction: VERSION changed, so
+  # the generated compose files must be regenerated. This is the reverse one,
+  # and its absence is what let the image tag go stale for 73 commits.
+  #
+  # docker-compose.yml declares both `build:` and `image:`, so `docker compose
+  # up` reuses whatever local image already carries that tag instead of
+  # rebuilding -- and neither wrapper passes --build. The tag's default comes
+  # from VERSION. So a Dockerfile change that leaves VERSION alone is invisible
+  # to every existing installation: they keep the old image indefinitely.
+  #
+  # Not hypothetical. Between the last VERSION bump and this job, 15 commits
+  # touched Dockerfile or the entrypoint, one of them adding a whole runtime.
+  # An installation from that release which pulled and ran `up` had no codex
+  # and no gemini, and nothing told it so.
+  image-tag-freshness:
+    name: Image content changes bump VERSION
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Both endpoints of the diff have to be present; the default shallow
+          # checkout carries neither reliably.
+          fetch-depth: 0
+      - name: Compare image inputs against VERSION
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+
+          # The inputs that decide what lands inside the image. Anything the
+          # Dockerfile COPYs or RUNs belongs here; the entrypoint is the one
+          # that is easy to forget because it is a script, not a layer recipe.
+          image_inputs="$(printf '%s\n' "$changed" | grep -E '^(Dockerfile|scripts/entrypoint)' || true)"
+          if [ -z "$image_inputs" ]; then
+            echo "No image inputs changed; VERSION may stay as it is."
+            exit 0
+          fi
+
+          echo "Image inputs changed:"
+          printf '  %s\n' $image_inputs
+
+          if printf '%s\n' "$changed" | grep -qx 'VERSION'; then
+            echo "VERSION was bumped in the same change."
+            exit 0
+          fi
+
+          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (rm -f .env && bash scripts/generate-compose.sh)."
+          exit 1
+
   bash-tests:
     name: Bash Tests (${{ matrix.test }})
     runs-on: ubuntu-latest
