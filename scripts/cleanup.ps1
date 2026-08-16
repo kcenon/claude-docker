@@ -72,6 +72,12 @@ try {
 
     Write-Host '=== Removing worktrees (if Tier B) ===' -ForegroundColor Cyan
     if ($RepoDir -and (Test-Path (Join-Path $RepoDir '.git'))) {
+        # .env names the workspaces the installer created. Read before the
+        # Push-Location so the path stays relative to the project root.
+        $envData = $null
+        $envFile = Join-Path $ProjectRoot '.env'
+        if (Test-Path $envFile) { $envData = Read-EnvFile -Path $envFile }
+
         Push-Location $RepoDir
         try {
             $listed = @(& git worktree list --porcelain 2>$null |
@@ -87,9 +93,20 @@ try {
             $removable = @(Select-RemovableWorktree -WorktreePath $listed `
                 -CurrentPath (Get-Location).Path)
 
+            # Ownership check and failure reporting kept in step with
+            # cleanup.sh: a worktree the user added themselves is not this
+            # tool's to delete, and a refusal that is swallowed reads as a
+            # successful removal.
             foreach ($wt in $removable) {
+                if (-not (Test-OwnedWorktreePath -Path $wt -ProjectDir $RepoDir -EnvData $envData)) {
+                    Write-Host "  Keeping worktree not created by claude-docker: $wt"
+                    continue
+                }
                 Write-Host "  Removing worktree: $wt"
                 & git worktree remove $wt --force 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "git declined to remove $wt - left in place."
+                }
             }
         }
         finally {
