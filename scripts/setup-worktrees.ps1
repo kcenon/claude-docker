@@ -57,8 +57,22 @@ try {
         $upper  = Get-AccountLetterUpper -Index $idx
         $worktree = "${RepoDir}-${letter}"
 
+        # `git branch` failing is expected and ignored: the branch usually
+        # already exists on a re-run. The bash counterpart is explicit about
+        # this with `|| true`.
         & git branch $branch 2>$null
+
         & git worktree add $worktree $branch
+        # The success line used to print regardless. When the branch is
+        # already checked out in another worktree, or the target directory
+        # exists, install.ps1 went on to write $worktree into PROJECT_DIR_<X>
+        # anyway -- and the later `up` bound a source that does not exist,
+        # with no trace of git's original complaint. The bash script has the
+        # same shape and aborts under `set -euo pipefail`; this is the
+        # equivalent.
+        if ($LASTEXITCODE -ne 0) {
+            throw "git worktree add failed for $worktree (branch: $branch, exit $LASTEXITCODE)"
+        }
 
         Write-Host "  ${upper}: $worktree (branch: $branch)"
     }

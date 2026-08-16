@@ -273,6 +273,7 @@ jobs:
           - tests/test_worktree_ownership.sh
           - tests/test_install_start_containers.sh
           - tests/test_install_tier_b.sh
+          - tests/test_scale_prevalidation.sh
           - tests/test_bash32_portability.sh
           - tests/test_workflow_contracts.sh
           - scripts/test-entrypoint-settings.sh
@@ -528,6 +529,7 @@ jobs:
           - tests/test_worktree_path_guard.ps1
           - tests/test_cleanup_gate.ps1
           - tests/test_powershell_version_floor.ps1
+          - tests/test_powershell_exit_codes.ps1
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Run ${{ matrix.test }}
