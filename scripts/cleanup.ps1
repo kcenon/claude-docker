@@ -28,6 +28,12 @@ param(
     [Alias('Yes')][switch]$Force,
     [Alias('No')][switch]$SkipState,
     [Alias('B')][switch]$Backups,
+    # Bounded so a negative value cannot put the cutoff in the future and
+    # sweep every backup. 0 is allowed and means the same as `find -mtime +0`:
+    # anything at least a whole day old. Validation runs at parameter binding,
+    # before the platform guard below, so a rejected value never reaches the
+    # deletion path on any host.
+    [ValidateRange(0, 3650)]
     [int]$BackupAgeDays = 7
 )
 
@@ -51,16 +57,62 @@ Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $ProjectRoot
 
+# Interactive-only paths need a real host that can accept input. Detected once
+# here so both destructive steps below judge it the same way; a redirected
+# stdin or a remoting host cannot answer a prompt, and hanging CI on one is
+# what the check prevents.
+$script:Interactive = ($Host.Name -ne 'ServerRemoteHost') -and (-not [Console]::IsInputRedirected)
+
+# Resolve-Step turns the switches into an answer for one destructive step, or
+# aborts when there is no answer to be had. Both steps call it, which is the
+# point: this script used to gate state-directory removal and not gate backup
+# removal, so one script carried two policies for two destructive actions.
+function Resolve-Step {
+    param([Parameter(Mandatory)][string]$Question)
+
+    $decision = Get-CleanupDecision -Force:$Force.IsPresent -Skip:$SkipState.IsPresent `
+                                    -Interactive:$script:Interactive
+    switch ($decision) {
+        'remove' { return $true }
+        'skip' { return $false }
+        'ask' { return (Read-Confirmation -Question $Question) }
+        'refuse' {
+            Write-Error '  stdin is not interactive. Pass -Force to proceed non-interactively, or -SkipState to skip.'
+            exit 1
+        }
+        default {
+            # Fail closed. An unrecognized decision reaching a delete is worse
+            # than an aborted cleanup, and `default` silently prompting would
+            # hide the mismatch on an interactive host.
+            Write-Error "  Unexpected cleanup decision '$decision'."
+            exit 1
+        }
+    }
+}
+
 try {
     if ($Backups) {
         Write-Host "=== Removing stale .env backup files (>$BackupAgeDays days) ===" -ForegroundColor Cyan
-        $cutoff = (Get-Date).AddDays(-$BackupAgeDays)
-        Get-ChildItem -Path $ProjectRoot -Filter '.env.backup.*' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -lt $cutoff } |
-            Remove-Item -Force
-        Get-ChildItem -Path $ProjectRoot -Filter '.env.bak' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -lt $cutoff } |
-            Remove-Item -Force
+        # These files are the only recovery point for a .env holding API keys
+        # and GH tokens (install.ps1 rotates them and keeps three), which is
+        # why cleanup.sh has always asked before deleting them and why
+        # remove.ps1 sweeps them only after its own confirmation.
+        if (Resolve-Step -Question "Remove stale .env.backup.* and .env.bak files older than $BackupAgeDays days?") {
+            # `find -mtime +N` truncates the age to whole days; matching that
+            # here is what keeps the same flag and value from producing
+            # opposite outcomes on the two platforms.
+            $now = Get-Date
+            Get-ChildItem -Path $ProjectRoot -Filter '.env.backup.*' -File -ErrorAction SilentlyContinue |
+                Where-Object { Test-FileAgeExceedsDays -LastWriteTime $_.LastWriteTime -Now $now -Days $BackupAgeDays } |
+                Remove-Item -Force
+            Get-ChildItem -Path $ProjectRoot -Filter '.env.bak' -File -ErrorAction SilentlyContinue |
+                Where-Object { Test-FileAgeExceedsDays -LastWriteTime $_.LastWriteTime -Now $now -Days $BackupAgeDays } |
+                Remove-Item -Force
+            Write-Host '  Stale backups removed.'
+        }
+        else {
+            Write-Host '  Skipped.'
+        }
     }
 
     Write-Host '=== Stopping containers ===' -ForegroundColor Cyan
@@ -115,24 +167,9 @@ try {
     }
 
     Write-Host '=== Removing state directories ===' -ForegroundColor Cyan
-    $shouldRemove = $false
-    if ($Force) {
-        $shouldRemove = $true
-    } elseif ($SkipState) {
-        $shouldRemove = $false
-    } else {
-        # Interactive-only path: detect a real host that can accept input.
-        # Read-Confirmation throws on non-interactive hosts (ServerRemoteHost,
-        # redirected stdin) which prevents CI hangs.
-        $interactive = ($Host.Name -ne 'ServerRemoteHost') -and (-not [Console]::IsInputRedirected)
-        if (-not $interactive) {
-            Write-Error '  stdin is not interactive. Pass -Force to remove state non-interactively, or -SkipState to skip.'
-            exit 1
-        }
-        $shouldRemove = Read-Confirmation -Question "Remove every runtime's state directory (~/.*-state)?"
-    }
-
-    if ($shouldRemove) {
+    # Same gate as the backup step above. This block is where the pattern came
+    # from; it now shares the implementation instead of being the only copy.
+    if (Resolve-Step -Question "Remove every runtime's state directory (~/.*-state)?") {
         # Remove every registered runtime's state directory, not just
         # Claude's, so a codex/gemini install is fully cleaned up (see #273).
         foreach ($runtime in Get-RuntimeList -ProjectRoot $ProjectRoot) {
