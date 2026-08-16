@@ -1186,6 +1186,75 @@ function Test-OwnedWorktreePath {
     return $false
 }
 
+# --- Cleanup Policy -----------------------------------------------------------
+
+function Get-CleanupDecision {
+    <#
+    .SYNOPSIS
+    Decide whether a destructive cleanup step may proceed.
+    .DESCRIPTION
+    cleanup.ps1 has two destructive steps and used to have two different
+    policies for them: state-directory removal was gated on
+    -Force / -SkipState / a prompt / a refusal on a non-interactive host, and
+    backup removal simply ran. Both now route through this function, so the
+    two cannot drift apart again, and the policy can be tested without a
+    Windows host to run cleanup.ps1 on.
+
+    Returns one of:
+      remove  proceed without asking (-Force)
+      skip    do nothing (-SkipState)
+      refuse  abort; no answer is available and guessing would delete files
+      ask     prompt the operator
+
+    'refuse' rather than 'skip' on a non-interactive host is deliberate and
+    mirrors cleanup.sh: a pipeline that meant to clean up and silently did
+    not is its own failure, so the caller is told to pass a switch.
+    .PARAMETER Interactive
+    Whether a real console can answer. Passed in rather than detected here so
+    the decision stays pure.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][bool]$Force,
+        [Parameter(Mandatory)][bool]$Skip,
+        [Parameter(Mandatory)][bool]$Interactive
+    )
+
+    if ($Force) { return 'remove' }
+    if ($Skip) { return 'skip' }
+    if (-not $Interactive) { return 'refuse' }
+    return 'ask'
+}
+
+function Test-FileAgeExceedsDays {
+    <#
+    .SYNOPSIS
+    Whether a file is older than -Days, using find(1)'s whole-day rule.
+    .DESCRIPTION
+    cleanup.sh selects backups with `find -mtime +N`, which truncates a
+    file's age to whole days before comparing: a 7.5-day-old file reports 7,
+    so `-mtime +7` does not match it. cleanup.ps1 compared against an exact
+    `(Get-Date).AddDays(-N)` instant and did match it -- same flag, same
+    value, opposite outcome.
+
+    Truncation is the documented reading of "--backup-age-days N" and is what
+    the existing bash fixture assumes, so PowerShell moves to bash rather
+    than the other way round.
+    .PARAMETER Now
+    The reference instant. A parameter rather than Get-Date so a test can pin
+    the comparison instead of racing the clock.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][datetime]$LastWriteTime,
+        [Parameter(Mandatory)][datetime]$Now,
+        [Parameter(Mandatory)][int]$Days
+    )
+
+    $ageDays = [math]::Floor(($Now - $LastWriteTime).TotalDays)
+    return $ageDays -gt $Days
+}
+
 # --- Exports -----------------------------------------------------------------
 
 Export-ModuleMember -Function @(
@@ -1199,6 +1268,8 @@ Export-ModuleMember -Function @(
     'Protect-EnvFile',
     # Worktrees
     'Select-RemovableWorktree', 'Test-OwnedWorktreePath',
+    # Cleanup policy
+    'Get-CleanupDecision', 'Test-FileAgeExceedsDays',
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',

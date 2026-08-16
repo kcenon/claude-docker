@@ -49,6 +49,20 @@ BACKUP_AGE_DAYS=7
 expect_age_days=0
 for arg in "$@"; do
     if [ "$expect_age_days" = "1" ]; then
+        # Validate before assigning. Unchecked, this branch swallowed whatever
+        # token followed the flag: `--backups --backup-age-days --yes` set the
+        # age to "--yes" and left CONFIRM unset, so the prompt read "older than
+        # --yes days?" and the find that followed failed silently.
+        case "$arg" in
+            ''|*[!0-9]*)
+                echo "Invalid --backup-age-days value: $arg (expected a non-negative integer)" >&2
+                exit 2
+                ;;
+        esac
+        if [ "$arg" -gt 3650 ]; then
+            echo "Invalid --backup-age-days value: $arg (maximum 3650)" >&2
+            exit 2
+        fi
         BACKUP_AGE_DAYS="$arg"
         expect_age_days=0
         continue
@@ -96,11 +110,17 @@ if [ "$RUN_BACKUPS" = "1" ]; then
         fi
     fi
     if [ "$BACKUP_CONFIRM" = "yes" ]; then
-        find "$PROJECT_ROOT" -maxdepth 1 \
-            \( -name ".env.backup.*" -o -name ".env.bak" \) \
-            -mtime +"${BACKUP_AGE_DAYS}" \
-            -print -delete 2>/dev/null || true
-        echo "  Stale backups removed."
+        # Branch on find's status. `|| true` plus an unconditional success
+        # message reported a sweep that never ran as a sweep that succeeded.
+        if find "$PROJECT_ROOT" -maxdepth 1 \
+                \( -name ".env.backup.*" -o -name ".env.bak" \) \
+                -mtime +"${BACKUP_AGE_DAYS}" \
+                -print -delete 2>/dev/null; then
+            echo "  Stale backups removed."
+        else
+            echo "  Error: find failed while sweeping backups; nothing was reported as removed." >&2
+            exit 1
+        fi
     else
         echo "  Skipped."
     fi
