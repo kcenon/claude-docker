@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     Interactive setup script for claude-docker (Windows PowerShell port).
@@ -9,7 +9,7 @@
 .EXAMPLE
     .\scripts\install.ps1
     # or from cmd.exe:
-    powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+    pwsh -ExecutionPolicy Bypass -File scripts\install.ps1
 #>
 [CmdletBinding()]
 param()

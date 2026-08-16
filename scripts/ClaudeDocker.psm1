@@ -1,8 +1,9 @@
 # ClaudeDocker.psm1 — Shared PowerShell module for claude-docker scripts
 # Provides logging, prompts, Docker Compose helpers, and utility functions.
-# Compatible with PowerShell 5.1+ and PowerShell 7+.
+# Requires PowerShell 7. Windows PowerShell 5.1 is not supported; see the
+# Platform Support section of README.md and the decision recorded on #348.
 
-#Requires -Version 5.1
+#Requires -Version 7.0
 
 # --- Logging -----------------------------------------------------------------
 

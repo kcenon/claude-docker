@@ -23,8 +23,6 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $ScriptsDir = Join-Path $ProjectRoot 'scripts'
 
-# Two-argument Join-Path only: the three-argument form is PowerShell 7+, and
-# these scripts are also read by Windows PowerShell 5.1.
 Import-Module (Join-Path $ScriptsDir 'ClaudeDocker.psm1') -Force
 
 $script:Pass = 0

@@ -22,7 +22,7 @@ set -euo pipefail
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         echo "Error: generate-compose.sh is not supported on native Windows shells." >&2
-        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\generate-compose.ps1" >&2
+        echo "Use: pwsh -ExecutionPolicy Bypass -File scripts\\generate-compose.ps1" >&2
         exit 1 ;;
 esac
 

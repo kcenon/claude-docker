@@ -13,7 +13,7 @@ set -euo pipefail
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         echo "Error: remove.sh is not supported on native Windows shells." >&2
-        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\remove.ps1" >&2
+        echo "Use: pwsh -ExecutionPolicy Bypass -File scripts\\remove.ps1" >&2
         exit 1 ;;
 esac
 
