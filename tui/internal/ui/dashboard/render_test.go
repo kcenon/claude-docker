@@ -147,12 +147,12 @@ func TestDashboardRendersGeminiAccounts(t *testing.T) {
 	mgr := account.NewManager(env, client)
 
 	model := New(mgr, client, env, false)
-	// The size is applied before the program starts as well as on the
-	// WindowSizeMsg teatest sends, because that message races the initial
-	// load command: renderAccountTable computes strings.Repeat("-", width-4)
-	// and would panic on a zero width if accounts arrived first.
-	model.SetSize(renderTermWidth, renderTermHeight-4)
-
+	// No pre-emptive SetSize. It used to be applied here as well as on the
+	// WindowSizeMsg teatest sends, because that message races the initial load
+	// command and renderAccountTable panicked on a zero width if accounts
+	// arrived first -- a live bug neutralized inside the test. ruleWidth
+	// clamps at the call site now, and TestViewAtZeroWidthDoesNotPanic covers
+	// the case directly.
 	tm := teatest.NewTestModel(t, testApp{dash: model},
 		teatest.WithInitialTermSize(renderTermWidth, renderTermHeight))
 

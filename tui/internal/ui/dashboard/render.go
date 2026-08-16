@@ -52,6 +52,24 @@ func renderIsolationBanner(env *config.Env) string {
 	return out + "\n\n"
 }
 
+// ruleWidth returns how many rule characters fit under the header, never
+// fewer than zero.
+//
+// 76 is the width of the six header columns; 4 is the two-space indent on each
+// side. A width the model has not been told about yet is 0, which made the
+// subtraction negative.
+func ruleWidth(width int) int {
+	const (
+		maxRule = 76
+		margin  = 4
+	)
+	n := min(maxRule, width-margin)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 func renderAccountTable(accounts []account.Account, cursor int, width int) string {
 	var b strings.Builder
 
@@ -74,8 +92,15 @@ func renderAccountTable(accounts []account.Account, cursor int, width int) strin
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#9CA3AF")).
 		Render(header) + "\n")
 
+	// strings.Repeat panics on a negative count, and min(76, width-4) is -4 at
+	// width 0 (#358, item 4). bubbletea returns early from checkResize when
+	// p.ttyOutput is nil (tty.go:121-125), so a non-TTY stdout --
+	// `claude-docker-tui | tee log.txt` -- never delivers a WindowSizeMsg and
+	// the model keeps its zero width. The rule is clamped rather than the
+	// terminal defaulted, because this is the only arithmetic on width in the
+	// package and a default would have to be re-justified everywhere else.
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#374151")).
-		Render("  "+strings.Repeat("─", min(76, width-4))) + "\n")
+		Render("  "+strings.Repeat("─", ruleWidth(width))) + "\n")
 
 	// Styles
 	styleGreen := lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E"))

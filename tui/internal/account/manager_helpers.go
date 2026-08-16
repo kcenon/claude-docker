@@ -1,17 +1,40 @@
 package account
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
 	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
+
+// ghAuthTimeout bounds the in-container `gh api user` call (#358, item 1).
+//
+// The call reaches api.github.com from inside the container, so a DNS
+// blackhole, a stale connection after host sleep, or a container in the middle
+// of stopping hangs it. Unbounded, that goroutine never returns,
+// enrichAccounts' wg.Wait() blocks forever, and ListAccounts never returns --
+// which leaves m.loading or m.refreshing stuck true, and `r` is rejected by
+// its own guard, so there is no way back except killing the process. Every
+// tick, every finished session and every docker op then starts another
+// Refresh, accumulating hung goroutines and `docker exec` children.
+//
+// A package-level var rather than a const so tests can shorten it. Unexported,
+// so only this package can; the tests that do are not parallel.
+var ghAuthTimeout = 10 * time.Second
+
+// ghAuthKillGrace is the window between killing a timed-out `docker exec` and
+// abandoning its output pipes. `docker exec` hands stdout to a process inside
+// the container, and killing the local client does not close that pipe, so
+// Output() would block past the deadline without this.
+const ghAuthKillGrace = 2 * time.Second
 
 // Helpers for ListAccounts. The orchestrator in manager.go calls these in
 // sequence; each helper owns one phase of the listing workflow and is
@@ -154,8 +177,16 @@ func (m *Manager) enrichGHAuth(a *Account, wg *sync.WaitGroup) {
 	a.GHExpectedLogin = m.env.GHUser(a.Letter)
 	go func() {
 		defer wg.Done()
-		cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "api", "user", "--jq", ".login")
+		ctx, cancel := context.WithTimeout(context.Background(), ghAuthTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "docker", "exec", a.ContainerID,
+			"gh", "api", "user", "--jq", ".login")
+		cmd.WaitDelay = ghAuthKillGrace
 		out, err := cmd.Output()
+		// A timeout degrades exactly as a failure already does: ghAuthResult
+		// maps any non-nil error to ("", false, false), which the table draws
+		// as FAIL. That is the honest reading -- the check did not confirm the
+		// login -- and it needs no new state to carry.
 		a.GHLogin, a.GHAuthOK, a.GHLoginMismatch = ghAuthResult(out, err, a.GHExpectedLogin)
 	}()
 }

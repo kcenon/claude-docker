@@ -2,13 +2,37 @@ package docker
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/config"
 )
+
+// psTimeout bounds `docker compose ps` (#358, item 1).
+//
+// Every dashboard refresh blocks on this call, and an unbounded one leaves
+// ListAccounts with no return path: m.refreshing never clears, so the `r` key
+// is rejected by its own guard and the operator cannot recover without killing
+// the process. A daemon that is starting, a socket that is not answering, or a
+// context switch to an unreachable remote all reach the same state.
+//
+// A package-level var rather than a const so tests can shorten it. Unexported,
+// so only this package can; the tests that do are not parallel.
+var psTimeout = 10 * time.Second
+
+// killGrace is how long a timed-out child gets between SIGKILL and giving up
+// on its output pipes.
+//
+// exec.CommandContext kills the process when the context expires, but Output()
+// waits for the pipes to close, and `docker exec` hands its stdout to a
+// grandchild inside the container. Killing the local docker client does not
+// close that pipe, so without WaitDelay the read blocks anyway and the timeout
+// buys nothing.
+const killGrace = 2 * time.Second
 
 // Client wraps docker compose invocations.
 type Client struct {
@@ -37,9 +61,17 @@ func (c *Client) PS() ([]ContainerInfo, error) {
 		return nil, err
 	}
 	args := append(base, "ps", "--format", "json", "--all")
-	cmd := exec.Command("docker", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.WaitDelay = killGrace
 	out, err := cmd.Output()
 	if err != nil {
+		// Report the deadline as a deadline. Wrapping the raw "signal: killed"
+		// would tell the operator their docker client crashed.
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("docker compose ps timed out after %s", psTimeout)
+		}
 		return nil, fmt.Errorf("docker compose ps: %w", err)
 	}
 	return parseComposePS(string(out))
@@ -77,6 +109,11 @@ func parseComposePS(out string) ([]ContainerInfo, error) {
 }
 
 // Up starts all services detached.
+//
+// Deliberately unbounded, unlike PS. `up -d` legitimately runs for minutes
+// when it has to pull or build, and a deadline here would abort a working
+// operation partway. It is also operator-initiated with a toast explaining
+// the wait, where PS runs on every refresh with nothing on screen to say so.
 func (c *Client) Up() error {
 	base, err := BuildComposeArgs(c.projectRoot, c.env)
 	if err != nil {
