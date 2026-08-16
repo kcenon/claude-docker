@@ -11,12 +11,81 @@ on:
         required: true
         type: string
 
+# Read by default. Only the release job publishes, and it raises this to
+# `contents: write` for itself -- the five build jobs used to run with a write
+# token they had no use for.
 permissions:
-  contents: write
+  contents: read
+
+# Keyed on the tag rather than the ref, so a dispatch and a tag push for the
+# same version serialize instead of racing. Losing that race puts assets built
+# from two different commits into one release; every asset ships a paired
+# .sha256, but the checksums would agree with the wrong binaries.
+#
+# cancel-in-progress is false on purpose: cancelling a run that has begun
+# uploading leaves a partially populated release, which is worse than waiting.
+concurrency:
+  group: release-tui-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
+  # A dispatch names a tag, but the build checkout used to ignore it: no
+  # `ref:`, so it took the branch selected in the dispatch UI, while the
+  # publish step named the release after the input. The tag stopped
+  # identifying the code it shipped.
+  #
+  # Resolving once, in its own job, means a bad tag costs one job instead of
+  # five and can never reach an upload.
+  resolve-tag:
+    name: Resolve and validate the tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Tags are needed to answer "does this tag exist"; the default
+          # shallow checkout does not carry them.
+          fetch-depth: 0
+
+      - name: Resolve
+        id: resolve
+        shell: bash
+        # inputs.tag reaches the script through env, never interpolated into
+        # the body. The dispatcher already holds write access so this crosses
+        # no new trust boundary, but the interpolated form is the
+        # script-injection shape and the fix costs one line.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Precedence is the input first, matching the publish step. The
+          # build step had it backwards -- ${GITHUB_REF_NAME:-inputs.tag} --
+          # and GITHUB_REF_NAME is always set in Actions, so the fallback to
+          # the input was unreachable.
+          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+
+          if [[ ! "$tag" =~ ^v[0-9][0-9A-Za-z.-]*$ ]]; then
+            echo "::error::tag '$tag' does not match ^v[0-9][0-9A-Za-z.-]*$"
+            exit 1
+          fi
+
+          # The input's own description says the tag must already exist. That
+          # was never checked, so a typo produced a release built from a
+          # branch under a name nobody could trace back.
+          if ! git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" >/dev/null; then
+            echo "::error::tag '$tag' does not exist in this repository"
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "resolved tag: $tag"
+
   build:
     name: Build ${{ matrix.target.os }}/${{ matrix.target.goarch }}
+    needs: resolve-tag
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -30,6 +99,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # The resolved tag, not the dispatch branch. This is the line whose
+          # absence let a release ship code from somewhere else.
+          ref: ${{ needs.resolve-tag.outputs.tag }}
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
@@ -43,12 +116,16 @@ jobs:
         env:
           GOOS: ${{ matrix.target.os }}
           GOARCH: ${{ matrix.target.goarch }}
+          EXT: ${{ matrix.target.ext }}
           CGO_ENABLED: '0'
+          # One source for the stamp and the tree: the same value the checkout
+          # above used.
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
         run: |
-          ref="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
-          out="claude-docker-tui-${GOOS}-${GOARCH}${{ matrix.target.ext }}"
+          set -euo pipefail
+          out="claude-docker-tui-${GOOS}-${GOARCH}${EXT}"
           go build -trimpath \
-              -ldflags "-s -w -X main.version=${ref}" \
+              -ldflags "-s -w -X main.version=${TAG}" \
               -o "$out" .
           echo "ASSET=$out" >> "$GITHUB_ENV"
 
@@ -75,8 +152,11 @@ jobs:
 
   release:
     name: Publish release
-    needs: build
+    needs: [resolve-tag, build]
     runs-on: ubuntu-latest
+    # The only job that needs to write, and the only one that gets to.
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
@@ -98,7 +178,9 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          # The resolved tag, so the name, the tree and the stamp are one
+          # value rather than three that happen to agree.
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
           files: |
             artifacts/claude-docker-tui-*
             artifacts/SHA256SUMS
