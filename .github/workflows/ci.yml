@@ -202,6 +202,7 @@ jobs:
           - tests/test_windows_platform_guard.sh
           - tests/test_worktree_ownership.sh
           - tests/test_install_start_containers.sh
+          - tests/test_install_tier_b.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

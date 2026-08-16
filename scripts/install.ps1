@@ -600,9 +600,33 @@ function New-EnvFile {
 
     Write-LogSuccess ".env generated at $envFile"
 
-    # Generate compose files from .env
+    # Handed to Invoke-ComposeGeneration, which now runs as its own step after
+    # the worktrees exist.
+    $Script:ImageTag = $imageTag
+}
+
+# --- Compose Generation --------------------------------------------------------
+
+# Invoke-ComposeGeneration runs the compose generator against the finished
+# .env.
+#
+# This used to be the last thing New-EnvFile did, which put it before
+# Invoke-WorktreeSetup in the step list. For Tier B that meant handing the
+# generator a .env declaring ISOLATION_MODE=worktree with empty PROJECT_DIR_*
+# placeholders, and Get-SupportedIsolationMode throws on that by design (it
+# does not distinguish empty from unset). With $ErrorActionPreference = 'Stop'
+# the throw aborted the install. The ordering was structural, not a race.
+#
+# The generator is not wrong -- tests/test_isolation_modes.sh pins that exact
+# refusal as a contract. The installer was violating it, so the installer
+# moved.
+#
+# Invoke-ImageBuild still runs before this, on the committed
+# docker-compose.yml. That is deliberate and safe: the image does not depend on
+# the account count, the runtime or the isolation mode.
+function Invoke-ComposeGeneration {
     Write-LogInfo "Generating compose files for $($Script:NumAccounts) account(s)..."
-    & "$PSScriptRoot\generate-compose.ps1" -NumAccounts $Script:NumAccounts -ImageTag $imageTag
+    & "$PSScriptRoot\generate-compose.ps1" -NumAccounts $Script:NumAccounts -ImageTag $Script:ImageTag
 }
 
 # --- Directory Creation -------------------------------------------------------
@@ -781,10 +805,14 @@ function Invoke-WorktreeSetup {
                 $content = [System.IO.File]::ReadAllText($envFile)
                 $content = $content -replace '(?m)^# ==== Tier B:.*\r?\n', ''
                 $content = $content -replace '(?m)^# \(populated after.*\r?\n', ''
-                $content = $content -replace '(?m)^PROJECT_DIR_A=.*\r?\n', ''
-                $content = $content -replace '(?m)^PROJECT_DIR_B=.*\r?\n', ''
-                $content = $content -replace '(?m)^CONTAINER_PROJECT_DIR_A=.*\r?\n', ''
-                $content = $content -replace '(?m)^CONTAINER_PROJECT_DIR_B=.*\r?\n', ''
+                # Over the same range New-EnvFile wrote, not the literals A and
+                # B: a 4-account install used to leave PROJECT_DIR_C= and
+                # PROJECT_DIR_D= behind.
+                for ($j = 1; $j -le $Script:NumAccounts; $j++) {
+                    $u = Get-AccountLetterUpper -Index $j
+                    $content = $content -replace "(?m)^PROJECT_DIR_${u}=.*\r?\n", ''
+                    $content = $content -replace "(?m)^CONTAINER_PROJECT_DIR_${u}=.*\r?\n", ''
+                }
                 Write-EnvContent -Path $envFile -Content $content
                 Set-EnvValue -Path $envFile -Key 'ISOLATION_MODE' -Value 'shared'
             }
@@ -810,25 +838,38 @@ function Invoke-WorktreeSetup {
         Write-LogInfo "Project directory updated: $newDir"
     }
 
-    $branchA = Read-Input -Question 'Branch name for Container A' -Default 'worktree-a'
-    $branchB = Read-Input -Question 'Branch name for Container B' -Default 'worktree-b'
+    # Driven by NumAccounts, matching the placeholders New-EnvFile writes.
+    # This used to prompt for exactly two branches and write back exactly
+    # PROJECT_DIR_A and PROJECT_DIR_B, so a Tier B install with more than two
+    # accounts left the rest empty. setup-worktrees.ps1 already takes a
+    # [string[]]; only the caller was fixed at two.
+    $branches = @()
+    $letters = @()
+    for ($i = 1; $i -le $Script:NumAccounts; $i++) {
+        $lower = Get-AccountLetter -Index $i
+        $upper = Get-AccountLetterUpper -Index $i
+        $letters += $lower
+        $branches += (Read-Input -Question "Branch name for Container $upper" -Default "worktree-$lower")
+    }
 
     Write-LogInfo 'Creating worktrees...'
-    & "$PSScriptRoot\setup-worktrees.ps1" -RepoDir $Script:SourceDir -Branches @($branchA, $branchB)
+    # One invocation with the whole array: setup-worktrees.ps1 derives each
+    # worktree's letter from the branch's position, so splitting the call
+    # would restart the numbering at "a".
+    & "$PSScriptRoot\setup-worktrees.ps1" -RepoDir $Script:SourceDir -Branches $branches
 
-    $worktreeA = "$($Script:SourceDir.TrimEnd('\', '/'))-a"
-    $worktreeB = "$($Script:SourceDir.TrimEnd('\', '/'))-b"
-
-    # Update .env with worktree paths (forward slashes for Docker)
     $envFile = Join-Path $ProjectRoot '.env'
-    $wtA = ConvertTo-ForwardSlash -Path $worktreeA
-    $wtB = ConvertTo-ForwardSlash -Path $worktreeB
-    Set-EnvValue -Path $envFile -Key 'PROJECT_DIR_A' -Value $wtA
-    Set-EnvValue -Path $envFile -Key 'PROJECT_DIR_B' -Value $wtB
-
+    $base = $Script:SourceDir.TrimEnd('\', '/')
     Write-LogSuccess 'Worktrees created:'
-    Write-LogInfo "  A: $worktreeA (branch: $branchA)"
-    Write-LogInfo "  B: $worktreeB (branch: $branchB)"
+    for ($i = 0; $i -lt $letters.Count; $i++) {
+        $lower = $letters[$i]
+        $upper = $lower.ToUpperInvariant()
+        $worktree = "$base-$lower"
+        # Forward slashes for Docker.
+        Set-EnvValue -Path $envFile -Key "PROJECT_DIR_$upper" `
+            -Value (ConvertTo-ForwardSlash -Path $worktree)
+        Write-LogInfo "  ${upper}: $worktree (branch: $($branches[$i]))"
+    }
 }
 
 # --- Container Startup --------------------------------------------------------
@@ -1058,6 +1099,9 @@ Invoke-ImageBuild
 Invoke-TUIBuild
 Invoke-AuthSetup
 Invoke-WorktreeSetup
+# After Invoke-WorktreeSetup, so a Tier B .env has its PROJECT_DIR_* populated
+# before the generator validates the mode it declares.
+Invoke-ComposeGeneration
 Start-Containers
 Install-Dependencies
 Invoke-Verification

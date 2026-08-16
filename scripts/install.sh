@@ -802,8 +802,29 @@ generate_env() {
 
     chmod 600 "$env_file"
     log_success ".env generated at $env_file (permissions: 600)"
+}
 
-    # Generate compose files from .env
+# --- Compose Generation --------------------------------------------------------
+
+# generate_compose_files runs the compose generator against the finished .env.
+#
+# This used to be the last thing generate_env did, which put it before
+# setup_worktrees in main(). For Tier B that meant handing the generator a .env
+# declaring ISOLATION_MODE=worktree with empty PROJECT_DIR_* placeholders, and
+# require_supported_isolation_mode refuses that by design (it does not
+# distinguish empty from unset). Under `set -euo pipefail` the refusal ended
+# the install. The ordering was structural, not a race: main() runs the two
+# steps five apart, so there was no value that could have been present.
+#
+# The generator is not wrong -- tests/test_isolation_modes.sh pins that exact
+# refusal as a contract. The installer was violating it, so the installer
+# moved.
+#
+# build_image still runs before this, on the committed docker-compose.yml. That
+# is deliberate and safe: the image does not depend on the account count, the
+# runtime or the isolation mode -- every service builds the one
+# claude-code-base image, and the only build argument is CLAUDE_CODE_VERSION.
+generate_compose_files() {
     log_info "Generating compose files for $NUM_ACCOUNTS account(s)..."
     "$SCRIPT_DIR/generate-compose.sh"
 }
@@ -988,7 +1009,18 @@ setup_worktrees() {
             # mode requires have just been deleted.
             local env_file="$PROJECT_ROOT/.env"
             if [[ -f "$env_file" ]]; then
-                perl -i -ne 'print unless /^# ==== Tier B:/ || /^# \(populated after/ || /^PROJECT_DIR_A=/ || /^PROJECT_DIR_B=/ || /^CONTAINER_PROJECT_DIR_A=/ || /^CONTAINER_PROJECT_DIR_B=/' "$env_file"
+                # Built over the same range generate_env wrote, not the
+                # literals A and B: a 4-account install used to leave
+                # PROJECT_DIR_C= and PROJECT_DIR_D= behind. Every fragment
+                # comes from index_to_letter, so nothing user-supplied reaches
+                # the pattern.
+                local drop='^# ==== Tier B:|^# \(populated after'
+                local j upper_j
+                for j in $(seq 1 "$NUM_ACCOUNTS"); do
+                    upper_j=$(index_to_letter "$j" | tr '[:lower:]' '[:upper:]')
+                    drop="${drop}|^PROJECT_DIR_${upper_j}=|^CONTAINER_PROJECT_DIR_${upper_j}="
+                done
+                perl -i -ne "print unless /$drop/" "$env_file"
                 set_env_value "$env_file" "ISOLATION_MODE" "shared"
             fi
 
@@ -1014,25 +1046,35 @@ setup_worktrees() {
         log_info "Project directory updated: $new_dir"
     done
 
-    local branch_a
-    local branch_b
-    branch_a=$(prompt_input "Branch name for Container A" "worktree-a")
-    branch_b=$(prompt_input "Branch name for Container B" "worktree-b")
+    # Driven by NUM_ACCOUNTS, matching the placeholders generate_env writes.
+    # This used to prompt for exactly two branches and write back exactly
+    # PROJECT_DIR_A and PROJECT_DIR_B, so a Tier B install with more than two
+    # accounts left the rest empty. Both callees already accept N --
+    # setup-worktrees.sh takes "$@" -- only the caller was fixed at two.
+    local branches=() letters=()
+    local i letter upper
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        letter=$(index_to_letter "$i")
+        upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+        letters+=("$letter")
+        branches+=("$(prompt_input "Branch name for Container ${upper}" "worktree-${letter}")")
+    done
 
     log_info "Creating worktrees..."
-    "$SCRIPT_DIR/setup-worktrees.sh" "$SOURCE_DIR" "$branch_a" "$branch_b"
+    # One invocation with the whole array: setup-worktrees.sh derives each
+    # worktree's letter from the branch's position, so splitting the call
+    # would restart the numbering at "a".
+    "$SCRIPT_DIR/setup-worktrees.sh" "$SOURCE_DIR" "${branches[@]}"
 
-    local worktree_a="${SOURCE_DIR%/}-a"
-    local worktree_b="${SOURCE_DIR%/}-b"
-
-    # Update .env with worktree paths
     local env_file="$PROJECT_ROOT/.env"
-    set_env_value "$env_file" "PROJECT_DIR_A" "$worktree_a"
-    set_env_value "$env_file" "PROJECT_DIR_B" "$worktree_b"
-
     log_success "Worktrees created:"
-    log_info "  A: $worktree_a (branch: $branch_a)"
-    log_info "  B: $worktree_b (branch: $branch_b)"
+    for i in "${!letters[@]}"; do
+        letter="${letters[$i]}"
+        upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+        local worktree="${SOURCE_DIR%/}-${letter}"
+        set_env_value "$env_file" "PROJECT_DIR_${upper}" "$worktree"
+        log_info "  ${upper}: $worktree (branch: ${branches[$i]})"
+    done
 }
 
 # --- Compose Command Builder --------------------------------------------------
@@ -1288,6 +1330,9 @@ main() {
     build_tui
     run_authentication
     setup_worktrees
+    # After setup_worktrees, so a Tier B .env has its PROJECT_DIR_* populated
+    # before the generator validates the mode it declares.
+    generate_compose_files
     start_containers
     install_dependencies
     run_verification
