@@ -789,7 +789,12 @@ echo "== entry-point library wiring =="
 # Each entry point's own `. "$SCRIPT_DIR/lib/*.sh"` lines are executed in the
 # order it lists them and the contract functions are then looked up, so a
 # wrong order is caught as well as an omission.
-mapfile -t wiring_entries < <(
+# Read into the array with a while loop rather than `mapfile`: mapfile is
+# bash 4+, and this suite now also runs on macOS, which ships bash 3.2.
+wiring_entries=()
+while IFS= read -r wiring_entry; do
+    [[ -n "$wiring_entry" ]] && wiring_entries+=("$wiring_entry")
+done < <(
     find "$PROJECT_ROOT/scripts" -maxdepth 1 -type f \
         -exec grep -lE '^\. "\$SCRIPT_DIR/lib/build-compose-cmd\.sh"$' {} + | sort
 )

@@ -33,10 +33,17 @@ _CLAUDE_DOCKER_COMPOSE_ASSERT_SH_SOURCED=1
 #   0  docker and jq are both usable
 #   1  a tool is missing and the caller should skip those assertions
 #
-# In CI a missing tool is a defect rather than an environment quirk, so this
-# fails the run outright instead of returning a skip. That mirrors how
-# test_compose_generator_equivalence.sh treats a missing pwsh: a dev host may
-# lack the tool, a runner may not, and a hollow pass is worse than either.
+# On a runner that ships these tools a missing one is a defect rather than an
+# environment quirk, so this fails the run outright instead of returning a
+# skip. That mirrors how test_compose_generator_equivalence.sh treats a missing
+# pwsh: a dev host may lack the tool, that runner may not, and a hollow pass is
+# worse than either.
+#
+# The guarantee is the Linux runner's, not CI's. docker and jq are preinstalled
+# on ubuntu-latest and on neither of the others -- the bash-tests-macos job has
+# neither, and demanding them there turned a suite that should skip three
+# assertions into a failed job. RUNNER_OS is what distinguishes them; it
+# defaults to Linux so a non-GitHub CI keeps the strict behavior.
 compose_assert_requires() {
     local missing=()
     command -v docker >/dev/null 2>&1 || missing+=(docker)
@@ -46,8 +53,8 @@ compose_assert_requires() {
         return 0
     fi
 
-    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-        echo "FAIL: ${missing[*]} unavailable in CI (both are preinstalled on ubuntu-latest)" >&2
+    if [[ -n "${GITHUB_ACTIONS:-}" && "${RUNNER_OS:-Linux}" == "Linux" ]]; then
+        echo "FAIL: ${missing[*]} unavailable on a Linux runner (both are preinstalled on ubuntu-latest)" >&2
         exit 1
     fi
     echo "NOTE: ${missing[*]} not installed locally; skipping resolved-compose assertions" >&2
