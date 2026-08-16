@@ -91,13 +91,20 @@ jobs:
           # tests/ is analyzed too, for the same reason shellcheck now scans
           # it: the five .ps1 files there hold assertion helpers, and a defect
           # in one of those presents as "the test passes" (#354, item 11).
-          $results = Invoke-ScriptAnalyzer -Path scripts, tests -Recurse -Severity Warning `
-            -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
-              PSUseShouldProcessForStateChangingFunctions, `
-              PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
-              PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
-              PSUseUsingScopeModifierInNewRunspaces, `
-              PSAvoidUsingEmptyCatchBlock
+          #
+          # One invocation per directory: -Path is [string], not [string[]],
+          # so `-Path scripts, tests` fails to bind with "Cannot convert
+          # System.Object[] to the type System.String".
+          $results = @()
+          foreach ($dir in @('scripts', 'tests')) {
+            $results += Invoke-ScriptAnalyzer -Path $dir -Recurse -Severity Warning `
+              -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
+                PSUseShouldProcessForStateChangingFunctions, `
+                PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
+                PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
+                PSUseUsingScopeModifierInNewRunspaces, `
+                PSAvoidUsingEmptyCatchBlock
+          }
           if ($results) {
             $results | Format-Table -AutoSize
             exit 1
