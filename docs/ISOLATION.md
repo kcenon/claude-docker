@@ -90,7 +90,7 @@ tool call, a compromised dependency's postinstall script.
 | Account A edits account B's working tree | No | Yes | Yes |
 | Account A reads account B's working tree | No | Yes | Yes |
 | Account A rewrites shared git history (`.git`) | No | **No** | Yes |
-| Account A reads the shared host configuration | No | No | Yes |
+| Account A reads the shared host configuration, including the runtime credential file and `projects/` transcripts (see [the mount section](#interaction-with-the-shared-runtime-configuration-mount)) | No | No | Yes |
 | Container root filesystem is read-only | No | No | Yes |
 | Capabilities dropped and privilege escalation blocked | No | No | Yes |
 | Account A holds account B's GitHub credential | No | No | Yes |
@@ -180,11 +180,26 @@ Exactly one mode overlay is ever composed. Composing two would let the later
 one replace the volume list again, which is how a boundary could be undone by
 an ordering accident rather than a code change.
 
-**The overlay order settles the `user` question.** Both the base stack and
-`docker-compose.linux.yml` declare `user: "${UID:-1000}:${GID:-1000}"`, and the
-mode overlay is appended **after** both, so an isolated stack could override the
-field outright — Compose lets a later `-f` win. It deliberately does not; see
+**The overlay order settles the `user` question.** The base stack declares
+`user: "${UID:-1000}:${GID:-1000}"` and `docker-compose.linux.yml` declares
+`user: "${UID}:${GID}"` — no defaults, which is the difference that matters
+below — and the mode overlay is appended **after** both, so an isolated stack
+could override the field outright; Compose lets a later `-f` win. It
+deliberately does not; see
 [Why the host user, not `node`](#why-the-host-user-not-node).
+
+Because the Linux overlay has no fallback, composing it with `UID`/`GID` unset
+resolves to `user: ":"` and the daemon rejects the project. Nothing that goes
+through `scripts/claude-docker` can hit that — `build_compose_cmd` exports both
+variables itself before invoking Compose — but a raw `docker compose -f ... -f
+docker-compose.linux.yml` invocation can, and `scripts/install.sh` writes the
+pair into `.env` only when it classifies the platform as `linux`. **WSL2 is
+classified as `wsl2`, so a WSL2 install has no `UID`/`GID` in `.env`.** Add them
+by hand if you invoke Compose directly there:
+
+```bash
+printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" >> .env
+```
 
 ## The hardened container profile
 
@@ -281,8 +296,12 @@ should be configured with per-account authentication rather than handed the
 shared token — that is what #331 exists for, and this mode reuses its contract
 unchanged rather than growing a second mechanism.
 
-Provider API keys were already per-account (`ANTHROPIC_API_KEY_<X>` and the
-equivalents for other runtimes) and are unaffected. `GIT_USER_NAME` and
+Provider API keys were already per-account and are unaffected. The variable you
+set in `.env` is `CLAUDE_API_KEY_<X>` (`CODEX_API_KEY_<X>`, `GEMINI_API_KEY_<X>`
+for the other runtimes); the generator reads only that prefixed form and emits
+the SDK's own name — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` —
+into the container. Both halves come from `apiKeyVarPrefix` and `sdkApiKeyVar`
+in `tui/internal/config/runtimes.json`. `GIT_USER_NAME` and
 `GIT_USER_EMAIL` are still passed through: they are committer identity, they
 name the human rather than an account, and an isolated account still has to be
 able to commit.
@@ -347,6 +366,28 @@ Every service mounts the host's `~/.claude/` read-only at
 in [`docs/CLAUDE_DOCKER_CONTRACT.md`](https://github.com/kcenon/claude-config/blob/develop/docs/CLAUDE_DOCKER_CONTRACT.md)
 in `kcenon/claude-config`, and the entrypoint depends on its directory layout,
 hook command grammar, and settings transform.
+
+**The mount is the whole directory, not the parts the entrypoint reads.**
+`bootstrap-claude.sh` consumes a finite list — `hooks/`, `scripts/`, `skills/`,
+`commands/`, `ccstatusline/` and `settings.json` — but `docker-compose.yml`
+binds `${HOME}/.claude` entire. Two things inside it are worth naming, because
+neither is obvious from "shared host configuration":
+
+- the runtime's OAuth credential file — `.credentials.json` for claude,
+  `auth.json` for codex, `oauth_creds.json` for gemini;
+- `projects/`, which holds session transcripts.
+
+The container runs as the host user (`user: "${UID:-1000}:${GID:-1000}"`), so
+the host's own `0600` on the credential file does not withhold it: every
+account container can read both, and read each other's by extension. The mount
+is read-only, so nothing can be modified through it.
+
+This is a property of `shared` and `worktree` alike — it is a host-home
+surface, not a workspace one, which is why the workspace table above does not
+capture it. `isolated` is the only mode that removes it, by not creating the
+mount at all (`generate-compose.sh` gates it on the mode). Choosing between the
+modes therefore includes choosing whether accounts can read one another's
+credentials and transcripts.
 
 **As shipped, `isolated` takes the absent-by-default half of that requirement.**
 An isolated service receives no `~/.claude` mount, no agents/skills mount and
