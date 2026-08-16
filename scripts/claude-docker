@@ -834,6 +834,27 @@ cmd_scale() {
         exit 1
     fi
 
+    # Validate the new count against the isolation contract BEFORE touching
+    # .env. The generator is deliberately fail-closed so a failure "cannot
+    # leave a partially regenerated set behind" -- but the caller had already
+    # moved. On a worktree install holding only PROJECT_DIR_A/B, `scale 4`
+    # wrote NUM_ACCOUNTS=4, created account-c and account-d, and then died on
+    # "PROJECT_DIR_C is required when ISOLATION_MODE=worktree", leaving .env
+    # saying 4 and the compose files saying 2.
+    #
+    # Nothing downstream catches that split: `up` resolves the mode with the
+    # default account count of 1, so it passes and starts two containers,
+    # while get_service_names, the TUI and the help text all read
+    # NUM_ACCOUNTS and report four.
+    #
+    # Run in a subshell with the new count exported, so a rejection leaves
+    # nothing behind at all -- not even an exported variable.
+    if ! ( NUM_ACCOUNTS="$new_count" require_supported_isolation_mode "$new_count" >/dev/null ); then
+        log_error "Cannot scale to $new_count account(s); see the error above."
+        log_info "NUM_ACCOUNTS is unchanged at $current_count."
+        exit 1
+    fi
+
     if grep -q '^NUM_ACCOUNTS=' "$env_file" 2>/dev/null; then
         perl -i -pe "s/^NUM_ACCOUNTS=.*/NUM_ACCOUNTS=$new_count/" "$env_file"
     else

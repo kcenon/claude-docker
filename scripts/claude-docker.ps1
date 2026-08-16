@@ -40,6 +40,46 @@ Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
+# --- Exit Code Propagation ----------------------------------------------------
+
+# What this script will exit with. The dispatch switch is the last statement in
+# the file, so every branch used to fall off the end with rc=0 no matter what
+# docker did.
+#
+# $ErrorActionPreference = 'Stop' does not cover this: a native command's
+# non-zero exit is not a PowerShell error.
+#
+#   pwsh -NoProfile -Command "$ErrorActionPreference='Stop'; & cmd /c exit 7; 'reached'"
+#   reached      <- and the caller sees rc=0
+#
+# The bash wrapper gets this from `set -euo pipefail`, which is why cmd_up can
+# print "Containers started." unguarded and still be correct. The PowerShell
+# port copied the structure without the guarantee underneath it.
+$script:ExitCode = 0
+
+function Test-ComposeSucceeded {
+    <#
+    .SYNOPSIS
+    Record docker's exit code and report whether it succeeded.
+    .DESCRIPTION
+    Called immediately after an Invoke-Compose. $LASTEXITCODE is an automatic
+    *global*, so the native command inside the module sets the same variable
+    this reads -- no plumbing needed, only the reading that was missing.
+
+    Returns $true on success so callers can gate their success message on it,
+    which is the other half of the defect: "Containers started." printed after
+    a missing image or an unresolvable bind source.
+    #>
+    param([Parameter(Mandatory)][string]$What)
+
+    if ($LASTEXITCODE -ne 0) {
+        $script:ExitCode = $LASTEXITCODE
+        Write-LogError "$What failed (docker exited $LASTEXITCODE)."
+        return $false
+    }
+    return $true
+}
+
 # --- Account Directory Helpers -----------------------------------------------
 
 function Get-GhAuthMode {
@@ -143,9 +183,11 @@ function Invoke-Up {
     Write-Host ''
     Write-Host 'Starting containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot up --detach @Arguments
+    if (-not (Test-ComposeSucceeded 'up')) { return }
     Write-Host 'Containers started.' -ForegroundColor Green
     Write-Host ''
     Invoke-Compose -ProjectRoot $ProjectRoot ps
+    $null = Test-ComposeSucceeded 'ps'
 
     # Lightweight post-start GitHub auth check (non-blocking)
     Write-Host ''
@@ -160,21 +202,25 @@ function Invoke-Up {
 function Invoke-Down {
     Write-Host 'Stopping containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot down @Arguments
+    if (-not (Test-ComposeSucceeded 'down')) { return }
     Write-Host 'Containers stopped.' -ForegroundColor Green
 }
 
 function Invoke-Restart {
     Write-Host 'Restarting containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot restart @Arguments
+    if (-not (Test-ComposeSucceeded 'restart')) { return }
     Write-Host 'Containers restarted.' -ForegroundColor Green
 }
 
 function Invoke-Logs {
     Invoke-Compose -ProjectRoot $ProjectRoot logs -f @Arguments
+    $null = Test-ComposeSucceeded 'logs'
 }
 
 function Invoke-Ps {
     Invoke-Compose -ProjectRoot $ProjectRoot ps @Arguments
+    $null = Test-ComposeSucceeded 'ps'
 }
 
 function Invoke-Exec {
@@ -187,6 +233,9 @@ function Invoke-Exec {
     $rest = if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] } else { @('bash') }
 
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service @rest
+    # exec's exit code is the command's, and a caller scripting around this
+    # wrapper needs it.
+    $null = Test-ComposeSucceeded 'exec'
 }
 
 function Invoke-Agent {
@@ -251,6 +300,7 @@ function Invoke-Agent {
         $agentArgs += $skipFlag
     }
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service @agentArgs
+    $null = Test-ComposeSucceeded "$label"
 }
 
 function Get-HostGhToken {
@@ -300,6 +350,10 @@ function Invoke-GhAuthShared {
     if ($running) {
         Write-Host 'Recreating containers to apply...' -ForegroundColor Cyan
         Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
+        # A failed recreate means the token was written to .env but no
+        # container picked it up. Verifying auth after that would report a
+        # stale answer, so stop here with the code recorded.
+        if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
 
         Start-Sleep -Seconds 2
         $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
@@ -427,6 +481,9 @@ function Invoke-GhAuthPerAccount {
 
     Write-Host 'Recreating selected container(s) to apply...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate @runningServices
+    # Same as the shared path: verifying auth against containers that were not
+    # recreated would report a stale answer.
+    if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
     Start-Sleep -Seconds 2
     foreach ($service in $runningServices) {
         Test-ContainerGhAuth -Service $service | Out-Null
@@ -613,6 +670,7 @@ function Test-AllContainerGhAuth {
 function Invoke-Build {
     Write-Host 'Building Docker image...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot build @Arguments
+    if (-not (Test-ComposeSucceeded 'build')) { return }
     Write-Host 'Build complete.' -ForegroundColor Green
 }
 
@@ -636,9 +694,13 @@ function Invoke-Update {
 
     Write-Host '[3/5] Rebuilding image (--no-cache)...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot build --no-cache
+    # Recreating containers from an image that failed to build would replace a
+    # working stack with a broken one, so this stops rather than continuing.
+    if (-not (Test-ComposeSucceeded 'build --no-cache')) { return }
 
     Write-Host '[4/5] Recreating containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
+    if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
 
     # Verify version and GitHub auth
     Write-Host '[5/5] Verifying...' -ForegroundColor Cyan
@@ -687,6 +749,27 @@ function Invoke-Scale {
         Write-LogError '.env not found. Run install.ps1 first.'
         exit 1
     }
+    # Validate the new count against the isolation contract BEFORE touching
+    # .env. The generators are deliberately fail-closed so a failure "cannot
+    # leave a partially regenerated set behind" -- but the caller had already
+    # moved. On a worktree install holding only PROJECT_DIR_A/B, `scale 4`
+    # wrote NUM_ACCOUNTS=4, created account-c and account-d, and then died on
+    # "PROJECT_DIR_C is required when ISOLATION_MODE=worktree", leaving .env
+    # saying 4 and the compose files saying 2.
+    #
+    # Nothing downstream catches that split: `up` resolves the mode with the
+    # default account count of 1, so it passes and starts two containers,
+    # while Get-ServiceNames, the TUI and the help text all read NUM_ACCOUNTS
+    # and report four.
+    try {
+        $null = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot -AccountCount $newCount
+    }
+    catch {
+        Write-LogError "Cannot scale to $newCount account(s): $($_.Exception.Message)"
+        Write-LogInfo "NUM_ACCOUNTS is unchanged at $currentCount."
+        exit 1
+    }
+
     Set-EnvValue -Path $envFile -Key 'NUM_ACCOUNTS' -Value $newCount
 
     # Create state directories for new accounts
@@ -718,7 +801,9 @@ function Invoke-Scale {
     if ($running) {
         Write-Host 'Restarting containers...' -ForegroundColor Cyan
         Invoke-Compose -ProjectRoot $ProjectRoot down
+        $null = Test-ComposeSucceeded 'down'
         Invoke-Compose -ProjectRoot $ProjectRoot up --detach
+        if (-not (Test-ComposeSucceeded 'up')) { return }
     }
 
     Write-Host "Scaled to $newCount account(s)." -ForegroundColor Green
@@ -738,10 +823,13 @@ function Invoke-Config {
     Write-Host "Compose args: docker compose $($baseArgs -join ' ')" -ForegroundColor DarkGray
     Write-Host ''
     Invoke-Compose -ProjectRoot $ProjectRoot config @Arguments
+    $null = Test-ComposeSucceeded 'config'
 }
 
 function Invoke-ComposePass {
     Invoke-Compose -ProjectRoot $ProjectRoot @Arguments
+    # The raw pass-through: `compose --bogus-flag` must not exit 0.
+    $null = Test-ComposeSucceeded 'compose'
 }
 
 function Invoke-Usage {
@@ -941,7 +1029,8 @@ function Invoke-BuildTui {
 # here. Matched before the static switch.
 if ($Command -in (Get-RuntimeList -ProjectRoot $ProjectRoot)) {
     Invoke-Agent -Subcommand $Command
-    return
+    # `claude` / `codex` used to mask the agent's own exit code.
+    exit $script:ExitCode
 }
 
 switch ($Command) {
@@ -968,3 +1057,7 @@ switch ($Command) {
         exit 1
     }
 }
+
+# The one place all sixteen branches needed. Without it every docker-backed
+# subcommand fell off the end of the file with rc=0, whatever docker did.
+exit $script:ExitCode
