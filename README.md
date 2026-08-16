@@ -50,6 +50,17 @@ counterpart, and every PowerShell entry point with a bash counterpart, validates
 the host platform before doing any work. Running one on the wrong platform
 fails fast with an error naming the counterpart to use instead.
 
+**Shell portability.** macOS ships bash 3.2 as `/bin/bash`, and every bash entry
+point is `#!/usr/bin/env bash`, so a bash 4+ construct is not a style question
+there -- it is `bad substitution` and an exited shell. Scripts under `scripts/`
+and `tests/` must stay within bash 3.2: no case-modifying expansions
+(`${var,,}`, `${var^^}`), no associative arrays, no `mapfile`/`readarray`, no
+namerefs, no `&>>`, no `;&`/`;;&`, no `coproc`, no `wait -n`, and no
+`printf '%(...)T'`. Use `printf '%s' "$v" | tr '[:upper:]' '[:lower:]'` in place
+of `${v,,}`. `tests/test_bash32_portability.sh` enforces the list on every run,
+and the `Bash Tests (macOS, bash 3.2)` CI job exercises a subset of the suite
+under `/bin/bash` itself.
+
 ## Quick Start
 
 ### Option A: Interactive Setup (Recommended)

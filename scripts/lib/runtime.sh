@@ -145,7 +145,12 @@ agent_runtime() {
         runtime=$(parse_env_value "${PROJECT_ROOT}/.env" "AGENT_RUNTIME")
     fi
     runtime="${runtime:-claude}"
-    runtime="${runtime,,}"
+    # `${runtime,,}` is bash 4+. macOS ships bash 3.2 as /bin/bash and
+    # scripts/claude-docker is `#!/usr/bin/env bash`, so on a stock macOS the
+    # first call here raised "bad substitution" and every subcommand that
+    # resolves the runtime -- up, attach, ps -- failed. This is the idiom
+    # scripts/test-concurrent-git.sh already uses for the same reason.
+    runtime=$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')
     # Validate against the registry rather than a hardcoded allowlist.
     local known
     while IFS= read -r known; do

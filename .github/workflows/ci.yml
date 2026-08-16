@@ -203,11 +203,65 @@ jobs:
           - tests/test_worktree_ownership.sh
           - tests/test_install_start_containers.sh
           - tests/test_install_tier_b.sh
+          - tests/test_bash32_portability.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Run ${{ matrix.test }}
         run: bash "${{ matrix.test }}"
+
+  # macOS is a supported platform (README.md) and ships bash 3.2 as /bin/bash.
+  # That is where a bash 4+ construct stops being a style question and becomes
+  # `bad substitution` and an exited shell -- which is exactly what
+  # agent_runtime did, taking `up`, `attach` and `ps` with it (#350).
+  #
+  # One sequential job rather than a `macos-latest` axis on the matrix above:
+  # macOS runners bill at roughly ten times a Linux runner, so a second axis
+  # would cost one macOS runner per matrix entry, while this costs one. The
+  # purpose is to observe bash 3.2 at all, and one job does that.
+  #
+  # /bin/bash is invoked explicitly. The runner image carries a Homebrew bash 5
+  # earlier in PATH, so `bash "$t"` would test the wrong interpreter and this
+  # job would prove nothing.
+  #
+  # The list is a subset, and what is left out is named rather than left to be
+  # inferred:
+  #   - the four *_equivalence.sh tests cross-check the bash readers against
+  #     pwsh; their bash halves already run on Linux above.
+  #   - test_cleanup_backups.sh uses `touch -d "30 days ago"`, which BSD touch
+  #     rejects, and test_github_account_selection.sh uses `stat -c`, which is
+  #     GNU-only. Both would fail here for reasons that have nothing to do with
+  #     bash 3.2. Making them portable is worth doing; it is not this job.
+  #   - the remaining entries are container- or Windows-oriented.
+  bash-tests-macos:
+    name: Bash Tests (macOS, bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Show the interpreter under test
+        run: /bin/bash --version | head -1
+      - name: Run the portable subset under /bin/bash
+        run: |
+          set -uo pipefail
+          failed=0
+          for t in \
+            tests/test_bash32_portability.sh \
+            tests/test_parse_env.sh \
+            tests/test_agent_attach_argv.sh \
+            tests/test_num_accounts_precedence.sh \
+            tests/test_transform_syntax_check.sh \
+            tests/test_isolation_modes.sh
+          do
+            echo "::group::$t"
+            if /bin/bash "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::$t failed under bash 3.2"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   pwsh-tests:
     name: PowerShell Tests (${{ matrix.test }})
