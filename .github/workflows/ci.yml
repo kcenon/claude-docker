@@ -94,9 +94,21 @@ jobs:
         with:
           # Must match or exceed tui/go.mod's `go` directive (currently 1.24).
           go-version: "1.24"
+      # -race, not a plain `go test`. The TUI shares one *config.Env across the
+      # bubbletea event loop and every Cmd goroutine, and an unsynchronized map
+      # write there is `fatal error: concurrent map read and map write` -- a
+      # runtime fatal that skips bubbletea's terminal restore. Without the
+      # detector, tests/internal/config/env_race_test.go passes or fails on a
+      # scheduling accident (issue #351).
       - name: Run Go unit tests
         working-directory: ./tui
-        run: go test ./...
+        run: go test -race ./...
+      # go vet catches the class of mistake the compiler allows and the tests
+      # do not reach: lost struct tags, unreachable code, printf arity. It was
+      # not run at all before #351.
+      - name: Run go vet
+        working-directory: ./tui
+        run: go vet ./...
       # `go test ./...` compiles benchmark functions but never executes them,
       # so a benchmark harness that panics at runtime stays green forever.
       # -benchtime=1x runs each benchmark exactly once: enough to catch that,

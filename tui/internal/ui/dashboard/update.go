@@ -33,8 +33,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case uiTickMsg:
-		// If refresh is in-flight, just reschedule without doing anything
-		if m.refreshing {
+		// If refresh is in-flight, just reschedule without doing anything.
+		//
+		// m.busy is checked for the same reason. This path used to look only
+		// at m.refreshing, so a retry deadline landing during gh-auth started
+		// a second command goroutine reading .env while the first was writing
+		// it. The `r` key has always had this guard; the timer did not, which
+		// made the collision something the operator could hit by waiting
+		// rather than by doing anything.
+		if m.refreshing || m.busy {
 			return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
 				return uiTickMsg{}
 			})

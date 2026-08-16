@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -31,7 +32,23 @@ const (
 )
 
 // Env holds parsed .env configuration with order-preserving entries.
+//
+// One *Env is created in main and shared for the process' lifetime, and
+// bubbletea runs every Cmd on its own goroutine. So `entries` and `index` are
+// reached from at least three goroutines at once: the event loop renders
+// through Get on every message, the refresh Cmd reads NUM_ACCOUNTS and
+// AGENT_RUNTIME, and the gh-auth Cmd writes the token key.
+//
+// Unsynchronized, the write's append branch against a concurrent read is
+// `fatal error: concurrent map read and map write` -- a runtime fatal, not a
+// panic, so bubbletea's recoverFromPanic never runs and the terminal is left
+// in altscreen with a raw stack dump.
+//
+// Moving the write onto the event loop would not be enough: the refresh Cmd
+// still reads from its own goroutine, so the collision would move rather than
+// go away. The lock covers every reader, present and future.
 type Env struct {
+	mu      sync.RWMutex
 	path    string
 	entries []entry
 	index   map[string]int // key -> entries[i]
@@ -84,6 +101,8 @@ func NewEmptyEnv(path string) *Env {
 
 // Get returns the value of a key, or empty string if not set.
 func (e *Env) Get(key string) string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	if i, ok := e.index[key]; ok {
 		return e.entries[i].value
 	}
@@ -91,7 +110,16 @@ func (e *Env) Get(key string) string {
 }
 
 // Set updates or appends a key=value entry.
+//
+// The append branch is the one that matters: it writes the map. It used to be
+// a one-time event, because the only caller wrote the fixed key GH_TOKEN and
+// every press after the first took the in-place update branch. Per-account
+// auth made the key GH_TOKEN_<LETTER>, so every account's first gh-auth press
+// appends -- and .env.example ships all three token keys commented out, which
+// LoadEnv does not index, so even shared mode appends on the first press.
 func (e *Env) Set(key, value string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if i, ok := e.index[key]; ok {
 		e.entries[i].key = key
 		e.entries[i].value = value
@@ -105,10 +133,20 @@ func (e *Env) Set(key, value string) {
 // Save writes the env file back to disk, preserving order/comments.
 // Uses atomic rename + 0600 permissions because the file holds secrets.
 func (e *Env) Save() error {
-	if e.path == "" {
+	// Snapshot under the read lock, then write without holding it. The write
+	// includes a temp file, a rename and -- on Windows -- an icacls exec;
+	// holding the lock across that would stall every render for as long as
+	// the slowest of them.
+	e.mu.RLock()
+	path := e.path
+	snapshot := make([]entry, len(e.entries))
+	copy(snapshot, e.entries)
+	e.mu.RUnlock()
+
+	if path == "" {
 		return fmt.Errorf("env path not set")
 	}
-	dir := filepath.Dir(e.path)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
@@ -120,7 +158,7 @@ func (e *Env) Save() error {
 	defer os.Remove(tmpName)
 
 	w := bufio.NewWriter(tmp)
-	for _, ent := range e.entries {
+	for _, ent := range snapshot {
 		if ent.key != "" {
 			if _, err := fmt.Fprintf(w, "%s=%s\n", ent.key, ent.value); err != nil {
 				tmp.Close()
@@ -143,10 +181,10 @@ func (e *Env) Save() error {
 	if err := os.Chmod(tmpName, 0600); err != nil {
 		return fmt.Errorf("chmod: %w", err)
 	}
-	if err := os.Rename(tmpName, e.path); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
-	if err := hardenSecretFile(e.path); err != nil {
+	if err := hardenSecretFile(path); err != nil {
 		return err
 	}
 	return nil
