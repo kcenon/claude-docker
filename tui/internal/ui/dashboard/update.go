@@ -85,8 +85,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.toastExpireCmd()
 			}
 			// Chain into recreate stage.
+			bin, args, err := m.client.UpRecreateArgs()
+			if err != nil {
+				return m.composeErr("Update (recreate)", err)
+			}
 			m.busy = true
-			bin, args := m.client.UpRecreateArgs()
 			cmd := exec.Command(bin, args...)
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opUpdateRecreate, err: err}
@@ -110,7 +113,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.Batch(m.Refresh(), m.toastExpireCmd())
 		}
 		// Containers are running — recreate them so the new GH_TOKEN takes effect.
-		bin, args := m.client.UpRecreateArgs(msg.services...)
+		bin, args, err := m.client.UpRecreateArgs(msg.services...)
+		if err != nil {
+			return m.composeErr("GitHub auth + recreate", err)
+		}
 		cmd := exec.Command(bin, args...)
 		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 			return dockerOpDoneMsg{kind: opGHAuthRecreate, err: err}
@@ -148,7 +154,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor < len(m.accounts) {
 				acct := m.accounts[m.cursor]
 				if acct.IsRunning() {
-					bin, args := m.client.ExecArgs(acct.ServiceName, m.env.RuntimeCommandArgs(m.skipPermissions)...)
+					bin, args, err := m.client.ExecArgs(acct.ServiceName, m.env.RuntimeCommandArgs(m.skipPermissions)...)
+					if err != nil {
+						return m.composeErr("Attach", err)
+					}
 					cmd := exec.Command(bin, args...)
 					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 						return sessionFinishedMsg{err: err}
@@ -181,16 +190,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, m.Refresh()
 
 		case "b":
+			bin, args, err := m.client.BuildArgs(false)
+			if err != nil {
+				return m.composeErr("Build", err)
+			}
 			m.busy = true
-			bin, args := m.client.BuildArgs(false)
 			cmd := exec.Command(bin, args...)
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opBuild, err: err}
 			})
 
 		case "B":
+			bin, args, err := m.client.BuildArgs(true)
+			if err != nil {
+				return m.composeErr("Rebuild (no-cache)", err)
+			}
 			m.busy = true
-			bin, args := m.client.BuildArgs(true)
 			cmd := exec.Command(bin, args...)
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opBuildNoCache, err: err}
@@ -198,8 +213,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case "U":
 			// Two-stage chain: build --no-cache → up -d --force-recreate.
+			bin, args, err := m.client.BuildArgs(true)
+			if err != nil {
+				return m.composeErr("Update (build)", err)
+			}
 			m.busy = true
-			bin, args := m.client.BuildArgs(true)
 			cmd := exec.Command(bin, args...)
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opUpdateBuild, err: err}
@@ -210,8 +228,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			svc := m.accounts[m.cursor].ServiceName
+			bin, args, err := m.client.RestartArgs(svc)
+			if err != nil {
+				return m.composeErr("Restart", err)
+			}
 			m.busy = true
-			bin, args := m.client.RestartArgs(svc)
 			cmd := exec.Command(bin, args...)
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 				return dockerOpDoneMsg{kind: opRestart, err: err}

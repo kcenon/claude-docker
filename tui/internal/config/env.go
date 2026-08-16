@@ -316,6 +316,33 @@ func (e *Env) IsolationMode() string {
 	return IsolationShared
 }
 
+// UnusedWorkspaceWarnings reports per-account workspace paths that are
+// configured but that the resolved mode does not consume.
+//
+// Mirrors warn_unused_workspace_paths in scripts/lib/isolation.sh, including
+// checking both families rather than stopping at the first: a user who tried
+// isolated, went back to worktree, and left the clone paths behind should be
+// told the clones are now inert. This reports a surprise and decides nothing,
+// which is why it returns messages rather than an error -- the case it exists
+// for is a stale PROJECT_DIR_A under ISOLATION_MODE=isolated, where the paths
+// are ignored but the configuration reads as though they are not.
+func (e *Env) UnusedWorkspaceWarnings() []string {
+	if e == nil {
+		return nil
+	}
+	mode := e.IsolationMode()
+	var out []string
+	if mode != IsolationWorktree && e.Get("PROJECT_DIR_A") != "" {
+		out = append(out, "PROJECT_DIR_A is set, but ISOLATION_MODE="+mode+
+			" ignores per-account worktree paths")
+	}
+	if mode != IsolationIsolated && e.Get("ISOLATED_WORKSPACE_A") != "" {
+		out = append(out, "ISOLATED_WORKSPACE_A is set, but ISOLATION_MODE="+mode+
+			" ignores per-account clone paths")
+	}
+	return out
+}
+
 // IsolationModeKnown reports whether a mode name is part of the contract.
 func IsolationModeKnown(mode string) bool {
 	switch mode {

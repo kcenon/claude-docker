@@ -67,6 +67,21 @@ func (m Model) startGHAuth() (Model, tea.Cmd) {
 	}
 }
 
+// composeErr reports a compose prefix that could not be resolved and returns
+// the dashboard to an idle state.
+//
+// BuildComposeArgs fails when ISOLATION_MODE names an overlay that is not on
+// disk, or names nothing recognizable. Both mean the containers this key would
+// start would not have the boundary the operator configured, so the operation
+// is abandoned here rather than handed to docker. Clearing busy matters as
+// much as the message: every caller sits on a key handler that has already
+// committed to an operation, and leaving the flag set wedges the dashboard.
+func (m Model) composeErr(op string, err error) (Model, tea.Cmd) {
+	m.busy = false
+	m = m.toast(op+": "+err.Error(), statusErr)
+	return m, m.toastExpireCmd()
+}
+
 // toast returns a copy of the model with a transient status message set.
 // Callers should chain toastExpireCmd() so the message auto-clears.
 func (m Model) toast(text string, level statusLevel) Model {
