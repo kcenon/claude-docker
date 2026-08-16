@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     E2E test: Tier B concurrent git safety (Windows PowerShell port).

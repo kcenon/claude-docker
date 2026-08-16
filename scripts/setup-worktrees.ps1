@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     Setup git worktrees for Tier B concurrent editing (supports N accounts).
@@ -36,7 +36,6 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 # the first 26 accounts and produced punctuation past 'z'. That was unreachable
 # while install.ps1 passed exactly two branches; it is reachable now that the
 # installer drives this from NUM_ACCOUNTS, whose validator allows up to 702.
-# Nested two-argument Join-Path: the three-argument form is PowerShell 7+.
 . (Join-Path (Join-Path $PSScriptRoot 'lib') 'index.ps1')
 
 $RepoDir = $RepoDir.TrimEnd('\', '/')

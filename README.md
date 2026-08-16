@@ -31,7 +31,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 | Linux | UID/GID matching (`id -u`, `id -g`) |
 | macOS | Docker Desktop with VirtioFS (default) |
 | Windows (WSL2) | Source code on WSL2 filesystem (not `/mnt/c/`) |
-| Windows (Native) | Docker Desktop with WSL2 backend, PowerShell 5.1+ |
+| Windows (Native) | Docker Desktop with WSL2 backend, PowerShell 7 (`winget install --id Microsoft.PowerShell`) |
 
 ## Platform Support
 
@@ -42,7 +42,7 @@ installer and CLI wrapper that match your host platform:
 |----------|-----------|-------------|----------------|-------|
 | Linux (native) | `scripts/install.sh` | `scripts/claude-docker` | native Docker Engine | UID/GID auto-detected; uses `docker-compose.linux.yml` overlay |
 | macOS | `scripts/install.sh` | `scripts/claude-docker` | Docker Desktop (VirtioFS recommended) | OAuth tokens live in Keychain — see Troubleshooting |
-| Windows (native) | `scripts/install.ps1` | `scripts/claude-docker.ps1` or `.cmd` | Docker Desktop (WSL2 backend) | Run from PowerShell 5.1+ or PowerShell 7 |
+| Windows (native) | `scripts/install.ps1` | `scripts/claude-docker.ps1` or `.cmd` | Docker Desktop (WSL2 backend) | Requires PowerShell 7 (`pwsh`); Windows PowerShell 5.1 is not supported |
 | Windows (WSL2) | `scripts/install.sh` (**inside** WSL2) | `scripts/claude-docker` | Docker Desktop (WSL2 integration) | Keep project files inside the WSL2 filesystem for performance |
 
 **Do not cross platforms.** Every bash entry point with a PowerShell
@@ -81,7 +81,7 @@ git clone <repo-url> claude-docker
 cd claude-docker
 .\scripts\install.ps1
 # or from cmd.exe:
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+pwsh -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
 Same interactive Q&A as the bash version, adapted for Windows.
