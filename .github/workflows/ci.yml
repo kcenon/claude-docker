@@ -356,9 +356,18 @@ jobs:
       - name: Stage an isolated two-account configuration
         run: |
           set -euo pipefail
-          # A sandbox HOME so the runner's own state is never involved, and so
-          # the per-account state directories are ours to plant markers in.
-          home=/tmp/claude-isolated
+          # Staged under the runner's real $HOME, not a sandbox path, because
+          # Compose resolves ${HOME} in the overlay from the *shell*
+          # environment before it looks at .env. Writing HOME=/tmp/... into
+          # .env therefore does not move the mount: the first run of this job
+          # staged markers in /tmp and Compose mounted ~/.claude-state, which
+          # Docker created empty, and the marker was simply not there.
+          #
+          # Worth knowing beyond this job: HOME in .env is inert whenever the
+          # shell exports one, which is always. It coincides with the right
+          # value on a real install only because that is what install.sh wrote
+          # it from.
+          home="$HOME"
           mkdir -p "$home/.claude-state/account-a" \
                    "$home/.claude-state/account-b" \
                    "$home/clone-a" "$home/clone-b"
