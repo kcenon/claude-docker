@@ -154,6 +154,43 @@ function ConvertTo-ForwardSlash {
     return $Path -replace '\\', '/'
 }
 
+function ConvertTo-ComparablePath {
+    <#
+    .SYNOPSIS
+    Fold a path into a form two path strings can be compared with.
+    .DESCRIPTION
+    On Windows the same directory reaches this module in two spellings:
+    `git worktree list --porcelain` emits forward slashes ("D:/Sources/x")
+    while (Get-Location).Path always emits backslashes ("D:\Sources\x").
+    Comparing those raw strings never matches, which is what let remove.ps1
+    select the repository it was standing in for deletion (#342).
+
+    Both separators fold to '/' and any trailing separator is dropped. The
+    filesystem is not consulted, so a path that no longer exists still folds.
+    Callers must pass absolute paths -- '..' segments are not resolved, and
+    every producer here (git porcelain output, Get-Location) is absolute.
+
+    Comparison by the caller is PowerShell's default case-insensitive one.
+    That is right on Windows, the only platform these removers run on; on a
+    case-sensitive filesystem it can only make two distinct worktrees look
+    equal, which skips a removal rather than performing an extra one.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+
+    # ConvertTo-ForwardSlash rejects an empty string, and widening it would
+    # relax a contract other callers rely on to catch a missing path.
+    if ($Path -eq '') { return '' }
+
+    $folded = ConvertTo-ForwardSlash -Path $Path
+    # Trimming a root produces something that is not a path: "C:/" becomes
+    # "C:" and "/" becomes "". No worktree is ever a root, so the only job
+    # here is to leave one intact if it is passed.
+    $trimmed = $folded.TrimEnd('/')
+    if ($trimmed -eq '' -or $trimmed -match '^[A-Za-z]:$') { return $folded }
+    return $trimmed
+}
+
 # --- .env File I/O -----------------------------------------------------------
 
 function ConvertFrom-EnvLine {
@@ -1042,6 +1079,50 @@ function Get-DirectorySize {
     return [long]$size
 }
 
+# --- Worktree Selection -------------------------------------------------------
+
+function Select-RemovableWorktree {
+    <#
+    .SYNOPSIS
+    Given the worktree paths git reported and the tree the caller is standing
+    in, return only the ones that are safe to remove.
+    .DESCRIPTION
+    remove.ps1 and cleanup.ps1 both walked `git worktree list --porcelain` and
+    both excluded the current tree with a raw string comparison that cannot
+    match on Windows (#342). The decision lives here so there is one copy to
+    reason about, and so it can be exercised by a test without running either
+    remover.
+
+    Two independent guards, deliberately not one:
+
+    1. The first porcelain entry is dropped unconditionally. git documents the
+       main working tree as listed first, and it stays first even when the
+       command runs from a linked worktree -- which is exactly the case where
+       the caller's own path does not identify the repository at risk.
+    2. Anything folding to the same path as -CurrentPath is dropped. This is
+       the guard for the ordinary case, and the one the raw comparison lost.
+
+    .PARAMETER WorktreePath
+    Paths in the order `git worktree list --porcelain` reported them. Order
+    carries meaning here; do not sort before calling.
+    .PARAMETER CurrentPath
+    The tree the caller is standing in, in any separator form.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][string[]]$WorktreePath,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$CurrentPath
+    )
+
+    $paths = @($WorktreePath | Where-Object { $_ })
+    if ($paths.Count -le 1) { return @() }
+
+    $current = ConvertTo-ComparablePath -Path $CurrentPath
+    return @($paths |
+        Select-Object -Skip 1 |
+        Where-Object { (ConvertTo-ComparablePath -Path $_) -ne $current })
+}
+
 # --- Exports -----------------------------------------------------------------
 
 Export-ModuleMember -Function @(
@@ -1051,7 +1132,10 @@ Export-ModuleMember -Function @(
     # Prompts
     'Read-Selection', 'Read-Input', 'Read-Secret', 'Read-Confirmation',
     # Utilities
-    'Test-Command', 'ConvertTo-ForwardSlash', 'Protect-EnvFile',
+    'Test-Command', 'ConvertTo-ForwardSlash', 'ConvertTo-ComparablePath',
+    'Protect-EnvFile',
+    # Worktrees
+    'Select-RemovableWorktree',
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
