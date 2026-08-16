@@ -9,6 +9,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# No job here writes anything back to the repository, so the token does not
+# need to. Without this block GITHUB_TOKEN takes the repository default, which
+# can be read-write.
+permissions:
+  contents: read
+
 jobs:
   shellcheck:
     name: Shellcheck
@@ -216,6 +222,7 @@ jobs:
           - tests/test_install_start_containers.sh
           - tests/test_install_tier_b.sh
           - tests/test_bash32_portability.sh
+          - tests/test_workflow_contracts.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
