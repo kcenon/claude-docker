@@ -35,6 +35,12 @@ cd "$PROJECT_ROOT"
 # state cleanup covers every registered runtime, not just Claude (see #273).
 # shellcheck source=lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
+# worktrees.sh decides which worktrees this installer owns, shared with
+# remove.sh so the two cannot disagree. It reads .env through parse_env.sh.
+# shellcheck source=lib/parse_env.sh
+. "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/worktrees.sh
+. "$SCRIPT_DIR/lib/worktrees.sh"
 
 REPO_DIR=""
 CONFIRM="ask"
@@ -109,12 +115,26 @@ docker compose down -v 2>/dev/null || true
 echo "=== Removing worktrees (if Tier B) ==="
 if [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
     cd "$REPO_DIR"
-    for wt in $(git worktree list --porcelain | grep "^worktree " | awk '{print $2}'); do
-        if [ "$wt" != "$(pwd)" ]; then
-            echo "  Removing worktree: $wt"
-            git worktree remove "$wt" --force 2>/dev/null || true
+    # The loop this replaces read the porcelain output through
+    # `awk '{print $2}'`, which truncates a path at its first space, and then
+    # word-split the unquoted substitution again. `git worktree remove` failed
+    # on the resulting non-existent path, `|| true` swallowed it, and the run
+    # printed "Removing worktree: /Users/me/My" as though it had succeeded --
+    # while the real worktree survived to collide with the next install.
+    #
+    # Ownership is checked for the same reason as in remove.sh: a worktree the
+    # user added themselves is not this tool's to delete.
+    while IFS= read -r wt; do
+        if ! worktree_is_owned "$wt" "$REPO_DIR" "$PROJECT_ROOT/.env"; then
+            echo "  Keeping worktree not created by claude-docker: $wt"
+            continue
         fi
-    done
+        echo "  Removing worktree: $wt"
+        if ! git worktree remove "$wt" --force 2>/dev/null; then
+            echo "  Warning: git declined to remove $wt - left in place." >&2
+        fi
+    done < <(worktree_selectable_paths "$(pwd)")
+    cd "$PROJECT_ROOT"
 fi
 
 echo "=== Removing state directories ==="

@@ -131,18 +131,74 @@ Assert-Set 'a path that merely shares a prefix is still removable' `
     (Select-RemovableWorktree -WorktreePath @('D:/Sources/claude-docker', 'D:/Sources/claude-docker-extra') `
         -CurrentPath 'D:\Sources\claude-docker')
 
-Write-Host '== both removers route through the shared selector =='
+Write-Host '== Test-OwnedWorktreePath: ownership (issue #344) =='
 
-# The point of the shared function is that one fix covers both scripts. If
+# Not being the current tree is not the same as being ours. This is the second
+# axis: a worktree the user added themselves in the project repository was
+# previously removed with --force before any other guard was consulted.
+# Mirrors worktree_is_owned in scripts/lib/worktrees.sh; the bash side is
+# exercised against real git output by tests/test_worktree_ownership.sh.
+
+$project = 'D:\Sources\myapp'
+$envData = @{
+    'PROJECT_DIR'          = 'D:/Sources/myapp'
+    'PROJECT_DIR_A'        = 'D:/Sources/myapp-a'
+    'ISOLATED_WORKSPACE_A' = 'D:/Sources/clones/myapp-iso-a'
+    'GH_TOKEN'             = 'placeholder-not-a-path'
+}
+function Test-Owned {
+    param([string]$Path, [hashtable]$Data = $envData)
+    return (Test-OwnedWorktreePath -Path $Path -ProjectDir $project -EnvData $Data)
+}
+
+Assert-Eq 'a PROJECT_DIR_<X> path is ours' $true (Test-Owned 'D:\Sources\myapp-a')
+Assert-Eq 'an ISOLATED_WORKSPACE_<X> path is ours' $true (Test-Owned 'D:/Sources/clones/myapp-iso-a')
+Assert-Eq 'a user-added worktree is not ours' $false (Test-Owned 'D:\Sources\myapp-hotfix')
+Assert-Eq 'an unrelated directory is not ours' $false (Test-Owned 'D:\Work\somethingelse')
+
+# PROJECT_DIR itself has no letter suffix and must not be read as a workspace
+# key, or the project repository would qualify as its own removable worktree.
+Assert-Eq 'PROJECT_DIR is not a per-account key' $false (Test-Owned 'D:\Sources\myapp')
+
+# remove.ps1 deletes .env in a later step than the worktrees, and installs
+# predating the keys never had them, so the naming pattern must stand alone.
+Assert-Eq 'the naming pattern works with no .env' $true (Test-Owned 'D:\Sources\myapp-b' $null)
+Assert-Eq 'a clone path is not guessable with no .env' $false `
+    (Test-Owned 'D:/Sources/clones/myapp-iso-a' $null)
+
+# The pattern must accept exactly what the generator emits. The account count
+# is capped at 702 and index 702 is "zz", so two characters is the ceiling; a
+# looser [A-Za-z]+ would claim "<project>-clone" and "<project>-hotfix".
+Assert-Eq 'two letters (the ceiling) are ours' $true (Test-Owned 'D:\Sources\myapp-zz')
+Assert-Eq 'three letters exceed the range' $false (Test-Owned 'D:\Sources\myapp-abc')
+Assert-Eq 'a numeric suffix is not the pattern' $false (Test-Owned 'D:\Sources\myapp-2')
+
+# Separator form must not decide ownership, for the same reason it must not
+# decide self-exclusion.
+Assert-Eq 'a forward-slash spelling still matches .env' $true (Test-Owned 'D:/Sources/myapp-a')
+Assert-Eq 'a trailing separator still matches' $true (Test-Owned 'D:\Sources\myapp-a\')
+
+Write-Host '== both removers route through the shared helpers =='
+
+# The point of the shared functions is that one fix covers both scripts. If
 # either grows its own copy of the loop again, everything above keeps passing
-# while the defect comes back, so the call site is asserted too.
+# while the defect comes back, so the call sites are asserted too.
 foreach ($name in 'remove.ps1', 'cleanup.ps1') {
     $source = Get-Content -LiteralPath (Join-Path $ScriptsDir $name) -Raw
     Assert-Eq "$name calls Select-RemovableWorktree" $true `
         ($source -like '*Select-RemovableWorktree*')
+    Assert-Eq "$name checks ownership before removing" $true `
+        ($source -like '*Test-OwnedWorktreePath*')
     Assert-Eq "$name no longer compares against a raw `$currentDir" $false `
         ($source -like '*-ne $currentDir*')
 }
+
+# The recursive-delete fallback is gone from remove.ps1. git declining to
+# remove a worktree it created is information; escalating past that refusal is
+# what turned a wrong path into data loss.
+$removeSource = Get-Content -LiteralPath (Join-Path $ScriptsDir 'remove.ps1') -Raw
+Assert-Eq 'remove.ps1 has no recursive worktree delete' $false `
+    ($removeSource -like '*Remove-Item -LiteralPath $wtPath -Recurse*')
 
 Write-Host ''
 Write-Host ("== Summary: PASS={0} FAIL={1} ==" -f $script:Pass, $script:Fail)

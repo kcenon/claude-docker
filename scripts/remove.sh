@@ -26,6 +26,10 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/parse_env.sh"
 # shellcheck source=lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
+# worktrees.sh decides which worktrees this installer owns; sourced after
+# parse_env.sh, which it reads .env through.
+# shellcheck source=lib/worktrees.sh
+. "$SCRIPT_DIR/lib/worktrees.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -156,9 +160,10 @@ remove_worktrees() {
     log_step "Removing git worktrees"
 
     # Read PROJECT_DIR from .env if it exists
+    local env_file="$PROJECT_ROOT/.env"
     local project_dir=""
-    if [[ -f "$PROJECT_ROOT/.env" ]]; then
-        project_dir=$(parse_env_value "$PROJECT_ROOT/.env" "PROJECT_DIR")
+    if [[ -f "$env_file" ]]; then
+        project_dir=$(parse_env_value "$env_file" "PROJECT_DIR")
     fi
 
     if [[ -z "$project_dir" ]]; then
@@ -171,24 +176,69 @@ remove_worktrees() {
         return 0
     fi
 
-    # Find worktrees created by setup-worktrees.sh (named {project}-a, {project}-b)
-    local worktree_count=0
+    # Partition what git reports into worktrees this installer created and
+    # worktrees the user made themselves. The loop this replaces took
+    # "not the current directory" as the whole test, so a `git worktree add
+    # ../proj-hotfix` in the same repository was removed with --force and then
+    # rm -rf. The comment claimed to be looking for setup-worktrees.sh's
+    # names; now it actually is (scripts/lib/worktrees.sh).
+    local targets=() skipped=() wt_path
     cd "$project_dir"
-    while IFS= read -r wt_line; do
-        local wt_path="${wt_line#worktree }"
-        if [[ "$wt_path" != "$(pwd)" ]] && [[ -d "$wt_path" ]]; then
-            log_info "Removing worktree: $wt_path"
-            git worktree remove "$wt_path" --force 2>/dev/null || {
-                log_warn "Force removing: $wt_path"
-                rm -rf "$wt_path" 2>/dev/null || true
-                git worktree prune 2>/dev/null || true
-            }
-            worktree_count=$((worktree_count + 1))
+    while IFS= read -r wt_path; do
+        [[ -d "$wt_path" ]] || continue
+        if worktree_is_owned "$wt_path" "$project_dir" "$env_file"; then
+            targets+=("$wt_path")
+        else
+            skipped+=("$wt_path")
         fi
-    done < <(git worktree list --porcelain 2>/dev/null | grep "^worktree " || true)
+    done < <(worktree_selectable_paths "$(pwd)")
+
+    # Guarded by the count rather than expanding the array directly: bash 3.2
+    # (still what macOS ships) errors on "${arr[@]}" for an empty array under
+    # `set -u`.
+    if [[ ${#skipped[@]} -gt 0 ]]; then
+        for wt_path in "${skipped[@]}"; do
+            log_info "Keeping worktree not created by claude-docker: $wt_path"
+        done
+    fi
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log_info "No claude-docker worktrees found"
+        return 0
+    fi
+
+    # Every other destructive step in this script prompts for itself
+    # (remove_docker_image, remove_state_directories, remove_env_file). This
+    # one did not, and the single "Proceed with removal?" at the top never
+    # names what is about to go, so the user could not see the list.
+    echo ""
+    echo -e "${BOLD}Worktrees to remove:${NC}"
+    for wt_path in "${targets[@]}"; do
+        echo "  - $wt_path"
+    done
+    echo ""
+    if ! prompt_confirm "Remove the ${#targets[@]} worktree(s) listed above?"; then
+        log_info "Worktrees kept"
+        return 0
+    fi
+
+    local worktree_count=0
+    for wt_path in "${targets[@]}"; do
+        log_info "Removing worktree: $wt_path"
+        if git worktree remove "$wt_path" --force 2>/dev/null; then
+            worktree_count=$((worktree_count + 1))
+            continue
+        fi
+        # No rm -rf fallback. git refusing to remove a worktree it created is
+        # information, not an obstacle: the path is locked, or it is not the
+        # tree we think it is. Escalating past that refusal is what turned a
+        # wrong path into data loss.
+        log_warn "git declined to remove $wt_path — left in place"
+        log_warn "  Inspect it and remove it manually if it is no longer needed."
+    done
 
     if [[ $worktree_count -eq 0 ]]; then
-        log_info "No worktrees found"
+        log_info "No worktrees removed"
     else
         log_success "$worktree_count worktree(s) removed"
     fi

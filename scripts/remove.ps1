@@ -116,41 +116,15 @@ function Remove-DockerImage {
     }
 }
 
-function Get-ManagedWorktreePath {
-    <#
-    .SYNOPSIS
-    Paths this installer created, folded for comparison.
-    .DESCRIPTION
-    setup-worktrees and setup-isolated record every workspace they create
-    under PROJECT_DIR_<X> / ISOLATED_WORKSPACE_<X>, so .env is the
-    authoritative list of what this tool owns. Anything outside it belongs to
-    the user and must never reach a recursive delete.
-
-    Read from .env rather than derived from NUM_ACCOUNTS: at removal time the
-    count may already have been lowered, and a workspace dropped from the
-    count is still one this tool created.
-    #>
-    param([Parameter(Mandatory)][hashtable]$EnvData)
-
-    $managed = @()
-    foreach ($key in $EnvData.Keys) {
-        if ($key -match '^(PROJECT_DIR|ISOLATED_WORKSPACE)_[A-Z]+$' -and $EnvData[$key]) {
-            $managed += (ConvertTo-ComparablePath -Path $EnvData[$key])
-        }
-    }
-    return $managed
-}
-
 function Remove-Worktrees {
     Write-LogStep 'Removing git worktrees'
 
     $projectDir = ''
-    $managedPaths = @()
+    $envData = $null
     $envFile = Join-Path $ProjectRoot '.env'
     if (Test-Path $envFile) {
         $envData = Read-EnvFile -Path $envFile
         $projectDir = $envData['PROJECT_DIR']
-        $managedPaths = @(Get-ManagedWorktreePath -EnvData $envData)
     }
 
     if (-not $projectDir) {
@@ -183,9 +157,39 @@ function Remove-Worktrees {
         $removable = @(Select-RemovableWorktree -WorktreePath $listed `
             -CurrentPath (Get-Location).Path)
 
+        # Not being the current tree is not the same as being ours. Ownership
+        # gates the target list, not just the fallback: a worktree the user
+        # added themselves in this repository was previously removed with
+        # --force before any fallback was reached.
+        $targets = @()
         foreach ($wtPath in $removable) {
             if (-not (Test-Path $wtPath)) { continue }
+            if (Test-OwnedWorktreePath -Path $wtPath -ProjectDir $projectDir -EnvData $envData) {
+                $targets += $wtPath
+            }
+            else {
+                Write-LogInfo "Keeping worktree not created by claude-docker: $wtPath"
+            }
+        }
 
+        if ($targets.Count -eq 0) {
+            Write-LogInfo 'No claude-docker worktrees found'
+            return
+        }
+
+        # Every other destructive step here prompts for itself. This one did
+        # not, and the run-level "Proceed with removal?" never names what is
+        # about to go.
+        Write-Host ''
+        Write-Host 'Worktrees to remove:' -ForegroundColor White
+        foreach ($wtPath in $targets) { Write-Host "  - $wtPath" }
+        Write-Host ''
+        if (-not (Read-Confirmation -Question "Remove the $($targets.Count) worktree(s) listed above?")) {
+            Write-LogInfo 'Worktrees kept'
+            return
+        }
+
+        foreach ($wtPath in $targets) {
             Write-LogInfo "Removing worktree: $wtPath"
             & git worktree remove $wtPath --force 2>$null
             if ($LASTEXITCODE -eq 0) {
@@ -193,29 +197,13 @@ function Remove-Worktrees {
                 continue
             }
 
-            # git refused. Before escalating to a recursive delete, require the
-            # path to be one this tool created -- git's refusal is often the
-            # last thing standing between the fallback and a directory that was
-            # never ours.
-            if ($managedPaths -notcontains (ConvertTo-ComparablePath -Path $wtPath)) {
-                Write-LogWarn "git refused to remove $wtPath, and it is not a workspace this installer created - left in place."
-                $script:WorktreesLeftBehind += $wtPath
-                continue
-            }
-
-            Write-LogWarn "Force removing: $wtPath"
-            try {
-                Remove-Item -LiteralPath $wtPath -Recurse -Force -ErrorAction Stop
-                & git worktree prune 2>$null
-                $worktreeCount++
-            }
-            catch {
-                # Swallowing this is what reduced a destroyed repository to one
-                # log line; a delete that fails at uninstall time is something
-                # the user has to be told about.
-                Write-LogError "Could not remove $($wtPath): $($_.Exception.Message)"
-                $script:WorktreesLeftBehind += $wtPath
-            }
+            # No recursive-delete fallback. git declining to remove a worktree
+            # it created is information -- the path is locked, or it is not the
+            # tree we think it is. Escalating past that refusal is what turned
+            # a wrong path into data loss.
+            Write-LogWarn "git declined to remove $wtPath - left in place."
+            Write-LogWarn '  Inspect it and remove it manually if it is no longer needed.'
+            $script:WorktreesLeftBehind += $wtPath
         }
     }
     finally {

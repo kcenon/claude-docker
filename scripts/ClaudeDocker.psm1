@@ -1123,6 +1123,69 @@ function Select-RemovableWorktree {
         Where-Object { (ConvertTo-ComparablePath -Path $_) -ne $current })
 }
 
+function Test-OwnedWorktreePath {
+    <#
+    .SYNOPSIS
+    Report whether a worktree is one this installer created.
+    .DESCRIPTION
+    Not being the current tree is not the same as being ours. A user who runs
+    `git worktree add ..\proj-hotfix` in the project repository has a worktree
+    that the removers used to delete with --force, and then with a recursive
+    delete when git declined.
+
+    Ownership has exactly two sources, both written by this installer, and
+    both are needed:
+
+    1. PROJECT_DIR_<X> / ISOLATED_WORKSPACE_<X> in .env -- the paths
+       setup-worktrees and setup-isolated record.
+    2. The "<project>-<letter>" naming those scripts produce, for installs
+       predating those keys and for the window in remove.ps1 where .env has
+       already been deleted.
+
+    Mirrors worktree_is_owned in scripts/lib/worktrees.sh. Matching is the
+    case-insensitive default, which is correct on the only platform these
+    scripts run on: there, two spellings that differ in case are one directory.
+    .PARAMETER EnvData
+    Parsed .env contents. Omit when .env is gone; source 2 still applies.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ProjectDir,
+        [hashtable]$EnvData
+    )
+
+    $candidate = ConvertTo-ComparablePath -Path $Path
+
+    if ($EnvData) {
+        foreach ($key in $EnvData.Keys) {
+            if ($key -notmatch '^(PROJECT_DIR|ISOLATED_WORKSPACE)_[A-Z]+$') { continue }
+            if (-not $EnvData[$key]) { continue }
+            if ((ConvertTo-ComparablePath -Path $EnvData[$key]) -eq $candidate) {
+                return $true
+            }
+        }
+    }
+
+    if ($ProjectDir) {
+        $prefix = ConvertTo-ComparablePath -Path $ProjectDir
+        # StartsWith and a separate suffix test rather than one regex: a
+        # project path containing regex metacharacters would otherwise widen
+        # the pattern.
+        if ($candidate.StartsWith("$prefix-", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $suffix = $candidate.Substring($prefix.Length + 1)
+            # Two characters is exactly what the generator can emit: the
+            # account count is capped at 702 and index 702 is "zz". A looser
+            # [A-Za-z]+ would claim any sibling named after a word --
+            # "<project>-clone", "<project>-hotfix" -- which are the
+            # user-created worktrees this check exists to spare.
+            if ($suffix -match '^[A-Za-z]{1,2}$') { return $true }
+        }
+    }
+
+    return $false
+}
+
 # --- Exports -----------------------------------------------------------------
 
 Export-ModuleMember -Function @(
@@ -1135,7 +1198,7 @@ Export-ModuleMember -Function @(
     'Test-Command', 'ConvertTo-ForwardSlash', 'ConvertTo-ComparablePath',
     'Protect-EnvFile',
     # Worktrees
-    'Select-RemovableWorktree',
+    'Select-RemovableWorktree', 'Test-OwnedWorktreePath',
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
