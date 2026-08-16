@@ -135,6 +135,63 @@ echo "== the workflow serializes on the tag =="
 assert_matches 'release-tui.yml declares a concurrency group' "$RELEASE" \
     '^ +group: release-tui-'
 
+echo "== every test file is registered in a CI matrix =="
+
+# The two matrices are hand-maintained lists with nothing checking that they
+# cover the suite. A test file added and not registered is a file that runs
+# nowhere, and looks exactly like one that passes (#354, item 12).
+#
+# scripts/test-*.sh are entry points rather than tests/ members, so they are
+# listed explicitly here too -- test-concurrent-git.sh was registered nowhere,
+# which is why a defect that made it abort on its first container start went
+# unnoticed.
+# "Registered" means some job runs it, not that it sits in a matrix:
+# test_github_account_selection.ps1 is invoked by a `run:` line in the
+# windows-latest job, which counts.
+#
+# Comment lines are excluded. ci.yml's own prose names several test files --
+# the macOS job explains which ones it leaves out and why -- and a comment
+# mentioning a test is the opposite of that test being run.
+#
+# The comment-stripped file is materialized once and matched with a case glob
+# rather than piped into `grep -q`. Under `set -o pipefail`, grep -q exits on
+# its first match, the upstream grep dies of SIGPIPE (141), and the pipeline
+# status is that 141 -- so every lookup reported "not found".
+CI_CODE="$(grep -vE '^[[:space:]]*#' "$CI")"
+is_registered() {
+    case "$CI_CODE" in
+        *"$1"*) return 0 ;;
+    esac
+    return 1
+}
+
+unregistered=()
+while IFS= read -r f; do
+    rel="tests/$(basename "$f")"
+    is_registered "$rel" || unregistered+=("$rel")
+done < <(find "$PROJECT_ROOT/tests" -maxdepth 1 \( -name '*.sh' -o -name '*.ps1' \) -type f | sort)
+
+if [[ ${#unregistered[@]} -eq 0 ]]; then
+    pass 'every tests/*.sh and tests/*.ps1 appears in a ci.yml matrix'
+else
+    fail 'every tests/*.sh and tests/*.ps1 appears in a ci.yml matrix' \
+        "${unregistered[*]}"
+fi
+
+# And the reverse: a matrix entry naming a file that no longer exists would
+# fail the job with "No such file", but only when that entry runs -- which is
+# after every other job has already spent its time.
+missing=()
+while IFS= read -r rel; do
+    [[ -f "$PROJECT_ROOT/$rel" ]] || missing+=("$rel")
+done < <(grep -oE '^ +- (tests|scripts)/[A-Za-z0-9_.-]+\.(sh|ps1)$' "$CI" | sed 's/^ *- //' | sort -u)
+
+if [[ ${#missing[@]} -eq 0 ]]; then
+    pass 'every matrix entry names a file that exists'
+else
+    fail 'every matrix entry names a file that exists' "${missing[*]}"
+fi
+
 echo "== ci.yml declares a read-only token =="
 
 assert_matches 'ci.yml declares workflow-level permissions' "$CI" \

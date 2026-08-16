@@ -89,8 +89,10 @@ status=0
     . "$REPO_ROOT/scripts/install.sh"
 
     # Redirect the installer at the sandbox. SCRIPT_DIR is what selects the
-    # stubs; PROJECT_ROOT is where .env lands.
+    # stubs; PROJECT_ROOT is where .env lands. Both are read by the sourced
+    # installer, not by this file, which is why shellcheck cannot see the use.
     SCRIPT_DIR="$FAKE_SCRIPTS"
+    # shellcheck disable=SC2034
     PROJECT_ROOT="$FAKE_ROOT"
 
     # shellcheck disable=SC2034

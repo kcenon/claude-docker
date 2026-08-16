@@ -49,9 +49,23 @@ function Assert-Eq {
 }
 
 function Assert-Throws {
+    <#
+    .SYNOPSIS
+    Assert that an action throws, and that it throws the error meant.
+    .DESCRIPTION
+    -MessageLike is mandatory. Without it these eight cases passed on *any*
+    terminating error, including a parameter-binding failure from a renamed
+    parameter -- so a refusal that never reached the validation it was testing
+    counted as the validation working (#354, item 9).
+
+    test_isolation_modes.ps1's helper already had this shape; this one is
+    brought in line with it, and the two hand-written try/catch blocks at the
+    end of this file that compare messages collapse into it.
+    #>
     param(
         [Parameter(Mandatory)][string]$Label,
-        [Parameter(Mandatory)][scriptblock]$Action
+        [Parameter(Mandatory)][scriptblock]$Action,
+        [Parameter(Mandatory)][string]$MessageLike
     )
     try {
         & $Action | Out-Null
@@ -59,8 +73,14 @@ function Assert-Throws {
         $script:Fail++
     }
     catch {
-        Write-Host ("  PASS  {0}" -f $Label)
-        $script:Pass++
+        if ($_.Exception.Message -like $MessageLike) {
+            Write-Host ("  PASS  {0}" -f $Label)
+            $script:Pass++
+        } else {
+            Write-Host ("  FAIL  {0}`n        threw, but the message did not match '{1}'`n        actual: {2}" -f `
+                $Label, $MessageLike, $_.Exception.Message)
+            $script:Fail++
+        }
     }
 }
 
@@ -136,11 +156,14 @@ foreach ($case in $derived) {
         $case[1] (Resolve-NodeHeapMib -MemLimit $case[0])
 }
 
-# A cap at or below the headroom floor has no valid heap at all.
+# A cap at or below the headroom floor has no valid heap at all. The message
+# has to name CONTAINER_MEM_LIMIT, because that is the key the user edits.
 foreach ($cap in @('512m', '256m')) {
-    Assert-Throws ("derive: cap {0} refused" -f $cap) { Resolve-NodeHeapMib -MemLimit $cap }
+    Assert-Throws ("derive: cap {0} refused" -f $cap) `
+        { Resolve-NodeHeapMib -MemLimit $cap } '*CONTAINER_MEM_LIMIT*'
 }
-Assert-Throws 'derive: unparseable cap refused' { Resolve-NodeHeapMib -MemLimit 'four-gigs' }
+Assert-Throws 'derive: unparseable cap refused' `
+    { Resolve-NodeHeapMib -MemLimit 'four-gigs' } '*CONTAINER_MEM_LIMIT*'
 
 # An explicitly configured heap is used as given when it fits, and refused when
 # it does not. The boundary is exact on purpose: one MiB either side of it
@@ -148,30 +171,19 @@ Assert-Throws 'derive: unparseable cap refused' { Resolve-NodeHeapMib -MemLimit 
 Assert-Eq 'explicit: 3584 MiB accepted at a 4G cap (exactly 512 MiB headroom)' `
     3584 (Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb '3584')
 Assert-Throws 'explicit: 3585 MiB refused at a 4G cap (511 MiB headroom)' `
-    { Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb '3585' }
+    { Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb '3585' } '*CONTAINER_NODE_HEAP_MB*'
 foreach ($bad in @('0', '-512', 'abc', '3.5')) {
     Assert-Throws ("explicit: heap '{0}' rejected" -f $bad) `
-        { Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb $bad }
+        { Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb $bad } '*CONTAINER_NODE_HEAP_MB*'
 }
 
 # The diagnostic has to name the key the user changes. A refusal that says only
-# "invalid" leaves them editing the wrong line.
-try {
-    Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb '4096' | Out-Null
-    Assert-Eq 'diagnostic: names CONTAINER_NODE_HEAP_MB' $true $false
-}
-catch {
-    Assert-Eq 'diagnostic: names CONTAINER_NODE_HEAP_MB' $true `
-        ($_.Exception.Message -like '*CONTAINER_NODE_HEAP_MB*')
-}
-try {
-    Resolve-NodeHeapMib -MemLimit '384m' | Out-Null
-    Assert-Eq 'diagnostic: names CONTAINER_MEM_LIMIT' $true $false
-}
-catch {
-    Assert-Eq 'diagnostic: names CONTAINER_MEM_LIMIT' $true `
-        ($_.Exception.Message -like '*CONTAINER_MEM_LIMIT*')
-}
+# "invalid" leaves them editing the wrong line. These were two hand-written
+# try/catch blocks doing what Assert-Throws now does.
+Assert-Throws 'diagnostic: names CONTAINER_NODE_HEAP_MB' `
+    { Resolve-NodeHeapMib -MemLimit '4G' -ConfiguredHeapMb '4096' } '*CONTAINER_NODE_HEAP_MB*'
+Assert-Throws 'diagnostic: names CONTAINER_MEM_LIMIT' `
+    { Resolve-NodeHeapMib -MemLimit '384m' } '*CONTAINER_MEM_LIMIT*'
 
 Write-Host ''
 Write-Host ("== Summary: PASS={0} FAIL={1} ==" -f $script:Pass, $script:Fail)

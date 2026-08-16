@@ -209,4 +209,26 @@ echo "=== Results ==="
 echo -e "  ${GREEN}Passed${NC}: $PASS"
 echo -e "  ${RED}Failed${NC}: $FAIL"
 
+# Zero assertions is a failure, not a pass. Both suites here SKIP when the
+# fixture tree is absent, and this script used to exit 0 having asserted
+# nothing:
+#
+#   $ bash scripts/test-entrypoint-settings.sh /nonexistent/config
+#   SKIP: .../settings.json not found
+#     Passed: 0
+#     Failed: 0
+#   EXIT=0
+#
+# generate_container_settings -- the pwsh-to-bash hook rewrite, the sandbox
+# disable, the deny-rule stripping -- has no other test. Move the fixtures and
+# all of it disappears silently. A missing jq is already fail-closed here; a
+# missing fixture was not.
+if [ "$PASS" -eq 0 ] && [ "$FAIL" -eq 0 ]; then
+    echo -e "  ${RED}ERROR${NC}: no assertions ran. CLAUDE_CONFIG resolved to '${CLAUDE_CONFIG}'," >&2
+    echo "         and neither settings.json nor settings.windows.json was found there." >&2
+    echo "         Pass a config directory as \$1, or run from a checkout that has" >&2
+    echo "         tests/entrypoint_fixtures/global." >&2
+    exit 1
+fi
+
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
