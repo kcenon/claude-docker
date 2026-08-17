@@ -140,16 +140,20 @@ func TestDiscoverStateDirs_GeminiRuntime(t *testing.T) {
 
 // TestFetchContainerStatus confirms the helper returns an empty map when
 // the docker client cannot enumerate containers (no compose project, no
-// daemon). The orchestrator must continue to function in this degraded
-// state, hence the swallowed error.
+// daemon). The orchestrator must continue to function in this degraded state,
+// so the map is still usable -- but the error is now returned alongside it
+// rather than discarded (#358, item 9).
 func TestFetchContainerStatus(t *testing.T) {
 	m := newTestManager(t, nil)
-	got := m.fetchContainerStatus()
+	got, err := m.fetchContainerStatus()
 	if got == nil {
 		t.Fatal("fetchContainerStatus returned nil; want non-nil empty map")
 	}
 	if len(got) != 0 {
 		t.Errorf("fetchContainerStatus len = %d, want 0 (no docker available in test env)", len(got))
+	}
+	if err == nil {
+		t.Error("expected the docker failure to be reported, not swallowed")
 	}
 }
 

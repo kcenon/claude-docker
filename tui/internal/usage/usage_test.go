@@ -16,22 +16,10 @@ func TestAllTimeOptions(t *testing.T) {
 	}
 }
 
-// TestDailyOptions verifies the "today" option sets Since to today's local
-// midnight, so entries from earlier days are excluded.
-func TestDailyOptions(t *testing.T) {
-	opts := DailyOptions()
-	if opts.Since == nil {
-		t.Fatal("DailyOptions().Since = nil, want non-nil")
-	}
-	now := time.Now()
-	want := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if !opts.Since.Equal(want) {
-		t.Errorf("DailyOptions().Since = %v, want %v", *opts.Since, want)
-	}
-	if opts.Since.Hour() != 0 || opts.Since.Minute() != 0 || opts.Since.Second() != 0 {
-		t.Errorf("DailyOptions().Since = %v, want 00:00:00", *opts.Since)
-	}
-}
+// TestDailyOptions is gone with DailyOptions itself (#358, item 13). It
+// asserted the machine-local midnight the body computed, not the KST midnight
+// the doc comment promised -- so it agreed with the code and could never have
+// reported the discrepancy.
 
 // makeEntry builds a SessionEntry with the supplied token counts and timestamp.
 func makeEntry(input, output, cacheCreate, cacheRead int64, ts string) SessionEntry {

@@ -11,18 +11,18 @@ import (
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
-	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
 
 // Manager provides CRUD operations on accounts.
+//
+// The usageCache field is gone with the JSONL pipeline it served (#358, item
+// 14). internal/usage is no longer reached from production code; it is kept,
+// still tested and still benchmarked, because docs/PERFORMANCE.md is written
+// about it and it holds the repository's only benchmark. Removing the package
+// is a separate decision from removing the walk.
 type Manager struct {
 	env    *config.Env
 	client *docker.Client
-	// usageCache memoizes parsed JSONL session files across ListAccounts
-	// calls. Unchanged files (same size+mtime) are returned from the cache
-	// instead of being re-read and re-decoded, which keeps refresh cost
-	// proportional to changed data rather than total accumulated history.
-	usageCache *usage.Cache
 	// cooldowns tracks per-account API backoff in memory. It was a file in
 	// each state directory until #358; see apiCooldowns for why that was a
 	// worse place for a 25-second value with no cross-process reader.
@@ -32,10 +32,9 @@ type Manager struct {
 // NewManager creates an account manager.
 func NewManager(env *config.Env, client *docker.Client) *Manager {
 	return &Manager{
-		env:        env,
-		client:     client,
-		usageCache: usage.NewCache(),
-		cooldowns:  newAPICooldowns(),
+		env:       env,
+		client:    client,
+		cooldowns: newAPICooldowns(),
 	}
 }
 
@@ -43,15 +42,30 @@ func NewManager(env *config.Env, client *docker.Client) *Manager {
 //
 // The method is a thin orchestrator over five focused helpers (defined in
 // manager_helpers.go); each helper owns one phase of the listing workflow.
-// Side-effects (cache writes, cooldown writes) and error policy match the
-// previous monolithic impl: non-fatal phases swallow their errors and
-// degrade gracefully.
+// Non-fatal phases still degrade gracefully rather than aborting the listing.
+//
+// It used to return a nil error unconditionally, which is what left
+// Model.err with no writer and the error screen in view.go unreachable
+// (#358, item 9). The docker error is now reported, because the two states it
+// used to collapse together want different responses from the operator:
+//
+//   - docker cannot be reached: nothing is running, `u` will not help, and the
+//     fix is outside the dashboard;
+//   - docker answered and there are no containers: `u` is exactly the fix.
+//
+// Accounts are returned alongside the error rather than instead of them. A
+// caller that can show a partial view should; view.go shows the table with a
+// warning when both are present, and the error screen only when there is
+// nothing else to draw.
 func (m *Manager) ListAccounts() ([]Account, error) {
 	stateDirs, n := m.discoverStateDirs()
-	containerMap := m.fetchContainerStatus()
+	containerMap, dockerErr := m.fetchContainerStatus()
 	accounts := m.buildAccounts(n, stateDirs, containerMap)
 	apiResults := m.enrichAccounts(accounts)
 	m.writeCacheUpdates(accounts, apiResults)
+	if dockerErr != nil {
+		return accounts, fmt.Errorf("container status unavailable: %w", dockerErr)
+	}
 	return accounts, nil
 }
 
