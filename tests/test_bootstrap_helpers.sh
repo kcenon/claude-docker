@@ -235,6 +235,77 @@ assert_eq "three boots leave the hooks copy in place" "yes" "$(cat "$WORK/codex-
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== bootstrap-claude.sh: unsetting CLAUDE_CONFIG_SOURCE drops old links ==="
+# ---------------------------------------------------------------------------
+#
+# The acceptance scenario verbatim: set CLAUDE_CONFIG_SOURCE, boot, unset it,
+# boot again. Nothing under the account directory may still point into the old
+# source.
+#
+# The second boot falls back to the read-only host mount, whose path only
+# exists inside the image -- which is why this case did not exist before. The
+# harness stages a stand-in through CLAUDE_DOCKER_HOST_CONFIG_ROOT, the same
+# path root the three bootstrap modules now share.
+#
+# Both call sites are covered because they failed for the same reason and were
+# fixed separately: the hooks/scripts loop (copy branch) and the CLAUDE.md
+# group (link branch).
+
+(
+    # shellcheck source=../scripts/lib/bootstrap-claude.sh
+    . "$PROJECT_ROOT/scripts/lib/bootstrap-claude.sh"
+
+    OLD_SRC="$WORK/relink-old"
+    HOST_ROOT="$WORK/relink-hostroot"
+    HOST_SRC="$HOST_ROOT/.claude-host"
+    ACCOUNT="$WORK/relink-account"
+
+    for src in "$OLD_SRC" "$HOST_SRC"; do
+        mkdir -p "$src/hooks" "$src/scripts" "$src/skills"
+        printf 'echo hook\n'   > "$src/hooks/one.sh"
+        printf 'echo script\n' > "$src/scripts/two.sh"
+        printf 'guidance\n'    > "$src/CLAUDE.md"
+        printf 'settings\n'    > "$src/commit-settings.md"
+        printf 'ignored\n'     > "$src/.claudeignore"
+    done
+
+    export CLAUDE_CONFIG_DIR="$ACCOUNT"
+    export CLAUDE_DOCKER_HOST_CONFIG_ROOT="$HOST_ROOT"
+
+    # Boot 1: an explicit source. Everything becomes a symlink into it.
+    export CLAUDE_CONFIG_SOURCE="$OLD_SRC"
+    runtime_bootstrap >/dev/null 2>&1
+
+    # Boot 2: the operator removed CLAUDE_CONFIG_SOURCE from .env.
+    unset CLAUDE_CONFIG_SOURCE
+    runtime_bootstrap >/dev/null 2>&1
+
+    # Count anything still resolving into the old source, by target rather than
+    # by name, so a link added later is covered without editing this list.
+    stale=0
+    for entry in "$ACCOUNT"/* "$ACCOUNT"/.[!.]*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        if [ -L "$entry" ] && case "$(readlink "$entry")" in "$OLD_SRC"*) true ;; *) false ;; esac; then
+            stale=$((stale + 1))
+            printf '        still points at the old source: %s -> %s\n' \
+                "$(basename "$entry")" "$(readlink "$entry")" >&2
+        fi
+    done
+    echo "$stale" > "$WORK/relink-stale-count"
+
+    # The counterpart: the account must actually have the content, not just be
+    # free of stale links. A run that deleted everything would score zero above.
+    [ -f "$ACCOUNT/hooks/one.sh" ] && echo yes > "$WORK/relink-hooks" || echo no > "$WORK/relink-hooks"
+    [ -e "$ACCOUNT/CLAUDE.md" ]    && echo yes > "$WORK/relink-md"    || echo no > "$WORK/relink-md"
+)
+
+assert_eq "no link points into the old source after unsetting it" \
+    "0" "$(cat "$WORK/relink-stale-count")"
+assert_eq "hooks are present from the fallback mount" "yes" "$(cat "$WORK/relink-hooks")"
+assert_eq "CLAUDE.md is present from the fallback mount" "yes" "$(cat "$WORK/relink-md")"
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== bootstrap-claude.sh: account state directory is 0700 ==="
 # ---------------------------------------------------------------------------
 
