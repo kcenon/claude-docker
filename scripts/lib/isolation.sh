@@ -123,6 +123,18 @@ _isolation_setup_hint() {
 # file after load_env_file has exported .env into the environment, but
 # scripts/claude-docker does not export it, so a value that exists only on disk
 # must still be found.
+# _isolation_value_is_blank VALUE
+# Return 0 when VALUE holds no non-whitespace character -- empty, or only
+# spaces and tabs. The PowerShell counterpart is [string]::IsNullOrWhiteSpace
+# (#356, row 7).
+#
+# Deliberately NOT used on ISOLATION_MODE itself. A quoted mode of " " is a
+# value the user wrote, and reporting it as unrecognized is the point; folding
+# it into "unset" is what let the Windows path fall through to shared.
+_isolation_value_is_blank() {
+    [[ ! "${1:-}" =~ [^[:space:]] ]]
+}
+
 _isolation_lookup() {
     local var="${1:-}"
     [[ -n "$var" ]] || return 0
@@ -251,7 +263,15 @@ require_supported_isolation_mode() {
         # shared consumes no per-account path; nothing to check for any account.
         [[ -n "$var" ]] || break
 
-        if [[ -z "$(_isolation_lookup "$var")" ]]; then
+        # Blank means "no non-whitespace character", not merely "empty"
+        # (#356, row 7). Test-SupportedIsolationMode used IsNullOrWhiteSpace
+        # here while this used -z, so PROJECT_DIR_A="   " was refused on
+        # Windows and accepted here -- and a whitespace bind source reaches
+        # Compose, which fails later and less legibly than this does.
+        #
+        # The whole point of checking here is that "fails later" is the
+        # outcome being prevented, so this takes the stricter of the two.
+        if _isolation_value_is_blank "$(_isolation_lookup "$var")"; then
             echo "Error: $var is required when ISOLATION_MODE=$mode" >&2
             echo "       $(_isolation_setup_hint "$mode")" >&2
             return 1

@@ -155,7 +155,10 @@ get_gh_auth_mode() {
     if [[ -z "$mode" ]]; then
         mode=$(parse_env_value "$PROJECT_ROOT/.env" "GH_AUTH_MODE")
     fi
-    mode="${mode:-shared}"
+    # Lowercased, matching Get-GhAuthMode in claude-docker.ps1 and the
+    # generator on both sides (#356, row 6). printf | tr rather than
+    # ${mode,,}: macOS ships bash 3.2, where that expansion is a parse error.
+    mode="$(printf '%s' "${mode:-shared}" | tr '[:upper:]' '[:lower:]')"
     case "$mode" in
         shared|per-account) printf '%s' "$mode" ;;
         *)

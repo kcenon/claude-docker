@@ -321,6 +321,10 @@ jobs:
           # registry in all three languages, not from a hand-typed constant
           # that happens to match for the runtimes registered today (#356).
           - tests/test_runtime_buildarg_binary.sh
+          # Three .env keys where the two languages disagreed on what a value
+          # *means*: base-10 parsing, casing, and whether whitespace counts as
+          # unset (#356).
+          - tests/test_env_value_semantics.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

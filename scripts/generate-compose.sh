@@ -118,7 +118,15 @@ NODE_HEAP_MB="$(resolve_node_heap_mib "$MEM_LIMIT" "${CONTAINER_NODE_HEAP_MB:-}"
 # GitHub authentication is shared by default for backward compatibility.
 # Per-account mode is validated before any compose file is opened so a missing
 # mapping cannot leave a partially regenerated output behind.
-GH_AUTH_MODE="${GH_AUTH_MODE:-shared}"
+# Lowercased before comparison, matching the PowerShell generator and the
+# treatment ISOLATION_MODE already gets on both sides (#356, row 6). Compared
+# verbatim, GH_AUTH_MODE=Per-Account passed on Windows and exited 1 here, so
+# the same .env produced different stacks on the two platforms. This was the
+# only mode key that differed.
+#
+# printf | tr rather than ${VAR,,}: macOS ships bash 3.2, where the
+# case-modifying expansion is a parse error (tests/test_bash32_portability.sh).
+GH_AUTH_MODE="$(printf '%s' "${GH_AUTH_MODE:-shared}" | tr '[:upper:]' '[:lower:]')"
 case "$GH_AUTH_MODE" in
     shared|per-account) ;;
     *)

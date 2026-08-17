@@ -694,18 +694,29 @@ function Get-IsolationMode {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
 
+    # IsNullOrEmpty, not IsNullOrWhiteSpace (#356, row 7).
+    #
+    # resolve_isolation_mode tests `-z`, so a quoted ISOLATION_MODE=" " is a
+    # *value* there: non-empty, it survives the default substitution and is
+    # rejected as unrecognized. IsNullOrWhiteSpace read the same .env as unset
+    # and fell through to shared -- the weakest boundary, silently, which is
+    # precisely the downgrade the contract at the top of this section exists
+    # to prevent. Fail-closed on Linux, fail-open on Windows, same file.
+    #
+    # The rule applied here and below: whitespace is never silently treated as
+    # unset. A value made only of spaces is a value, and an invalid one.
     $mode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
     $envFile = Join-Path $ProjectRoot '.env'
 
-    if ([string]::IsNullOrWhiteSpace($mode) -and (Test-Path $envFile)) {
+    if ([string]::IsNullOrEmpty($mode) -and (Test-Path $envFile)) {
         $mode = Get-EnvValue -Path $envFile -Key 'ISOLATION_MODE'
     }
-    if ([string]::IsNullOrWhiteSpace($mode) -and
-        -not [string]::IsNullOrWhiteSpace((Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'PROJECT_DIR_A'))) {
+    if ([string]::IsNullOrEmpty($mode) -and
+        -not [string]::IsNullOrEmpty((Get-IsolationValue -ProjectRoot $ProjectRoot -Key 'PROJECT_DIR_A'))) {
         $mode = 'worktree'
     }
 
-    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = 'shared' }
+    if ([string]::IsNullOrEmpty($mode)) { $mode = 'shared' }
     $mode = $mode.ToLowerInvariant()
 
     if (-not (Test-IsolationModeKnown -Mode $mode)) {

@@ -158,11 +158,28 @@ resolve_node_heap_mib() {
     fi
 
     if [[ -n "$configured" ]]; then
-        if [[ ! "$configured" =~ ^[0-9]+$ ]] || (( configured == 0 )); then
+        # 10# on every arithmetic use of this value, and the value normalized
+        # to decimal before it is emitted (#356, row 5).
+        #
+        # Without it a leading zero makes bash read the number as octal, and
+        # the two generators stopped agreeing on the same .env:
+        #
+        #   CONTAINER_NODE_HEAP_MB=008
+        #     bash  ((: 008: value too great for base -- the generator aborted
+        #           on a shell-internal error, never reaching its own message
+        #     pwsh  8, accepted
+        #   CONTAINER_NODE_HEAP_MB=007
+        #     bash  NODE_OPTIONS=--max-old-space-size=007
+        #     pwsh  NODE_OPTIONS=--max-old-space-size=7
+        #
+        # resource_mib_from_byte_value above already used 10# for exactly this
+        # reason; this function did not. Leading zeros are accepted rather than
+        # rejected, matching normalize_account_count in lib/index.sh.
+        if [[ ! "$configured" =~ ^[0-9]+$ ]] || (( 10#$configured == 0 )); then
             echo "Error: CONTAINER_NODE_HEAP_MB must be a positive whole number of MiB (got: ${configured})" >&2
             return 1
         fi
-        heap="$configured"
+        heap=$(( 10#$configured ))
     else
         local reserved
         reserved="$(node_heap_headroom_mib "$cap_mib")"
