@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -86,8 +87,7 @@ func LoadEnv(path string) (*Env, error) {
 			continue
 		}
 		key := strings.TrimSpace(trimmed[:idx])
-		val := strings.TrimSpace(trimmed[idx+1:])
-		val = strings.Trim(val, `"'`)
+		val := parseEnvValue(trimmed[idx+1:])
 		e.index[key] = len(e.entries)
 		e.entries = append(e.entries, entry{key: key, value: val, raw: line})
 	}
@@ -95,6 +95,54 @@ func LoadEnv(path string) (*Env, error) {
 		return nil, fmt.Errorf("scan env: %w", err)
 	}
 	return e, nil
+}
+
+// quotedEnvValue matches a fully quoted value with an optional trailing
+// comment: "a # b", 'a b', or "bar"  # note. Group 1 is the content.
+var quotedEnvValue = regexp.MustCompile(`^"(.*)"(\s+#.*)?$|^'(.*)'(\s+#.*)?$`)
+
+// inlineEnvComment matches a comment introduced by whitespace-then-hash. A
+// bare `#` with no space before it is data: FOO=a#b is the value a#b.
+var inlineEnvComment = regexp.MustCompile(`\s+#.*$`)
+
+// parseEnvValue normalizes the text after `KEY=` the way parse_env_value in
+// scripts/lib/parse_env.sh does (#356, row 9).
+//
+// This reader used to do `strings.TrimSpace` then `strings.Trim(val, "\"'")`,
+// which differs from the shells in four ways, each of them reachable:
+//
+//   - No inline-comment handling at all. `NUM_ACCOUNTS=4  # four` produced
+//     "4  # four", so Atoi failed and NumAccounts silently returned the
+//     default of 2 while both generators read 4. `GH_USER_A=alice  # main`
+//     was handed to `gh auth token --user` with the comment attached.
+//   - `strings.Trim` is a *cutset* trim, not a paired-quote strip, so
+//     `"unclosed` lost its lone leading quote where the shells keep it.
+//   - Leading whitespace after `=` was trimmed here and kept by the shells.
+//   - `"bar"  # note` kept the closing quote and the comment.
+//
+// The quote check runs before the comment strip, which is a change on the
+// shell side too: with the old order a `#` inside a quoted value started a
+// comment, so set_env_value wrote FOO="a # b" and every reader returned `"a`.
+// Writer and reader in the same file disagreed. Now all three agree, and the
+// round trip is lossless for that value.
+//
+// Still lossy for an embedded double quote: the wrapper is stripped without
+// unescaping, so `say "hi" now` round-trips as `say \"hi\" now`. All three
+// implementations agree on that, and set_env_value's own comment documents it.
+func parseEnvValue(raw string) string {
+	val := strings.TrimRight(raw, " \t\r\n\v\f")
+
+	if m := quotedEnvValue.FindStringSubmatch(val); m != nil {
+		// Alternation: group 1 for the double-quoted branch, group 3 for the
+		// single-quoted one. Exactly one branch participates in a match.
+		if m[1] != "" || strings.HasPrefix(val, `"`) {
+			return m[1]
+		}
+		return m[3]
+	}
+
+	val = inlineEnvComment.ReplaceAllString(val, "")
+	return strings.TrimRight(val, " \t\r\n\v\f")
 }
 
 // NewEmptyEnv returns a fresh empty Env with the given path.

@@ -216,10 +216,17 @@ function ConvertFrom-EnvLine {
     $key = $trimmed.Substring(0, $eqIdx) -replace '\s+$', ''
     $value = $trimmed.Substring($eqIdx + 1)
 
-    $value = $value -replace '\s+#.*$', ''
+    # Unquote first, comment-strip second -- same rule as parse_env_value in
+    # scripts/lib/parse_env.sh, and for the same reason (#356, row 9). With
+    # the old order a # inside a quoted value started a comment, so
+    # set_env_value wrote FOO="a # b" and this read back `"a`.
     $value = $value -replace '\s+$', ''
-    if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'$") {
+    if ($value -match '^"(.*)"(\s+#.*)?$' -or $value -match "^'(.*)'(\s+#.*)?$") {
         $value = $matches[1]
+    }
+    else {
+        $value = $value -replace '\s+#.*$', ''
+        $value = $value -replace '\s+$', ''
     }
     return @($key, $value)
 }
