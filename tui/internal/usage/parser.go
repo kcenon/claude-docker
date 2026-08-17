@@ -32,6 +32,11 @@ type SessionEntry struct {
 type Session struct {
 	Path    string
 	Entries []SessionEntry
+	// Truncated is set when the scanner stopped before the end of the file.
+	// The entries above are still the ones it decoded; the totals derived
+	// from them are a floor, not the file's real total. Callers that report
+	// usage should say so rather than present a short count as exact.
+	Truncated bool
 }
 
 // cacheEntry records a previously parsed session along with the file
@@ -204,9 +209,14 @@ func ScanAccountSessionsWithCache(projectsDir string, cache *Cache) ([]Session, 
 		info, infoErr := d.Info()
 		if infoErr != nil {
 			// Fall back to a stat-less parse; never cache without a fingerprint.
+			// Same partial-result rule as the cached path below, minus the
+			// caching, which has no fingerprint to key on here.
 			s, parseErr := parseSessionFile(path)
 			if parseErr != nil {
-				return nil
+				s.Truncated = true
+				if len(s.Entries) == 0 {
+					return nil
+				}
 			}
 			sessions = append(sessions, s)
 			seen[path] = struct{}{}
@@ -224,7 +234,28 @@ func ScanAccountSessionsWithCache(projectsDir string, cache *Cache) ([]Session, 
 
 		s, parseErr := parseSessionFile(path)
 		if parseErr != nil {
-			return nil // skip unparseable files
+			// A scanner error is not the same thing as an unparseable file,
+			// and this treated them the same: it dropped the whole session
+			// and skipped the cache (#358, item 14).
+			//
+			// parseSessionFile returns the entries it decoded before the
+			// failure alongside the error, and the usual cause -- one JSONL
+			// line past the 10 MB scanner limit -- leaves every other line in
+			// the file intact. Everything before the long line was thrown
+			// away for the sake of the one line after it.
+			//
+			// Skipping the cache made it permanent rather than momentary:
+			// nothing recorded that the file had been looked at, so the next
+			// scan re-read it from the start and failed on the same line, at
+			// the same cost, forever. Caching under the (size, mtime)
+			// fingerprint is safe -- editing the file changes the fingerprint
+			// and forces a re-read.
+			s.Truncated = true
+			if len(s.Entries) == 0 {
+				// Nothing decoded at all: not worth a cache entry, and there
+				// is no partial result to keep.
+				return nil
+			}
 		}
 		cache.put(path, size, modUnix, s)
 		sessions = append(sessions, s)
