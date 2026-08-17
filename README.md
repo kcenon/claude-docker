@@ -689,11 +689,12 @@ try. `.github/workflows/release-tui.yml` is retained and is triggered by a `v*`
 tag; if releases are published later, a verified download path can be
 reintroduced against a real tag rather than against `latest`.
 
-Token usage is recomputed on every refresh from each account's JSONL session
-files and memoized per file, so an unchanged history is not reparsed. The
-cache is shared across accounts and pruned per account; the measurements and
-the benchmark that produces them are in
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+Token usage comes from the runtime's own usage API and the limitline cache
+beside each account's state. The dashboard does not read JSONL session files:
+it used to walk and parse them on every refresh to fill a field nothing
+rendered, and that walk was removed in #358. See
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for what was measured before it
+went.
 
 ### Rebuilding the Image
 
