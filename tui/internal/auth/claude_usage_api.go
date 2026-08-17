@@ -13,7 +13,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const usageAPIURL = "https://api.anthropic.com/api/oauth/usage"
@@ -75,9 +78,17 @@ func ReadOAuthToken(credentialsPath string) (string, error) {
 // On 429, returns *RateLimitError immediately so the caller can back off.
 // The caller (TUI auto-retry loop) handles retry cadence externally.
 func FetchUsage(accessToken string) (*UsageAPIResponse, error) {
+	return fetchUsageFrom(usageAPIURL, accessToken)
+}
+
+// fetchUsageFrom is FetchUsage with the endpoint as a parameter, so tests can
+// point it at an httptest server. Splitting the URL out this way keeps
+// usageAPIURL a const; the alternative -- making it a mutable package var --
+// would let any future code in this package repoint the production endpoint.
+func fetchUsageFrom(endpoint, accessToken string) (*UsageAPIResponse, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	req, err := http.NewRequest("GET", usageAPIURL, nil)
+	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -93,14 +104,26 @@ func FetchUsage(accessToken string) (*UsageAPIResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-
+	// 429 is decided by the status alone, so the body is never read for it.
 	if resp.StatusCode == 429 {
 		return nil, &RateLimitError{Attempts: 1}
 	}
 
+	// Bounded read. A valid usage response is well under a kilobyte; anything
+	// larger is a proxy's HTML error page or a captive portal, and the whole of
+	// it used to become the error string, which reaches a.LastAPIStatus and is
+	// drawn per account in the table (#358, item 3).
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxUsageBodyBytes))
+	if readErr != nil {
+		// Previously discarded, so a truncated body went on to json.Unmarshal
+		// and resurfaced as "parse usage response" -- a decoding complaint
+		// about what was actually a connection that dropped mid-read.
+		return nil, fmt.Errorf("read usage response: %w", readErr)
+	}
+
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("usage API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("usage API returned %d: %s",
+			resp.StatusCode, summarizeBody(body))
 	}
 
 	var result UsageAPIResponse
@@ -109,4 +132,52 @@ func FetchUsage(accessToken string) (*UsageAPIResponse, error) {
 	}
 
 	return &result, nil
+}
+
+// maxUsageBodyBytes caps what FetchUsage will read from the response.
+const maxUsageBodyBytes = 64 * 1024
+
+// maxErrorBodyRunes caps how much of a non-200 body reaches the error string.
+const maxErrorBodyRunes = 200
+
+// summarizeBody reduces a response body to something that fits one table cell:
+// newlines, tabs and other control characters collapse to spaces, runs of
+// whitespace collapse to one, and the result is truncated with an ellipsis.
+//
+// The destination is a.LastAPIStatus, which view.go renders per account. A raw
+// HTML error page there does not just look bad -- its newlines break the table
+// apart, and --json output carrying literal control characters is not valid
+// JSON for anything downstream to parse.
+func summarizeBody(body []byte) string {
+	if len(body) == 0 {
+		return "(empty body)"
+	}
+
+	var b strings.Builder
+	b.Grow(len(body))
+	lastWasSpace := false
+	for _, r := range string(body) {
+		if r == utf8.RuneError {
+			r = '?'
+		}
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			if !lastWasSpace {
+				b.WriteByte(' ')
+				lastWasSpace = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		lastWasSpace = false
+	}
+
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return "(no printable content)"
+	}
+	runes := []rune(out)
+	if len(runes) > maxErrorBodyRunes {
+		return string(runes[:maxErrorBodyRunes]) + "..."
+	}
+	return out
 }
