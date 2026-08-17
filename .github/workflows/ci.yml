@@ -139,9 +139,28 @@ jobs:
       # -benchtime=1x runs each benchmark exactly once: enough to catch that,
       # too few iterations for the timing to be a flaky gate. Results are not
       # asserted on here; the numbers of record live in docs/PERFORMANCE.md.
+      #
+      # The count comparison is what keeps the step honest now that the tree
+      # has no benchmarks left: `-bench .` with nothing to run prints `ok` for
+      # every package and exits 0, which is indistinguishable from a real pass.
+      # Comparing executed against defined means zero-and-zero is fine today,
+      # while a benchmark that is added and then never executed -- because it
+      # sits behind a build tag, or in a package the pattern misses -- fails
+      # instead of passing quietly.
+      #
+      # `>=` rather than `=`: one `func Benchmark...` with sub-benchmarks
+      # prints a result line per sub-benchmark, so executed legitimately
+      # exceeds defined.
       - name: Smoke-run Go benchmarks
         working-directory: ./tui
-        run: go test ./... -run '^$' -bench . -benchtime=1x
+        run: |
+          defined=$(grep -rh --include='*_test.go' '^func Benchmark' . | wc -l)
+          executed=$(go test ./... -run '^$' -bench . -benchtime=1x | grep -c '^Benchmark' || true)
+          echo "benchmarks defined: $defined, executed: $executed"
+          if [ "$executed" -lt "$defined" ]; then
+            echo "::error::$defined benchmark(s) defined but only $executed executed"
+            exit 1
+          fi
       # Formatting is checked here rather than in a separate job because the Go
       # toolchain is already provisioned. The job name stays "Go tests (TUI)"
       # so any branch-protection rule referencing it keeps matching; the step

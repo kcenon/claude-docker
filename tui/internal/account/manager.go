@@ -18,10 +18,11 @@ import (
 // Manager provides CRUD operations on accounts.
 //
 // The usageCache field is gone with the JSONL pipeline it served (#358, item
-// 14). internal/usage is no longer reached from production code; it is kept,
-// still tested and still benchmarked, because docs/PERFORMANCE.md is written
-// about it and it holds the repository's only benchmark. Removing the package
-// is a separate decision from removing the walk.
+// 14), and internal/usage went with it once that decision was taken on its own
+// terms: a package no production path reaches, kept alive by a benchmark whose
+// only subject was the package itself, described in the present tense by two
+// documents that were no longer true. Git history has it if the pipeline is
+// ever wanted back.
 type Manager struct {
 	env    *config.Env
 	client *docker.Client

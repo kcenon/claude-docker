@@ -21,38 +21,52 @@ import (
 // every --json invocation, for a value nothing rendered.
 //
 // A structural assertion rather than a behavioral one, because "this work no
-// longer happens" has no output to observe. Test files are excluded on
-// purpose: internal/usage keeps its own tests and its benchmark, which
-// docs/PERFORMANCE.md is written about. What must not come back is the
-// production call path.
+// longer happens" has no output to observe.
+//
+// It now walks the whole module rather than this package's directory. When
+// internal/usage still existed, an import from tui/main.go or from the
+// dashboard would have resurrected the walk while this test stayed green --
+// it only ever read os.ReadDir("."). The package is deleted, so the compiler
+// catches a direct import today; what this still catches is the package being
+// recreated and wired back in, which is the failure mode worth a test.
 func TestProductionCodeDoesNotImportUsage(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
+	root := filepath.Join("..", "..")
 
 	checked := 0
 	fset := token.NewFileSet()
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
 		}
 		checked++
-		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
+		f, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			return parseErr
 		}
 		for _, imp := range f.Imports {
 			if strings.Contains(imp.Path.Value, "internal/usage") {
-				t.Errorf("%s imports internal/usage; the JSONL pipeline was removed in #358", name)
+				t.Errorf("%s imports internal/usage; the JSONL pipeline was removed in #358", path)
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
 	}
 
-	// Guard against the check passing because it found nothing to check.
-	if checked == 0 {
-		t.Fatal("no non-test Go files were examined")
+	// Guard against the check passing because it found nothing to check. The
+	// floor is well above zero now that the walk covers the module: a wrong
+	// root would still find a handful of files, and only a real sweep finds
+	// this many.
+	if checked < 20 {
+		t.Fatalf("examined %d non-test Go files; the walk is not covering the module", checked)
 	}
 }
 
