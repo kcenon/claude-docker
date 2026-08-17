@@ -2,7 +2,9 @@ package account
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -239,10 +241,68 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := os.Chmod(tmpName, 0600); err != nil {
 		return fmt.Errorf("chmod tmp: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := renameRetryingSharingViolation(func() error {
+		return os.Rename(tmpName, path)
+	}); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
+}
+
+const (
+	// How long renameRetryingSharingViolation keeps trying, and how long it
+	// waits between attempts. Measured against a reader looping with no pause
+	// at all -- the worst case this code can face -- the rename succeeded
+	// within 13 attempts, about 65ms. Two seconds is headroom, not a target.
+	renameRetryBudget = 2 * time.Second
+	renameRetryPause  = 5 * time.Millisecond
+)
+
+// renameRetryingSharingViolation calls rename until it succeeds, fails for a
+// reason retrying cannot fix, or the budget runs out.
+//
+// This exists for Windows. os.Rename there is MoveFileEx, and it fails with
+// "Access is denied" whenever another handle has the destination open, because
+// Go's os.Open does not request FILE_SHARE_DELETE. Measured, not assumed: with
+// no reader the rename succeeds; with a plain os.Open held on the destination
+// the same rename fails.
+//
+// It is a regression this file introduced. os.WriteFile truncated in place and
+// did not care about readers, so switching to a rename traded "a reader can
+// see a torn file" for "a write can fail" -- and the same change stopped
+// discarding write errors, so the failure now reaches the user. A reader holds
+// the handle for microseconds, which makes the violation transient by nature
+// and a bounded retry the right shape of fix.
+//
+// The gate is the error, not the platform, so the loop is reachable from a
+// test on any OS -- see rename_retry_test.go, which injects a rename that
+// fails a fixed number of times. On POSIX the condition effectively cannot
+// arise here anyway: the temp file is created in the destination's own
+// directory, so a directory this process cannot write to fails at CreateTemp
+// long before the rename. If some other permission error did occur there, the
+// cost is one delayed failure, not a wrong answer.
+func renameRetryingSharingViolation(rename func() error) error {
+	err := rename()
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+
+	deadline := time.Now().Add(renameRetryBudget)
+	for time.Now().Before(deadline) {
+		time.Sleep(renameRetryPause)
+		err = rename()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			return err
+		}
+	}
+	// Say that retrying happened. Otherwise the message is identical to the
+	// one a single failed attempt produces, and the reader cannot tell a
+	// momentary collision from a file that is permanently unwritable.
+	return fmt.Errorf("%w (still denied after retrying for %s; another process may be holding the file open)",
+		err, renameRetryBudget)
 }
 
 const apiCooldownDuration = 25 * time.Second
