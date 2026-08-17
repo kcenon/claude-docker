@@ -306,6 +306,10 @@ jobs:
           # Linux-only on purpose: this covers container bootstrap code, the
           # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
           - tests/test_bootstrap_helpers.sh
+          # Both installers name .env backups the same way, so the name-sort
+          # rotation keeps the newest three rather than the newest three from
+          # whichever installer used the longer format (#356).
+          - tests/test_env_backup_rotation.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
