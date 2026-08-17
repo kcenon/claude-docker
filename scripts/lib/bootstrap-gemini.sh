@@ -44,7 +44,7 @@ runtime_bootstrap() {
     # to /home/node so the path matches the container's default OS home.
     local GEMINI_HOME_ROOT="${GEMINI_CLI_HOME:-/home/node}"
     local GEMINI_ACCOUNT_DIR="$GEMINI_HOME_ROOT/.gemini"
-    local GEMINI_SOURCE="${GEMINI_CONFIG_SOURCE:-/home/node/.gemini-host}"
+    local GEMINI_SOURCE="${GEMINI_CONFIG_SOURCE:-$(bootstrap_host_config_default gemini)}"
     mkdir -p "$GEMINI_ACCOUNT_DIR" /home/node/.agents/skills 2>/dev/null || true
     chmod 700 "$GEMINI_ACCOUNT_DIR" 2>/dev/null || true
 

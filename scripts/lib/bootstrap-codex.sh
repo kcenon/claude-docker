@@ -31,7 +31,7 @@ _CLAUDE_DOCKER_BOOTSTRAP_CODEX_SH_SOURCED=1
 # from the Codex-specific environment variables.
 runtime_bootstrap() {
     local CODEX_ACCOUNT_DIR="${CODEX_HOME:-/home/node/.codex}"
-    local CODEX_SOURCE="${CODEX_CONFIG_SOURCE:-/home/node/.codex-host}"
+    local CODEX_SOURCE="${CODEX_CONFIG_SOURCE:-$(bootstrap_host_config_default codex)}"
     mkdir -p "$CODEX_ACCOUNT_DIR" /home/node/.agents/skills 2>/dev/null || true
     chmod 700 "$CODEX_ACCOUNT_DIR" 2>/dev/null || true
 

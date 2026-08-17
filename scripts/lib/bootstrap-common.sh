@@ -181,6 +181,20 @@ bootstrap_copy_dir() {
 #
 # bootstrap-claude.sh's ccstatusline block already did the readlink-compare;
 # the pattern is absorbed here so every linked item gets it.
+# bootstrap_host_config_default RUNTIME
+# The read-only host config mount for RUNTIME: /home/node/.<runtime>-host.
+#
+# One definition instead of the literal spelled once per runtime module. It is
+# also what makes the read-only-mount branch reachable from a test: that path
+# only exists inside the image, so a harness that cannot create /home/node had
+# no way to exercise the branch at all, and the set-then-unset transition it
+# governs went unchecked (#357). CLAUDE_DOCKER_HOST_CONFIG_ROOT moves the
+# parent directory, nothing else -- it is a path root, not a switch that skips
+# a check.
+bootstrap_host_config_default() {
+    printf '%s/.%s-host\n' "${CLAUDE_DOCKER_HOST_CONFIG_ROOT:-/home/node}" "$1"
+}
+
 bootstrap_link_item() {
     local src="$1"
     local dst="$2"

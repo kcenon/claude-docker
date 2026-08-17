@@ -114,7 +114,13 @@ runtime_bootstrap() {
     # config path. Set CLAUDE_CONFIG_SOURCE to a path inside the project (e.g.,
     # /project/claude-config/global) so config changes are reflected immediately
     # without running bootstrap on the host.
-    local CONFIG_SOURCE="${CLAUDE_CONFIG_SOURCE:-/home/node/.claude-host}"
+    # Read once, with a default, so the rest of the function can test it under
+    # `set -u` without tripping over an unset variable. entrypoint.sh does not
+    # set -u, but a test harness does, and "unset" is the ordinary case here --
+    # a module that cannot be exercised in its default configuration is a
+    # module whose default configuration goes untested.
+    local EXPLICIT_SOURCE="${CLAUDE_CONFIG_SOURCE:-}"
+    local CONFIG_SOURCE="${EXPLICIT_SOURCE:-$(bootstrap_host_config_default claude)}"
     local ACCOUNT_DIR="${CLAUDE_CONFIG_DIR:-/home/node/.claude}"
 
     # Harden the account state directory, matching bootstrap-codex.sh:36 and
@@ -135,7 +141,7 @@ runtime_bootstrap() {
 
     # Fix Windows CRLF line endings in shell scripts (bind mounts from Windows
     # hosts may have \r\n even with .gitattributes if the repo lacks one).
-    if [ -n "$CLAUDE_CONFIG_SOURCE" ]; then
+    if [ -n "$EXPLICIT_SOURCE" ]; then
         bootstrap_crlf_normalize "$CONFIG_SOURCE"
     fi
 
@@ -150,18 +156,45 @@ runtime_bootstrap() {
     # cannot sed -i in place. Instead, copy .sh files to the writable account
     # dir, stripping CRLF during the copy. Non-.sh files (json, psm1) are
     # copied as-is for completeness (hooks/lib/, hooks/known-issues.json).
+    # The branch below used to sit inside
+    #     [ "$FORCE_LINK" = true ] || [ ! -e "$target" ] || [ ! -L "$target" ]
+    # which is the same three-condition shape the repointing fix removed from
+    # bootstrap_link_item -- left behind at the call site, where it kept the
+    # helper from ever running.
+    #
+    # Unsetting CLAUDE_CONFIG_SOURCE is what exposed it. FORCE_LINK goes empty,
+    # the target is still a symlink into the old source and still resolves, so
+    # all three conditions are false and the whole block is skipped. The account
+    # went on reading hooks and scripts from a source the operator had already
+    # removed from .env, with nothing logged. skills, commands and ccstatusline
+    # below call the helper unconditionally and repointed correctly, which is
+    # why the account ended up half on each source (#357, cluster A).
+    #
+    # The two arms need different treatment rather than one shared guard, which
+    # is why the guard could not simply be deleted: the symlink arm is cheap and
+    # idempotent, while the copy arm must not re-copy the tree on every boot.
     for item in hooks scripts; do
         if [ -d "$CONFIG_SOURCE/$item" ]; then
             target="$ACCOUNT_DIR/$item"
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
-                if [ -z "$CLAUDE_CONFIG_SOURCE" ]; then
-                    # Read-only mount: copy + CRLF normalize
+            if [ -z "$EXPLICIT_SOURCE" ]; then
+                # Read-only mount: copy + CRLF normalize.
+                #
+                # A symlink here is a leftover from a boot that had
+                # CLAUDE_CONFIG_SOURCE set. It has to go before the copy, or
+                # the account keeps reading the old source forever.
+                if [ -L "$target" ]; then
+                    echo "[entrypoint] $item: dropping link into $(readlink "$target"); CLAUDE_CONFIG_SOURCE is no longer set"
+                    rm -f "$target"
+                fi
+                if [ ! -e "$target" ]; then
                     bootstrap_copy_dir "$CONFIG_SOURCE/$item" "$target"
                     echo "[entrypoint] $item: copied and CRLF-normalized from read-only mount"
-                else
-                    # Writable CLAUDE_CONFIG_SOURCE: symlink as before
-                    bootstrap_link_item "$CONFIG_SOURCE/$item" "$target" "$FORCE_LINK"
                 fi
+            else
+                # Writable CLAUDE_CONFIG_SOURCE: symlink. The helper decides
+                # whether anything needs doing, including repointing a link
+                # that resolves but resolves somewhere else.
+                bootstrap_link_item "$CONFIG_SOURCE/$item" "$target" "$FORCE_LINK"
             fi
         fi
     done
@@ -302,11 +335,16 @@ runtime_bootstrap() {
     # ran the full installer or only the lite/plugin install. Without
     # forwarding, container-side hooks would treat every host as lite.
     # See claude-config docs/CLAUDE_DOCKER_CONTRACT.md for the contract.
+    # Through bootstrap_link_item, not a bare `ln -sf` behind a guard.
+    #
+    # The old form had the same blind spot as the hooks/scripts loop above: with
+    # CLAUDE_CONFIG_SOURCE unset the target existed, was non-empty and was a
+    # symlink, so nothing ran and these four kept pointing into the previous
+    # source. It also overwrote a regular file outright, where the helper moves
+    # one aside as .stale.<epoch> and says so (#357, cluster A).
     for item in CLAUDE.md commit-settings.md .claudeignore .full-suite-active; do
         if [ -f "$CONFIG_SOURCE/$item" ]; then
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
-                ln -sf "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
-            fi
+            bootstrap_link_item "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item" "$FORCE_LINK"
         fi
     done
 
