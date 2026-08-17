@@ -263,14 +263,29 @@ bash_over_out=$(run_with_env "-" bash "$max_dir/scripts/claude-docker" scale 703
 check_contains "scale-703" "bash" "$bash_over_out" "between 1 and 702"
 
 pwsh_letter=$(pwsh -NoProfile -Command \
-    "Import-Module '$max_dir/scripts/ClaudeDocker.psm1' -Force; ConvertTo-AccountLetter -Index 27" \
+    "Import-Module '$max_dir/scripts/ClaudeDocker.psm1' -Force; Get-AccountLetter -Index 27" \
     2>/dev/null | tr -d '\r')
 check "scale-27" "pwsh-letter" "$pwsh_letter" "aa"
 
 bash_help=$(run_with_env "-" bash "$max_dir/scripts/claude-docker" help 2>&1)
 check_contains "scale-help" "bash" "$bash_help" "Set number of accounts (1-702)"
+
+# The pwsh leg cannot render the help: claude-docker.ps1 has a Windows-only
+# platform guard and this suite runs on Linux. So it asserts the two halves
+# separately -- the bound the module reports, and that the help line derives
+# the number rather than typing it.
+#
+# It used to grep the source for the literal "Set number of accounts (1-702)",
+# which is the same shape as the check the comment below records as removed:
+# it passes for a string that is never rendered and fails for a refactor that
+# names the constant. #356 is that refactor, and this is what it caught.
+pwsh_max=$(pwsh -NoProfile -Command \
+    "Import-Module '$max_dir/scripts/ClaudeDocker.psm1' -Force; Get-MaxAccountCount" \
+    2>/dev/null | tr -d '\r')
+check "scale-help" "pwsh-bound" "$pwsh_max" "702"
 pwsh_source=$(tr -d '\r' < "$max_dir/scripts/claude-docker.ps1")
-check_contains "scale-help" "pwsh" "$pwsh_source" "Set number of accounts (1-702)"
+check_contains "scale-help" "pwsh-derives-bound" "$pwsh_source" \
+    'Set number of accounts (1-$(Get-MaxAccountCount))'
 # The pwsh leg used to grep Invoke-Scale's source for the literal
 # `$newCount -gt 702`. That passes for a body which contains the literal but
 # never applies it, and fails for a valid refactor that extracts 702 into a

@@ -66,13 +66,16 @@ if ($NumAccounts -eq 0) {
         $NumAccounts = 2
     }
     else {
-        $parsedNumAccounts = 0
-        if ($fromEnv -notmatch '^\d+$' -or
-            -not [int]::TryParse([string]$fromEnv, [ref]$parsedNumAccounts)) {
-            Write-Error "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $fromEnv)"
+        # Validated through lib/index.ps1 rather than re-spelled here (#356).
+        # The bound and the leading-zero handling are one definition per
+        # language now: normalize_account_count in lib/index.sh, this in
+        # PowerShell, config.MaxAccounts in Go.
+        $normalized = Get-NormalizedAccountCount -Value $fromEnv
+        if ($null -eq $normalized) {
+            Write-Error "NUM_ACCOUNTS must be an integer between 1 and $(Get-MaxAccountCount) (got: $fromEnv)"
             exit 1
         }
-        $NumAccounts = $parsedNumAccounts
+        $NumAccounts = $normalized
     }
 }
 
@@ -92,8 +95,9 @@ if ([string]::IsNullOrEmpty($ImageTag)) {
     }
 }
 
-if ($NumAccounts -lt 1 -or $NumAccounts -gt 702) {
-    Write-Error "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $NumAccounts)"
+# Covers the -NumAccounts parameter path, which bypasses the block above.
+if ($null -eq (Get-NormalizedAccountCount -Value ([string]$NumAccounts))) {
+    Write-Error "NUM_ACCOUNTS must be an integer between 1 and $(Get-MaxAccountCount) (got: $NumAccounts)"
     exit 1
 }
 

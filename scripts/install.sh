@@ -586,12 +586,16 @@ collect_configuration() {
         log_info "Claude Code version: $CLAUDE_VERSION"
     fi
 
-    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
+    # Number of accounts. The upper bound is "zz" from Excel-style letter
     # enumeration; the validator catches typos like 2600 without capping
     # legitimate multi-tenant setups at the historic 26-account ceiling.
-    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-702)" "2")
-    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
-        log_error "Number of accounts must be between 1 and 702."
+    #
+    # Validated by normalize_account_count, which lib/index.sh already declares
+    # the shared definition of and this file already sources. Re-spelling it
+    # here is what let the prompt and the generator disagree (#356).
+    RAW_NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-$(max_account_count))" "2")
+    if ! NUM_ACCOUNTS=$(normalize_account_count "$RAW_NUM_ACCOUNTS"); then
+        log_error "Number of accounts must be an integer between 1 and $(max_account_count) (got: $RAW_NUM_ACCOUNTS)."
         exit 1
     fi
     log_info "Accounts: $NUM_ACCOUNTS"
@@ -640,7 +644,7 @@ collect_configuration() {
             local letter
             letter=$(index_to_letter "$i")
             local upper
-            upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+            upper=$(index_to_upper "$i")
             API_KEYS+=("$(prompt_secret "API key for Account $upper")")
         done
 
@@ -721,7 +725,7 @@ generate_env() {
                 local letter
                 letter=$(index_to_letter "$i")
                 local upper
-                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+                upper=$(index_to_upper "$i")
                 echo "${api_key_prefix}${upper}=${API_KEYS[$((i-1))]}"
             done
             echo ""
@@ -747,7 +751,7 @@ generate_env() {
                 local letter
                 letter=$(index_to_letter "$i")
                 local upper
-                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+                upper=$(index_to_upper "$i")
                 echo "PROJECT_DIR_${upper}="
                 echo "CONTAINER_PROJECT_DIR_${upper}=/project-${letter}"
             done
@@ -1029,7 +1033,7 @@ setup_worktrees() {
                 local drop='^# ==== Tier B:|^# \(populated after'
                 local j upper_j
                 for j in $(seq 1 "$NUM_ACCOUNTS"); do
-                    upper_j=$(index_to_letter "$j" | tr '[:lower:]' '[:upper:]')
+                    upper_j=$(index_to_upper "$j")
                     drop="${drop}|^PROJECT_DIR_${upper_j}=|^CONTAINER_PROJECT_DIR_${upper_j}="
                 done
                 perl -i -ne "print unless /$drop/" "$env_file"
@@ -1067,7 +1071,7 @@ setup_worktrees() {
     local i letter upper
     for i in $(seq 1 "$NUM_ACCOUNTS"); do
         letter=$(index_to_letter "$i")
-        upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+        upper=$(index_to_upper "$i")
         letters+=("$letter")
         branches+=("$(prompt_input "Branch name for Container ${upper}" "worktree-${letter}")")
     done
@@ -1082,7 +1086,7 @@ setup_worktrees() {
     log_success "Worktrees created:"
     for i in "${!letters[@]}"; do
         letter="${letters[$i]}"
-        upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+        upper=$(index_to_upper "$((i + 1))")
         local worktree="${SOURCE_DIR%/}-${letter}"
         set_env_value "$env_file" "PROJECT_DIR_${upper}" "$worktree"
         log_info "  ${upper}: $worktree (branch: ${branches[$i]})"

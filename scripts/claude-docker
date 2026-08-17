@@ -120,7 +120,7 @@ get_num_accounts() {
     else
         raw_n="$n"
         if ! n=$(normalize_account_count "$raw_n"); then
-            log_warn "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $raw_n); using default 2." >&2
+            log_warn "NUM_ACCOUNTS must be an integer between 1 and $(max_account_count) (got: $raw_n); using default 2." >&2
             n=2
         fi
     fi
@@ -814,12 +814,12 @@ cmd_update() {
 }
 
 cmd_scale() {
-    local new_count="${1:?Usage: claude-docker scale <N> (1-702)}"
+    local new_count="${1:?Usage: claude-docker scale <N> (1-$(max_account_count))}"
     local raw_count="$new_count"
 
     # Validate
     if ! new_count=$(normalize_account_count "$raw_count"); then
-        log_error "Account count must be between 1 and 702 (got: $raw_count)"
+        log_error "Account count must be between 1 and $(max_account_count) (got: $raw_count)"
         exit 1
     fi
 
@@ -1090,7 +1090,7 @@ ${BOLD}DASHBOARD${NC}
   ${GREEN}build-tui${NC}             Build TUI; download a release if Go is unavailable
 
 ${BOLD}SCALING${NC}
-  ${GREEN}scale${NC} <N>             Set number of accounts (1-702) and regenerate
+  ${GREEN}scale${NC} <N>             Set number of accounts (1-$(max_account_count)) and regenerate
 
 ${BOLD}ADVANCED${NC}
   ${GREEN}config${NC}                Show resolved compose configuration

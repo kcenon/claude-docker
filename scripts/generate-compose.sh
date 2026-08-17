@@ -50,7 +50,7 @@ NUM_ACCOUNTS="${NUM_ACCOUNTS:-2}"
 # generator-owned diagnostic and cannot flow into arithmetic below.
 RAW_NUM_ACCOUNTS="$NUM_ACCOUNTS"
 if ! NUM_ACCOUNTS=$(normalize_account_count "$RAW_NUM_ACCOUNTS"); then
-    echo "Error: NUM_ACCOUNTS must be an integer between 1 and 702 (got: $RAW_NUM_ACCOUNTS)" >&2
+    echo "Error: NUM_ACCOUNTS must be an integer between 1 and $(max_account_count) (got: $RAW_NUM_ACCOUNTS)" >&2
     exit 1
 fi
 

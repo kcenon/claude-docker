@@ -25,8 +25,14 @@ param(
     [Parameter(Mandatory)]
     [string]$RepoDir,
 
-    [ValidateRange(1, 702)]
-    [int]$AccountCount = 2
+    # A string, validated in the body against lib/index.ps1, rather than
+    # [ValidateRange(1, 702)] on an [int] (#356). Two reasons: an attribute
+    # binds before the body runs, so it cannot consult the shared bound and
+    # has to re-spell it; and [int] makes PowerShell reject a non-numeric
+    # value with its own binding error, where setup-isolated.sh prints
+    # "account count must be an integer between 1 and 702 (got: ...)".
+    # An int argument still binds -- PowerShell coerces it to string.
+    [string]$AccountCount = '2'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +51,15 @@ $RepoDir = $RepoDir.TrimEnd('\', '/')
 
 if (-not (Test-Path (Join-Path $RepoDir '.git'))) {
     Write-Error "Error: $RepoDir is not a git repository"
+    exit 1
+}
+
+# Same order as setup-isolated.sh: the repository check first, then the count,
+# so the two report the same failure for the same invocation.
+$rawAccountCount = $AccountCount
+$AccountCount = Get-NormalizedAccountCount -Value $rawAccountCount
+if ($null -eq $AccountCount) {
+    Write-Error "Error: account count must be an integer between 1 and $(Get-MaxAccountCount) (got: $rawAccountCount)"
     exit 1
 }
 

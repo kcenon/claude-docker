@@ -314,6 +314,9 @@ jobs:
           # implementation layers, which makes it one more copy that drifts on
           # a rename. Referential integrity only (#356).
           - tests/test_contributing_references.sh
+          # Runs both account-index implementations and diffs the answers,
+          # rather than grepping either for a literal (#356).
+          - tests/test_account_index_equivalence.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

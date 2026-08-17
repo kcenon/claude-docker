@@ -39,7 +39,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
 fi
 
 if ! COUNT=$(normalize_account_count "$RAW_COUNT"); then
-    echo "Error: account count must be an integer between 1 and 702 (got: $RAW_COUNT)" >&2
+    echo "Error: account count must be an integer between 1 and $(max_account_count) (got: $RAW_COUNT)" >&2
     exit 1
 fi
 
