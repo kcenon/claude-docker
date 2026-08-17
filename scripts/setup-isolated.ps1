@@ -56,10 +56,19 @@ if (-not (Test-Path (Join-Path $RepoDir '.git'))) {
 
 # Same order as setup-isolated.sh: the repository check first, then the count,
 # so the two report the same failure for the same invocation.
-$rawAccountCount = $AccountCount
-$AccountCount = Get-NormalizedAccountCount -Value $rawAccountCount
-if ($null -eq $AccountCount) {
-    Write-Error "Error: account count must be an integer between 1 and $(Get-MaxAccountCount) (got: $rawAccountCount)"
+# The normalized value goes into a NEW variable rather than back onto
+# $AccountCount, and that is not a style choice.
+#
+# A param() type constraint follows the variable for its whole lifetime, not
+# just the binding. $AccountCount is [string], so `$AccountCount = $null`
+# stores '' -- and `$null -eq ''` is false, so the guard below never fired.
+# -AccountCount 703 and -AccountCount abc were both accepted in silence, and
+# the run went on to create zero clones and print a success summary, while
+# setup-isolated.sh rejected the same arguments. The check read correctly and
+# did nothing, which is why the .sh/.ps1 pair looked symmetric (#356).
+$accountTotal = Get-NormalizedAccountCount -Value $AccountCount
+if ($null -eq $accountTotal) {
+    Write-Error "Error: account count must be an integer between 1 and $(Get-MaxAccountCount) (got: $AccountCount)"
     exit 1
 }
 
@@ -101,9 +110,9 @@ function Set-CloneOrigin {
     }
 }
 
-Write-Host "Creating $AccountCount independent clone(s)..."
+Write-Host "Creating $accountTotal independent clone(s)..."
 
-for ($i = 1; $i -le $AccountCount; $i++) {
+for ($i = 1; $i -le $accountTotal; $i++) {
     $letter = Get-AccountLetter -Index $i
     $upper = Get-AccountLetterUpper -Index $i
     $target = "${RepoDir}-isolated-${letter}"
@@ -138,7 +147,7 @@ for ($i = 1; $i -le $AccountCount; $i++) {
 Write-Host ''
 Write-Host 'Add to .env:'
 Write-Host '  ISOLATION_MODE=isolated'
-for ($i = 1; $i -le $AccountCount; $i++) {
+for ($i = 1; $i -le $accountTotal; $i++) {
     $letter = Get-AccountLetter -Index $i
     $upper = Get-AccountLetterUpper -Index $i
     Write-Host "  ISOLATED_WORKSPACE_${upper}=${RepoDir}-isolated-${letter}"

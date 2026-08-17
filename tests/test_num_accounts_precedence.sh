@@ -306,6 +306,101 @@ pwsh_max_out=$(pwsh -NoProfile -Command \
     2>&1 | tr -d '\r')
 check_contains "scale-702" "pwsh" "$pwsh_max_out" ".env not found"
 
+# ---------------------------------------------------------------------------
+printf '\n-- the remaining entry points: both installers and setup-isolated.ps1\n'
+# ---------------------------------------------------------------------------
+#
+# `scale`, both generators and setup-isolated.sh were already driven above.
+# The other three were not, and they were the ones nothing could reach: the two
+# installer prompts sat inline in the interactive flow, so the only way to run
+# their validation was to run a whole install. That is why the prompts are now
+# prompt_account_count / Read-AccountCount -- small functions this can call
+# with the input stubbed, so an edit that goes back to typing "1..702" at a
+# call site fails here instead of shipping (#356).
+#
+# Both installers already expose CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY=1 for
+# exactly this: source the definitions, run nothing.
+
+inst_dir=$(make_sandbox "installers" "-")
+
+# ---- install.sh ----
+drive_bash_install_prompt() {   # ANSWER -> "OK <n>" | "REJECT"
+    local answer="$1"
+    (
+        export CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY=1
+        # shellcheck source=../scripts/install.sh
+        . "$inst_dir/scripts/install.sh" >/dev/null 2>&1
+        # Redefined after sourcing, so this is the installer's own call path
+        # with only the terminal read replaced.
+        prompt_input() { printf '%s\n' "$answer"; }
+        if prompt_account_count >/dev/null 2>&1; then
+            printf 'OK %s\n' "$NUM_ACCOUNTS"
+        else
+            printf 'REJECT\n'
+        fi
+    )
+}
+
+check "install-sh" "prompt-4"   "$(drive_bash_install_prompt 4)"   "OK 4"
+check "install-sh" "prompt-702" "$(drive_bash_install_prompt 702)" "OK 702"
+check "install-sh" "prompt-703" "$(drive_bash_install_prompt 703)" "REJECT"
+check "install-sh" "prompt-0"   "$(drive_bash_install_prompt 0)"   "REJECT"
+check "install-sh" "prompt-abc" "$(drive_bash_install_prompt abc)" "REJECT"
+# 008 is the case that made the two sides disagree: without base-10 parsing the
+# shell reads it as octal. It must be accepted, as eight.
+check "install-sh" "prompt-008" "$(drive_bash_install_prompt 008)" "OK 8"
+
+# The rejection has to say what the range is; a bare non-zero exit leaves the
+# operator guessing.
+reject_out=$(
+    export CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY=1
+    # shellcheck source=../scripts/install.sh
+    . "$inst_dir/scripts/install.sh" >/dev/null 2>&1
+    prompt_input() { printf '703\n'; }
+    prompt_account_count 2>&1
+)
+check_contains "install-sh" "prompt-msg" "$reject_out" "between 1 and 702"
+
+# ---- install.ps1 ----
+drive_pwsh_install_prompt() {   # ANSWER -> "OK <n>" | "REJECT"
+    local answer="$1"
+    pwsh -NoProfile -Command "
+        \$env:CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY = '1'
+        \$PSVersionTable.OS = 'Microsoft Windows'
+        . '$inst_dir/scripts/install.ps1' *> \$null
+        function Read-Input { param(\$Question, \$Default) return '$answer' }
+        \$r = Read-AccountCount 6>\$null 5>\$null 4>\$null 3>\$null 2>\$null
+        if (\$null -eq \$r) { 'REJECT' } else { \"OK \$r\" }
+    " 2>/dev/null | tr -d '\r' | tail -1
+}
+
+check "install-ps1" "prompt-4"   "$(drive_pwsh_install_prompt 4)"   "OK 4"
+check "install-ps1" "prompt-702" "$(drive_pwsh_install_prompt 702)" "OK 702"
+check "install-ps1" "prompt-703" "$(drive_pwsh_install_prompt 703)" "REJECT"
+check "install-ps1" "prompt-0"   "$(drive_pwsh_install_prompt 0)"   "REJECT"
+check "install-ps1" "prompt-abc" "$(drive_pwsh_install_prompt abc)" "REJECT"
+check "install-ps1" "prompt-008" "$(drive_pwsh_install_prompt 008)" "OK 8"
+
+# ---- setup-isolated.ps1 ----
+# The .sh half is driven by tests/test_setup_isolated.sh. This is its port, and
+# it validates at the top of the script rather than in a function, so it is
+# driven as a whole with a throwaway repository.
+iso_repo="$WORK/iso-src"
+mkdir -p "$iso_repo"
+git -C "$iso_repo" init -q 2>/dev/null || true
+
+iso_over=$(pwsh -NoProfile -Command "
+    \$PSVersionTable.OS = 'Microsoft Windows'
+    & '$inst_dir/scripts/setup-isolated.ps1' -RepoDir '$iso_repo' -AccountCount 703
+" 2>&1 | tr -d '\r')
+check_contains "setup-iso-ps1" "over-limit" "$iso_over" "between 1 and 702"
+
+iso_bad=$(pwsh -NoProfile -Command "
+    \$PSVersionTable.OS = 'Microsoft Windows'
+    & '$inst_dir/scripts/setup-isolated.ps1' -RepoDir '$iso_repo' -AccountCount abc
+" 2>&1 | tr -d '\r')
+check_contains "setup-iso-ps1" "non-numeric" "$iso_bad" "between 1 and 702"
+
 printf '\n-- checkout untouched\n'
 if [[ "$(compose_digest)" == "$DIGEST_BEFORE" ]]; then
     echo "  PASS  committed compose files unchanged"

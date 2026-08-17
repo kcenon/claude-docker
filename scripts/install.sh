@@ -154,7 +154,7 @@ check_command() {
 }
 
 # env_backup_timestamp
-# The suffix both installers put on a .env backup: UTC, yyyymmddHHMMSS.
+# The suffix both installers put on a .env backup: "utc" + UTC yyyymmddHHMMSS.
 #
 # One format on both sides (#356, row 8). This wrote `date +%s` -- a 10-digit
 # epoch -- while install.ps1 wrote a 14-digit yyyyMMddHHmmss, and both rotate
@@ -162,16 +162,27 @@ check_command() {
 # alternating the two installers on one project root kept the three newest
 # *PowerShell* backups rather than the three newest backups.
 #
-# yyyymmddHHMMSS rather than epoch, and this direction rather than the other,
-# because the migration is self-correcting: existing 10-digit backups sort
-# below every new one, and they are also genuinely older, so rotation removes
-# them first. Standardizing on epoch would have done the reverse -- pre-existing
-# PowerShell backups would outrank every new one and never be rotated out.
-#
 # UTC, not local: local time is not monotonic across a DST fall-back, and the
 # rotation depends on name order matching chronological order.
+#
+# The "utc" prefix is what makes the migration safe, and it took a second pass
+# to get right. Unifying on yyyymmddHHMMSS fixed the epoch legacy -- 10 digits
+# always sort below 14 -- but left the other legacy untouched: install.ps1 used
+# to stamp LOCAL time in the same 14-digit shape, so its old backups are
+# indistinguishable from new ones under a name sort. East of UTC they are worse
+# than indistinguishable, because a local stamp runs ahead of a UTC stamp taken
+# at the same instant; on a UTC+9 host every legacy PowerShell backup from the
+# last nine hours outranked a brand-new one, and rotation deleted the file the
+# installer had just written.
+#
+# A leading letter sorts above every digit, so any stamp in this format
+# outranks any stamp in either legacy format, whatever the timezone. The
+# migration is then self-correcting in the intended direction: legacy backups
+# fall to the bottom and rotate out first. Nothing reads the suffix back --
+# cleanup and remove match on the `.env.backup.*` glob and select by file age
+# -- so the prefix costs nothing downstream.
 env_backup_timestamp() {
-    date -u +%Y%m%d%H%M%S
+    printf 'utc%s\n' "$(date -u +%Y%m%d%H%M%S)"
 }
 
 # Keep at most $keep newest ".env.backup.*" siblings of $env_file.
@@ -189,6 +200,36 @@ rotate_env_backups() {
         | while IFS= read -r stale; do
             rm -f -- "$stale"
         done
+}
+
+# prompt_account_count
+# Ask how many accounts to configure, validate the answer through the shared
+# rule, and set NUM_ACCOUNTS. Returns non-zero and reports the range when the
+# answer is not usable.
+#
+# The upper bound is "zz" from Excel-style letter enumeration; the validator
+# catches typos like 2600 without capping legitimate multi-tenant setups at the
+# historic 26-account ceiling. Both the bound and the check come from
+# lib/index.sh, which this file already sources -- re-spelling either one here
+# is what let the prompt and the generator disagree in the first place (#356).
+#
+# It is a function rather than four inline lines because the only way to reach
+# the validation used to be running the whole interactive installer. No test
+# could get to it, so nothing in CI would notice an edit that went back to
+# typing the bound at this call site, which is precisely the regression #356
+# asks to be guarded against. tests/test_num_accounts_precedence.sh drives it
+# with prompt_input stubbed.
+#
+# NUM_ACCOUNTS is set rather than printed: log_error writes to stdout, so a
+# caller using command substitution would capture the error text as the value.
+prompt_account_count() {
+    local raw
+    raw=$(prompt_input "Number of accounts to configure (1-$(max_account_count))" "2")
+    if ! NUM_ACCOUNTS=$(normalize_account_count "$raw"); then
+        log_error "Number of accounts must be an integer between 1 and $(max_account_count) (got: $raw)."
+        return 1
+    fi
+    return 0
 }
 
 # Measure filesystem I/O latency with a single write+read+delete cycle.
@@ -597,18 +638,9 @@ collect_configuration() {
         log_info "$RUNTIME_DISPLAY_NAME version: $RUNTIME_VERSION"
     fi
 
-    # Number of accounts. The upper bound is "zz" from Excel-style letter
-    # enumeration; the validator catches typos like 2600 without capping
-    # legitimate multi-tenant setups at the historic 26-account ceiling.
-    #
-    # Validated by normalize_account_count, which lib/index.sh already declares
-    # the shared definition of and this file already sources. Re-spelling it
-    # here is what let the prompt and the generator disagree (#356).
-    RAW_NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-$(max_account_count))" "2")
-    if ! NUM_ACCOUNTS=$(normalize_account_count "$RAW_NUM_ACCOUNTS"); then
-        log_error "Number of accounts must be an integer between 1 and $(max_account_count) (got: $RAW_NUM_ACCOUNTS)."
-        exit 1
-    fi
+    # Number of accounts. The prompt and its validation live in a function so a
+    # test can drive this path; see prompt_account_count.
+    prompt_account_count || exit 1
     log_info "Accounts: $NUM_ACCOUNTS"
 
     # GitHub authentication mode. Shared preserves the existing active-account

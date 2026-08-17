@@ -285,6 +285,29 @@ else
     sed 's/^/        /' "$dir/.gen.log"
 fi
 
+# A whitespace-only mode is a rejected configuration, not an unset one.
+#
+# `ISOLATION_MODE="   "` reads as unset to anything that tests emptiness rather
+# than blankness, and both sides used to fall through to shared -- an isolation
+# setting silently downgrading to the weakest boundary because of stray spaces
+# in a .env. The generator must refuse it the same way it refuses `bogus`.
+#
+# tests/test_env_value_semantics.sh drives the two resolver functions directly
+# and pins that they agree; this drives the generator, which is the path a user
+# actually takes, and it lives here because this file is where someone looks to
+# find out what the generator does with a mode value (#356).
+dir="$(make_sandbox reject-blank-mode)"
+write_env "$dir" "HOME=$PLACEHOLDER_HOME" "PROJECT_DIR=$PLACEHOLDER_PROJECT" \
+    "ISOLATION_MODE=\"   \""
+if run_generator "$dir"; then
+    fail "whitespace-only mode: generator succeeded, so blanks fell through to shared"
+elif grep -q 'ISOLATION_MODE must be shared, worktree or isolated' "$dir/.gen.log"; then
+    pass "whitespace-only mode: generator refused with a naming diagnostic"
+else
+    fail "whitespace-only mode: generator failed without naming the accepted values"
+    sed 's/^/        /' "$dir/.gen.log"
+fi
+
 # isolated without per-account clone paths cannot be honored, and the failure
 # has to name the variable and the script that produces it. Bare sandbox: the
 # next case asserts on what the generator wrote.
