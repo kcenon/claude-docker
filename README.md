@@ -978,9 +978,17 @@ generated in every mode; the resolved mode decides which one is selected.
 
 On native Linux, set `UID` / `GID` in `.env` (or export them before running
 `docker compose up`) to match the host user that owns the selected runtime's
-state root. The interactive bash installer does this automatically. Without
-matching IDs, bind-mounted paths such as `~/.claude-state/account-a/` are not
-writable from inside the container, producing errors like
+state root. The interactive bash installer does this automatically **on native
+Linux only**: `scripts/install.sh` classifies WSL2 as its own platform, not as
+`linux`, so a WSL2 install writes no `UID`/`GID` at all and you have to add
+them yourself:
+
+```bash
+printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" >> .env
+```
+
+Without matching IDs, bind-mounted paths such as `~/.claude-state/account-a/`
+are not writable from inside the container, producing errors like
 `hook: /home/node/.claude/hooks/<name>.sh: not found` (failure to stat
 under non-matching UID) and Bash tool failures caused by the harness
 being unable to create `session-env/` subdirectories.
@@ -1019,9 +1027,14 @@ scripts/claude-docker exec claude-a claude auth login
 
 **Permission denied on bind mount (or `hook: ... not found`, `session-env` write failures):**
 
-On native Linux, the container UID/GID must match the owner of the selected
-runtime's state root. Add them to `.env` and restart — the base compose reads
-these directly, so no extra overlay is required.
+On native Linux **and under WSL2**, the container UID/GID must match the owner
+of the selected runtime's state root. Add them to `.env` and restart — the base
+compose reads these directly, so no extra overlay is required.
+
+This is the usual cause under WSL2 specifically, because `scripts/install.sh`
+writes the pair only when it classifies the platform as `linux`, and WSL2 is
+classified separately — so a WSL2 install reaches this state by default rather
+than by misconfiguration.
 
 ```bash
 cat >> .env <<EOF

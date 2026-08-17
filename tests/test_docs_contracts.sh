@@ -147,6 +147,72 @@ done
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== wherever UID/GID are explained, the WSL2 exception is named ==="
+# ---------------------------------------------------------------------------
+#
+# scripts/install.sh writes the UID/GID pair into .env only when it classifies
+# the platform as `linux`, and detect_platform returns `wsl2` for WSL2 -- so a
+# WSL2 install gets no UID/GID and hits permission errors on the bind mount by
+# default, not by misconfiguration. Any document that explains the pair and
+# omits that is telling a WSL2 reader something untrue about their own install
+# (#360).
+#
+# This is an enumeration check like the two above, not a prose check: the set
+# of documents that explain UID/GID must equal the set that names WSL2. It is
+# discovered rather than listed, so a new document explaining the pair is
+# covered without editing this test.
+
+# The behaviour the documents have to match. Asserted here rather than assumed,
+# because if the installer ever starts writing the pair on WSL2 this whole
+# section is checking for a caveat that should no longer exist.
+if grep -q 'PLATFORM" == "linux"' "$PROJECT_ROOT/scripts/install.sh" &&
+   grep -q 'echo "wsl2"' "$PROJECT_ROOT/scripts/install.sh"; then
+    pass "install.sh still gates UID/GID on linux while classifying wsl2 separately"
+else
+    fail "install.sh no longer matches the premise of the WSL2 caveat; recheck the docs"
+fi
+
+# Proximity, not "the file mentions WSL2 somewhere".
+#
+# A whole-file grep is worthless here and was tried first: README names WSL2
+# eight times in its platform tables and its filesystem-performance note, so
+# the check passed against the very text that was missing the caveat. The
+# anchor is each place the reader is told to write the pair into .env -- a
+# `UID=` assignment -- and WSL2 has to appear in the surrounding window.
+uid_anchors=0
+while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    docname="$(basename "$doc")"
+    while IFS= read -r lineno; do
+        [ -n "$lineno" ] || continue
+        uid_anchors=$((uid_anchors + 1))
+        # The window looks mostly backwards: the caveat belongs in the prose
+        # introducing the snippet. A wide forward window let an unrelated
+        # "Windows through WSL2" heading ten lines below satisfy an anchor.
+        from=$((lineno - 25)); [ "$from" -lt 1 ] && from=1
+        to=$((lineno + 4))
+        if sed -n "${from},${to}p" "$doc" | grep -qi 'wsl2'; then
+            pass "$docname:$lineno writes UID/GID and names WSL2 nearby"
+        else
+            fail "$docname:$lineno tells the reader to write UID/GID with no WSL2 caveat in range"
+        fi
+    done < <(grep -n '^[[:space:]]*\(export \)\?UID=\|UID=%s' "$doc" | cut -d: -f1)
+done <<EOF
+$PROJECT_ROOT/README.md
+$PROJECT_ROOT/docs/ISOLATION.md
+$PROJECT_ROOT/.env.example
+EOF
+
+# Without this the section passes by finding nothing to check -- which is what
+# happens if the snippets are reworded, and is indistinguishable from a pass.
+if [ "$uid_anchors" -ge 4 ]; then
+    pass "found $uid_anchors UID/GID instructions to check"
+else
+    fail "expected at least 4 UID/GID instructions across the three documents, found $uid_anchors"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
