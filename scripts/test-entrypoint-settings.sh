@@ -111,10 +111,13 @@ else
     # regex matched nothing at all would satisfy it (#354, item 7).
     #
     # The fixture's deny list is:
-    #   Read(./.env*)            glob  -> removed
-    #   Read(./secrets/**)       glob  -> removed
-    #   Read(./.aws/credentials) plain -> kept
-    #   Bash(rm -rf /)           plain -> kept
+    #   Read(./.env*)            file-tool glob -> removed
+    #   Read(./secrets/**)       file-tool glob -> removed
+    #   Read(./.aws/credentials) plain          -> kept
+    #   Bash(rm -rf /)           plain          -> kept
+    #
+    # This fixture carries no asterisk-bearing Bash or WebFetch rule, so it
+    # cannot tell the narrowed filter from the old catch-all one. Suite 4 does.
     expected_deny='["Read(./.aws/credentials)","Bash(rm -rf /)"]'
     actual_deny=$(jq -c '.permissions.deny' "$OUT")
     assert_eq "permissions.deny keeps exactly the non-glob rules" \
@@ -163,9 +166,14 @@ else
     val=$(jq -r '.sandbox.enabled' "$OUT")
     assert_eq "sandbox.enabled = false" "false" "$val"
 
-    # no glob patterns
-    glob_count=$(jq '[.permissions.deny[]? | select(test("[*]"))] | length' "$OUT")
-    assert_zero "no glob patterns in permissions.deny" "$glob_count"
+    # Same deny list as the macOS fixture, asserted the same way. The old form
+    # counted every surviving rule containing `*` and required zero, which
+    # states the pre-#357 contract; the contract now is that only *file-tool*
+    # globs go.
+    expected_deny='["Read(./.aws/credentials)","Bash(rm -rf /)"]'
+    actual_deny=$(jq -c '.permissions.deny' "$OUT")
+    assert_eq "permissions.deny keeps exactly the non-glob rules" \
+        "$expected_deny" "$actual_deny"
 
     # no pwsh anywhere
     pwsh_count=$(jq '[.. | strings | select(test("pwsh"))] | length' "$OUT")
@@ -184,10 +192,16 @@ else
     cg=$(jq '[.. | objects | .command? // empty | select(test("conflict-guard"))] | length' "$OUT")
     assert_zero "conflict-guard absent (Windows)" "$cg"
 
-    # SessionEnd compound command correctly converted
+    # SessionEnd compound command correctly converted.
+    #
+    # The separator stays `; `. This assertion previously expected ` && `,
+    # pinning `gsub("; "; " && ")` as correct -- but that turns two sequential
+    # statements into exit-code-dependent ones, so cleanup stopped running
+    # whenever session-logger failed (#357, item 3a). The pwsh source separates
+    # these with `;`, and `;` is what bash spells the same thing.
     se=$(jq -r '.hooks.SessionEnd[0].hooks[0].command' "$OUT")
     # shellcheck disable=SC2088 # reason: literal ~/.claude strings compared against JSON value; no tilde expansion desired
-    assert_eq "SessionEnd compound command" "~/.claude/hooks/session-logger.sh end && ~/.claude/hooks/cleanup.sh" "$se"
+    assert_eq "SessionEnd compound command stays sequential" "~/.claude/hooks/session-logger.sh end; ~/.claude/hooks/cleanup.sh" "$se"
 
     # valid JSON
     if jq empty "$OUT" 2>/dev/null; then
@@ -219,6 +233,56 @@ if [ -f "$MACOS_SETTINGS" ]; then
         FAIL=$((FAIL + 1))
     fi
 fi
+
+# ============================================================================
+echo ""
+echo "=== Test Suite 4: transform semantics (synthetic inputs) ==="
+# ============================================================================
+# The two fixtures cannot distinguish the #357 fixes from the behavior they
+# replace: neither carries a pwsh `&&` chain, a Linux-native command that
+# merely mentions pwsh, or an asterisk-bearing Bash/WebFetch deny rule. These
+# inputs are the ones quoted in the issue.
+
+transform() {
+    local json="$1" in out
+    in="$TMPDIR_TEST/syn-in.json"
+    out="$TMPDIR_TEST/syn-out.json"
+    printf '%s\n' "$json" > "$in"
+    generate_container_settings "$in" "$out"
+    cat "$out"
+}
+
+# (3b) An `&&` chain must survive as `&&`. Unanchored `gsub("& "; "")`
+# collapsed it to `A.sh &B.sh`, which backgrounds A -- so A returns 0 at once
+# and a PreToolUse guard hook's block never reaches the harness. `A &B` is
+# valid bash, so the entrypoint's `bash -n -c` check accepted it.
+out=$(transform '{"hooks":{"PreToolUse":[{"command":"pwsh -NoProfile -Command \"& ~/.claude/hooks/guard.ps1 && & ~/.claude/hooks/second.ps1\""}]}}')
+val=$(printf '%s' "$out" | jq -r '.hooks.PreToolUse[0].command')
+# shellcheck disable=SC2088 # reason: literal ~/.claude strings compared against JSON value; no tilde expansion desired
+assert_eq "pwsh && chain stays a && chain" \
+    "~/.claude/hooks/guard.sh && ~/.claude/hooks/second.sh" "$val"
+
+# (3a) A `; ` chain must stay sequential.
+out=$(transform '{"hooks":{"SessionEnd":[{"command":"pwsh -NoProfile -Command \"& ~/.claude/hooks/a.ps1 end; & ~/.claude/hooks/b.ps1\""}]}}')
+val=$(printf '%s' "$out" | jq -r '.hooks.SessionEnd[0].command')
+# shellcheck disable=SC2088 # reason: literal ~/.claude strings compared against JSON value; no tilde expansion desired
+assert_eq "pwsh ; chain stays sequential" \
+    "~/.claude/hooks/a.sh end; ~/.claude/hooks/b.sh" "$val"
+
+# (3c) A Linux-native command that merely contains the substring "pwsh" must
+# pass through the walk untouched. The predicate is anchored now.
+out=$(transform '{"hooks":{"PreToolUse":[{"command":"echo \"not pwsh here\"; run.ps1"}]}}')
+val=$(printf '%s' "$out" | jq -r '.hooks.PreToolUse[0].command')
+assert_eq "non-pwsh command containing 'pwsh' is untouched" \
+    'echo "not pwsh here"; run.ps1' "$val"
+
+# (4) Only file-tool glob rules are stripped. Bash and WebFetch deny rules
+# survive: sensitive-file-guard.sh, the compensating control the README names,
+# covers the file tools only, and WebFetch had nothing behind it at all.
+out=$(transform '{"permissions":{"deny":["Read(./.env)","Read(./secrets/**)","Edit(./dist/**)","Write(//**/id_rsa)","Glob(./vendor/**)","Grep(./node_modules/**)","Bash(curl *)","Bash(sudo:*)","WebFetch(domain:*)","Bash(rm:*)"]}}')
+val=$(printf '%s' "$out" | jq -c '.permissions.deny')
+assert_eq "deny filter strips file-tool globs and keeps the rest" \
+    '["Read(./.env)","Bash(curl *)","Bash(sudo:*)","WebFetch(domain:*)","Bash(rm:*)"]' "$val"
 
 # ============================================================================
 echo ""

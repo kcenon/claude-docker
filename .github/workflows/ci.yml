@@ -246,10 +246,17 @@ jobs:
           set -euo pipefail
           changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
 
-          # The inputs that decide what lands inside the image. Anything the
-          # Dockerfile COPYs or RUNs belongs here; the entrypoint is the one
-          # that is easy to forget because it is a script, not a layer recipe.
-          image_inputs="$(printf '%s\n' "$changed" | grep -E '^(Dockerfile|scripts/entrypoint)' || true)"
+          # The inputs that decide what lands inside the image: every path the
+          # Dockerfile COPYs, plus the Dockerfile itself. Keep this in step with
+          # the COPY lines -- `grep -n '^COPY' Dockerfile` is the authority.
+          #
+          # scripts/lib/ and runtimes.json were missing from the first version
+          # of this pattern, which only matched Dockerfile and the entrypoint.
+          # #357 is what surfaced it: that change rewrote three
+          # scripts/lib/bootstrap-*.sh modules, and the job only caught it
+          # because scripts/entrypoint.sh happened to change in the same PR.
+          image_inputs="$(printf '%s\n' "$changed" \
+            | grep -E '^(Dockerfile|scripts/entrypoint|scripts/lib/|tui/internal/config/runtimes\.json)' || true)"
           if [ -z "$image_inputs" ]; then
             echo "No image inputs changed; VERSION may stay as it is."
             exit 0
@@ -296,6 +303,9 @@ jobs:
           - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
           - tests/test_workflow_contracts.sh
+          # Linux-only on purpose: this covers container bootstrap code, the
+          # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
+          - tests/test_bootstrap_helpers.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

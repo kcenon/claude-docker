@@ -8,7 +8,7 @@ services:
       context: .
       args:
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-}
-    image: claude-code-base:${IMAGE_TAG:-2026.08.17}
+    image: claude-code-base:${IMAGE_TAG:-2026.08.17.1}
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}
     # Match the host user's UID/GID so bind-mounted paths
     # (${HOME}/.claude-state/account-*) stay writable from
@@ -31,6 +31,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
+      - CLAUDE_ALLOW_DEGRADED_SETTINGS=${CLAUDE_ALLOW_DEGRADED_SETTINGS:-}
       - NODE_OPTIONS=--max-old-space-size=3072
       - GH_TOKEN=${GH_TOKEN:-}
       - GIT_USER_NAME=${GIT_USER_NAME:-}
@@ -46,7 +47,7 @@ services:
     command: ["sleep", "infinity"]
 
   claude-b:
-    image: claude-code-base:${IMAGE_TAG:-2026.08.17}
+    image: claude-code-base:${IMAGE_TAG:-2026.08.17.1}
     depends_on:
       - claude-a
     working_dir: ${CONTAINER_PROJECT_DIR:-/project}
@@ -71,6 +72,7 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
+      - CLAUDE_ALLOW_DEGRADED_SETTINGS=${CLAUDE_ALLOW_DEGRADED_SETTINGS:-}
       - NODE_OPTIONS=--max-old-space-size=3072
       - GH_TOKEN=${GH_TOKEN:-}
       - GIT_USER_NAME=${GIT_USER_NAME:-}
