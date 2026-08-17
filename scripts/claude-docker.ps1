@@ -675,7 +675,10 @@ function Invoke-Build {
 }
 
 function Invoke-Update {
-    $binary = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    # The registry's `binary` field, not the runtime key: this value is exec'd
+    # inside the container below (#356, row 3). cmd_update in the bash wrapper
+    # calls agent_binary for the same reason.
+    $binary = Get-AgentBinary -ProjectRoot $ProjectRoot
     Write-Host "Updating $binary CLI to latest version" -ForegroundColor White
     Write-Host ''
 

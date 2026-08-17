@@ -317,6 +317,10 @@ jobs:
           # Runs both account-index implementations and diffs the answers,
           # rather than grepping either for a literal (#356).
           - tests/test_account_index_equivalence.sh
+          # Per-runtime values (buildArg, binary, servicePrefix) come from the
+          # registry in all three languages, not from a hand-typed constant
+          # that happens to match for the runtimes registered today (#356).
+          - tests/test_runtime_buildarg_binary.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2

@@ -67,6 +67,24 @@ func LookupRuntime(name string) (RuntimeSpec, bool) {
 	return spec, ok
 }
 
+// DefaultServicePrefix returns the service prefix of the default runtime.
+//
+// For callers that have no *Env to ask -- the nil-env fallback in
+// docker.Client.ServiceNames is the only one -- and want the registry's answer
+// rather than the RuntimeClaude constant. The two are the same string today
+// because claude's key and servicePrefix both happen to be "claude", which is
+// exactly what makes the hand-spelled version silent if that ever stops being
+// true (#356, row 3).
+//
+// Falls back to RuntimeClaude only if the registry has no claude entry, which
+// would mean runtimes.json is unusable and every other lookup is failing too.
+func DefaultServicePrefix() string {
+	if spec, ok := LookupRuntime(RuntimeClaude); ok && spec.ServicePrefix != "" {
+		return spec.ServicePrefix
+	}
+	return RuntimeClaude
+}
+
 // KnownRuntimes returns the registered runtime names in sorted order.
 func KnownRuntimes() []string {
 	names := make([]string, 0, len(registry.Runtimes))

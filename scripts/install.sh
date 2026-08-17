@@ -26,7 +26,9 @@ fi
 
 # Canonical .env key list (must be written by all platform installers):
 #   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
-#   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
+#   <runtime buildArg> (optional; CLAUDE_CODE_VERSION, CODEX_CLI_VERSION or
+#     GEMINI_CLI_VERSION, whichever the selected runtime names),
+#   CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
 #   GIT_USER_NAME, GIT_USER_EMAIL (optional),
 #   GH_AUTH_MODE + GH_USER_<LETTER>/GH_TOKEN_<LETTER> (per-account only),
@@ -56,7 +58,9 @@ PLATFORM=""
 AUTH_PATH=""
 TIER=""
 SOURCE_DIR=""
-CLAUDE_VERSION=""
+RUNTIME_VERSION=""
+RUNTIME_BUILD_ARG=""
+RUNTIME_DISPLAY_NAME=""
 # Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
 # non-interactive or default install behaves exactly as before (see #273).
 RUNTIME="claude"
@@ -577,13 +581,20 @@ collect_configuration() {
 
     log_info "Project directory: $SOURCE_DIR"
 
-    # Claude Code version
-    CLAUDE_VERSION=$(prompt_input "Claude Code version (enter specific version or 'latest')" "latest")
-    if [[ "$CLAUDE_VERSION" == "latest" ]]; then
-        CLAUDE_VERSION=""
-        log_info "Claude Code version: latest"
+    # Runtime CLI version. The prompt is unconditional, so it also runs for a
+    # codex or gemini install -- and the value used to be written as
+    # CLAUDE_CODE_VERSION regardless (#356, row 4). That dropped the chosen
+    # runtime's own pin and fed the number to the Claude installer inside the
+    # image instead. The variable name comes from the registry now, the same
+    # way generate-compose.sh resolves it.
+    RUNTIME_BUILD_ARG=$(runtime_field "$RUNTIME" buildArg)
+    RUNTIME_DISPLAY_NAME=$(runtime_field "$RUNTIME" displayName)
+    RUNTIME_VERSION=$(prompt_input "$RUNTIME_DISPLAY_NAME version (enter specific version or 'latest')" "latest")
+    if [[ "$RUNTIME_VERSION" == "latest" ]]; then
+        RUNTIME_VERSION=""
+        log_info "$RUNTIME_DISPLAY_NAME version: latest"
     else
-        log_info "Claude Code version: $CLAUDE_VERSION"
+        log_info "$RUNTIME_DISPLAY_NAME version: $RUNTIME_VERSION"
     fi
 
     # Number of accounts. The upper bound is "zz" from Excel-style letter
@@ -710,9 +721,9 @@ generate_env() {
         echo "#CLAUDE_CONFIG_SOURCE="
         echo ""
 
-        if [[ -n "$CLAUDE_VERSION" ]]; then
-            echo "# ==== Claude Code Version ===="
-            echo "CLAUDE_CODE_VERSION=$CLAUDE_VERSION"
+        if [[ -n "$RUNTIME_VERSION" ]]; then
+            echo "# ==== ${RUNTIME_DISPLAY_NAME} Version ===="
+            echo "${RUNTIME_BUILD_ARG}=$RUNTIME_VERSION"
             echo ""
         fi
 
@@ -846,7 +857,8 @@ generate_env() {
 # build_image still runs before this, on the committed docker-compose.yml. That
 # is deliberate and safe: the image does not depend on the account count, the
 # runtime or the isolation mode -- every service builds the one
-# claude-code-base image, and the only build argument is CLAUDE_CODE_VERSION.
+# claude-code-base image, and the only build argument is the runtime's
+# version pin, whose name the registry supplies (buildArg).
 generate_compose_files() {
     log_info "Generating compose files for $NUM_ACCOUNTS account(s)..."
     "$SCRIPT_DIR/generate-compose.sh"
@@ -907,8 +919,8 @@ build_image() {
     cd "$PROJECT_ROOT"
 
     local build_args=""
-    if [[ -n "$CLAUDE_VERSION" ]]; then
-        build_args="--build-arg CLAUDE_CODE_VERSION=$CLAUDE_VERSION"
+    if [[ -n "$RUNTIME_VERSION" ]]; then
+        build_args="--build-arg ${RUNTIME_BUILD_ARG}=$RUNTIME_VERSION"
     fi
 
     log_info "Building claude-code-base:latest (this may take a few minutes)..."
@@ -1330,7 +1342,7 @@ main() {
     echo -e "  Authentication:  Path $AUTH_PATH"
     echo -e "  Source sharing:  Tier $TIER"
     echo -e "  Project:         $SOURCE_DIR"
-    echo -e "  Claude version:  ${CLAUDE_VERSION:-latest}"
+    echo -e "  ${RUNTIME_DISPLAY_NAME} version:  ${RUNTIME_VERSION:-latest}"
     echo ""
 
     if ! prompt_confirm "Proceed with this configuration?" "y"; then
