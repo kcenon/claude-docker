@@ -19,6 +19,14 @@ func (m Model) startGHAuth() (Model, tea.Cmd) {
 		m = m.toast("gh-auth: .env not loaded", statusErr)
 		return m, m.toastExpireCmd()
 	}
+	// Refuse before fetching a token. Save would refuse anyway, but reaching
+	// it means a live GitHub token was pulled onto this machine for a write
+	// that cannot happen -- and the user would read the failure as a gh
+	// problem rather than a .env one (#358, item 7).
+	if !m.env.CanPersist() {
+		m = m.toast("gh-auth: .env could not be read; fix it and restart", statusErr)
+		return m, m.toastExpireCmd()
+	}
 	mode := m.env.GitHubAuthMode()
 	if mode != config.GHAuthShared && mode != config.GHAuthPerAccount {
 		m = m.toast("gh-auth: GH_AUTH_MODE must be shared or per-account", statusErr)

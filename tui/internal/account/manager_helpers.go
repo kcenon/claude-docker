@@ -220,7 +220,7 @@ func (m *Manager) enrichAPIUsage(a *Account, results map[string]apiResult, mu *s
 		a.LastAPIStatus = "cached (fresh)"
 		return
 	}
-	if isAPICooldownActive(a.StateDirPath) {
+	if m.cooldowns.active(a.Letter) {
 		a.APIRateLimited = true
 		a.LastAPIStatus = "skipped (cooldown active)"
 		return
@@ -239,7 +239,7 @@ func (m *Manager) enrichAPIUsage(a *Account, results map[string]apiResult, mu *s
 		if err != nil {
 			var rlErr *auth.RateLimitError
 			if errors.As(err, &rlErr) {
-				writeAPICooldown(a.StateDirPath)
+				m.cooldowns.record(a.Letter)
 				a.APIRateLimited = true
 				a.LastAPIStatus = "HTTP 429 (rate limited)"
 			} else {
@@ -270,15 +270,24 @@ func (m *Manager) enrichAPIUsage(a *Account, results map[string]apiResult, mu *s
 
 // writeCacheUpdates persists successful API responses to disk so the next
 // listing can read from the limitline cache instead of hitting the API.
-// Failures here are intentionally swallowed: cache writes are best-effort
-// and must not fail the listing.
+//
+// A failure must not fail the listing -- the dashboard is still correct
+// without the cache, it just re-fetches next time -- but it is no longer
+// silent. A read-only state directory used to produce no output at all, which
+// is indistinguishable from a cache that is working.
 func (m *Manager) writeCacheUpdates(accounts []Account, results map[string]apiResult) {
-	for _, a := range accounts {
+	for i := range accounts {
+		a := &accounts[i]
 		r, ok := results[a.Letter]
 		if !ok {
 			continue
 		}
 		sd := config.StateDir{Letter: a.Letter, Path: r.stateDirPath}
-		writeLimitlineCache(sd.LimitlineCachePath(), r.resp)
+		if err := writeLimitlineCache(sd.LimitlineCachePath(), r.resp); err != nil {
+			// LastAPIStatus is the per-account diagnostic line the dashboard
+			// already renders, so the report lands next to the account it
+			// concerns rather than on a stderr nobody is watching.
+			a.LastAPIStatus += " (cache write failed)"
+		}
 	}
 }

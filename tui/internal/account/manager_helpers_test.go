@@ -275,6 +275,10 @@ func TestEnrichAPIUsage_CachedFresh(t *testing.T) {
 
 // TestEnrichAPIUsage_CooldownActive verifies that an account inside the
 // per-account cooldown window is marked rate-limited and skips the API.
+//
+// The cooldown moved from a .tui-api-cooldown file in the state directory to
+// manager-scoped memory (#358, item 5), so this stages it through the manager
+// rather than by writing a file.
 func TestEnrichAPIUsage_CooldownActive(t *testing.T) {
 	m := newTestManager(t, nil)
 	results := make(map[string]apiResult)
@@ -282,11 +286,7 @@ func TestEnrichAPIUsage_CooldownActive(t *testing.T) {
 	var wg sync.WaitGroup
 
 	dir := t.TempDir()
-	cooldownPath := filepath.Join(dir, apiCooldownFile)
-	now := time.Now().UnixMilli()
-	if err := os.WriteFile(cooldownPath, []byte(fmt.Sprintf("%d", now)), 0644); err != nil {
-		t.Fatalf("write cooldown: %v", err)
-	}
+	m.cooldowns.record("a")
 
 	acct := &Account{Letter: "a", AuthType: AuthOAuth, StateDirPath: dir}
 	m.enrichAPIUsage(acct, results, &mu, &wg)

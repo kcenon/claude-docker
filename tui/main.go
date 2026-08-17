@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -48,8 +50,12 @@ func main() {
 	envPath := filepath.Join(projectRoot, ".env")
 	env, err := config.LoadEnv(envPath)
 	if err != nil {
+		// Read-only fallback. The dashboard still starts and shows what it
+		// can, but Save refuses: writing an Env that holds none of the user's
+		// keys would replace the file rather than update it (#358, item 7).
 		fmt.Fprintf(os.Stderr, "warning: cannot load .env: %v\n", err)
-		env = config.NewEmptyEnv(envPath)
+		fmt.Fprintf(os.Stderr, "warning: gh-auth is disabled until it loads\n")
+		env = config.NewUnloadableEnv(envPath, err)
 	}
 
 	composeClient := docker.NewClient(projectRoot, env)
@@ -101,9 +107,31 @@ func resolveProjectRoot() (string, error) {
 	return "", fmt.Errorf("docker-compose.yml not found in any parent directory")
 }
 
+// projectMarkers are the paths a directory must contain to be this project's
+// root (#358, item 7).
+//
+// docker-compose.yml alone is not a marker -- it is one of the most common
+// filenames on a developer's disk. resolveProjectRoot walks up from the
+// executable and then from the cwd, so running the TUI from inside any
+// unrelated compose project claimed that project as the root. That is not only
+// a wrong dashboard: `g` writes a GitHub token into `<root>/.env`, and an
+// unrelated directory has no reason to be gitignoring it.
+//
+// scripts/claude-docker is the disambiguator. It ships with the repository,
+// it is the entry point every documented workflow uses, and it is not a name
+// another project is likely to have next to a compose file.
+var projectMarkers = []string{
+	"docker-compose.yml",
+	filepath.Join("scripts", "claude-docker"),
+}
+
 func isProjectRoot(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "docker-compose.yml"))
-	return err == nil
+	for _, marker := range projectMarkers {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func runJSON() error {
@@ -125,36 +153,66 @@ func runJSON() error {
 		return fmt.Errorf("cannot list accounts: %w", err)
 	}
 
-	fmt.Printf("{\n")
-	fmt.Printf("  \"project_root\": %q,\n", projectRoot)
-	fmt.Printf("  \"runtime\": %q,\n", env.AgentRuntime())
-	fmt.Printf("  \"num_accounts\": %d,\n", len(accounts))
-	fmt.Printf("  \"accounts\": [\n")
-	for i, a := range accounts {
-		comma := ","
-		if i == len(accounts)-1 {
-			comma = ""
+	return writeJSONReport(os.Stdout, projectRoot, env.AgentRuntime(), accounts)
+}
+
+// jsonReport is the --json document (#358, item 6).
+//
+// It exists because the previous implementation hand-assembled the same
+// document with fmt.Printf and %q. %q is Go quoting, not JSON quoting: they
+// agree on the common cases and diverge on the ones that matter here. A
+// LastAPIStatus carrying a control character -- which it can, since it is
+// built from an upstream error string -- is emitted by %q as \x00, which is
+// not a JSON escape, so the output stops being parseable. The struct also
+// removes the hand-tracked trailing comma and the "null" string literals.
+type jsonReport struct {
+	ProjectRoot string        `json:"project_root"`
+	Runtime     string        `json:"runtime"`
+	NumAccounts int           `json:"num_accounts"`
+	Accounts    []jsonAccount `json:"accounts"`
+}
+
+// jsonAccount keeps the field names and the omission rules of the original
+// output, so existing consumers see the same document.
+type jsonAccount struct {
+	Service        string `json:"service"`
+	State          string `json:"state"`
+	Auth           string `json:"auth"`
+	FiveHour       *int   `json:"5h"`
+	SevenDay       *int   `json:"7d"`
+	APIRateLimited bool   `json:"api_rate_limited,omitempty"`
+	LastAPIStatus  string `json:"last_api_status,omitempty"`
+}
+
+func writeJSONReport(w io.Writer, projectRoot, runtime string, accounts []account.Account) error {
+	report := jsonReport{
+		ProjectRoot: projectRoot,
+		Runtime:     runtime,
+		NumAccounts: len(accounts),
+		// Never nil: an install with no accounts should emit [], not null.
+		Accounts: make([]jsonAccount, 0, len(accounts)),
+	}
+
+	for _, a := range accounts {
+		ja := jsonAccount{
+			Service:        a.ServiceName,
+			State:          a.ContainerStatus.String(),
+			Auth:           a.AuthType.String(),
+			APIRateLimited: a.APIRateLimited,
+			LastAPIStatus:  a.LastAPIStatus,
 		}
-		fiveH := "null"
-		sevenD := "null"
 		if a.FiveHourUsage != nil {
-			fiveH = fmt.Sprintf("%d", a.FiveHourUsage.PercentUsed)
+			v := a.FiveHourUsage.PercentUsed
+			ja.FiveHour = &v
 		}
 		if a.SevenDayUsage != nil {
-			sevenD = fmt.Sprintf("%d", a.SevenDayUsage.PercentUsed)
+			v := a.SevenDayUsage.PercentUsed
+			ja.SevenDay = &v
 		}
-		rateLimited := ""
-		if a.APIRateLimited {
-			rateLimited = ", \"api_rate_limited\": true"
-		}
-		lastStatus := ""
-		if a.LastAPIStatus != "" {
-			lastStatus = fmt.Sprintf(", \"last_api_status\": %q", a.LastAPIStatus)
-		}
-		fmt.Printf("    {\"service\": %q, \"state\": %q, \"auth\": %q, \"5h\": %s, \"7d\": %s%s%s}%s\n",
-			a.ServiceName, a.ContainerStatus, a.AuthType, fiveH, sevenD, rateLimited, lastStatus, comma)
+		report.Accounts = append(report.Accounts, ja)
 	}
-	fmt.Printf("  ]\n")
-	fmt.Printf("}\n")
-	return nil
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(report)
 }
