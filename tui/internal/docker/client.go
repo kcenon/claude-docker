@@ -203,9 +203,16 @@ func (c *Client) HasRunningContainers() bool {
 }
 
 // ServiceNames returns the expected service names based on NUM_ACCOUNTS.
+//
+// The nil-env fallback reads the default runtime's servicePrefix from the
+// registry rather than using the RuntimeClaude constant (#356, row 3). The two
+// happen to be the same string today, because claude's key and servicePrefix
+// are both "claude" -- so the constant was a registry value spelled by hand,
+// correct by coincidence and silent if the registry ever changed. Every other
+// prefix in this program comes from the registry; this one now does too.
 func (c *Client) ServiceNames() []string {
 	n := config.DefaultNumAccounts
-	prefix := config.RuntimeClaude
+	prefix := config.DefaultServicePrefix()
 	if c.env != nil {
 		n = c.env.NumAccounts()
 		prefix = c.env.ServicePrefix()

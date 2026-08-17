@@ -512,6 +512,27 @@ function Get-PrimaryService {
     return "$(Get-ServicePrefix -ProjectRoot $ProjectRoot)-a"
 }
 
+function Get-AgentBinary {
+    <#
+    .SYNOPSIS
+    The executable name to run inside the container for the active runtime.
+    .DESCRIPTION
+    Mirrors agent_binary in scripts/lib/runtime.sh, which reads the registry's
+    `binary` field.
+
+    Invoke-Update used to run Get-AgentRuntime -- the registry *key* -- as the
+    command inside the container (#356, row 3). It works today only because
+    key and binary are the same string for all three registered runtimes, so a
+    runtime whose CLI is named differently from its key would exec something
+    that does not exist. The bash wrapper has always used agent_binary here.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $runtime = Get-AgentRuntime -ProjectRoot $ProjectRoot
+    return Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'binary'
+}
+
 function Get-AgentStateRoot {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ProjectRoot)
@@ -1282,6 +1303,7 @@ Export-ModuleMember -Function @(
     'Get-CleanupDecision', 'Test-FileAgeExceedsDays',
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
+    'Get-AgentBinary',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
     'Get-AccountLetter',
     'Get-AccountLetterUpper',

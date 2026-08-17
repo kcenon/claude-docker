@@ -27,7 +27,9 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 
 # Canonical .env key list (must be written by all platform installers):
 #   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
-#   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
+#   <runtime buildArg> (optional; CLAUDE_CODE_VERSION, CODEX_CLI_VERSION or
+#     GEMINI_CLI_VERSION, whichever the selected runtime names),
+#   CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
 #   GIT_USER_NAME, GIT_USER_EMAIL (optional),
 #   GH_AUTH_MODE + GH_USER_<LETTER>/GH_TOKEN_<LETTER> (per-account only),
@@ -49,7 +51,9 @@ $ProjectRoot = Split-Path $PSScriptRoot -Parent
 $Script:AuthPath = ''
 $Script:Tier = ''
 $Script:SourceDir = ''
-$Script:ClaudeVersion = ''
+$Script:RuntimeVersion = ''
+$Script:RuntimeBuildArg = ''
+$Script:RuntimeDisplayName = ''
 $Script:ApiKeyA = ''
 $Script:ApiKeyB = ''
 # Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
@@ -327,14 +331,21 @@ function Get-Configuration {
 
     Write-LogInfo "Project directory: $($Script:SourceDir)"
 
-    # Claude Code version
-    $Script:ClaudeVersion = Read-Input -Question "Claude Code version (enter specific version or 'latest')" -Default 'latest'
-    if ($Script:ClaudeVersion -eq 'latest') {
-        $Script:ClaudeVersion = ''
-        Write-LogInfo 'Claude Code version: latest'
+    # Runtime CLI version. The prompt is unconditional, so it also runs for a
+    # codex or gemini install -- and the value used to be written as
+    # CLAUDE_CODE_VERSION regardless (#356, row 4). That dropped the chosen
+    # runtime's own pin and fed the number to the Claude installer inside the
+    # image instead. The variable name comes from the registry now, the same
+    # way generate-compose.ps1 resolves it.
+    $Script:RuntimeBuildArg = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'buildArg'
+    $Script:RuntimeDisplayName = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Script:Runtime -Field 'displayName'
+    $Script:RuntimeVersion = Read-Input -Question "$($Script:RuntimeDisplayName) version (enter specific version or 'latest')" -Default 'latest'
+    if ($Script:RuntimeVersion -eq 'latest') {
+        $Script:RuntimeVersion = ''
+        Write-LogInfo "$($Script:RuntimeDisplayName) version: latest"
     }
     else {
-        Write-LogInfo "Claude Code version: $($Script:ClaudeVersion)"
+        Write-LogInfo "$($Script:RuntimeDisplayName) version: $($Script:RuntimeVersion)"
     }
 
     # Number of accounts. The upper bound is "zz" from Excel-style letter
@@ -504,9 +515,9 @@ function New-EnvFile {
     $lines += '#CLAUDE_CONFIG_SOURCE='
     $lines += ''
 
-    if ($Script:ClaudeVersion) {
-        $lines += '# ==== Claude Code Version ===='
-        $lines += "CLAUDE_CODE_VERSION=$($Script:ClaudeVersion)"
+    if ($Script:RuntimeVersion) {
+        $lines += "# ==== $($Script:RuntimeDisplayName) Version ===="
+        $lines += "$($Script:RuntimeBuildArg)=$($Script:RuntimeVersion)"
         $lines += ''
     }
 
@@ -688,8 +699,8 @@ function Invoke-ImageBuild {
     Push-Location $ProjectRoot
     try {
         $buildArgs = @()
-        if ($Script:ClaudeVersion) {
-            $buildArgs = @('--build-arg', "CLAUDE_CODE_VERSION=$($Script:ClaudeVersion)")
+        if ($Script:RuntimeVersion) {
+            $buildArgs = @('--build-arg', "$($Script:RuntimeBuildArg)=$($Script:RuntimeVersion)")
         }
 
         Write-LogInfo 'Building claude-code-base:latest (this may take a few minutes)...'
@@ -1097,7 +1108,7 @@ Write-Host "  Platform:        Windows"
 Write-Host "  Authentication:  Path $($Script:AuthPath)"
 Write-Host "  Source sharing:  Tier $($Script:Tier)"
 Write-Host "  Project:         $($Script:SourceDir)"
-Write-Host "  Claude version:  $(if ($Script:ClaudeVersion) { $Script:ClaudeVersion } else { 'latest' })"
+Write-Host "  $($Script:RuntimeDisplayName) version:  $(if ($Script:RuntimeVersion) { $Script:RuntimeVersion } else { 'latest' })"
 Write-Host ''
 
 if (-not (Read-Confirmation -Question 'Proceed with this configuration?' -Default 'y')) {
