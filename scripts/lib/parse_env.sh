@@ -53,13 +53,36 @@ parse_env_value() {
             rhs = substr($0, eq_idx + 1)
             # Strip Windows CR.
             sub(/\r$/, "", rhs)
-            # Strip inline comments: space(s) followed by # to end of line.
-            sub(/[[:space:]]+#.*$/, "", rhs)
             # Strip trailing whitespace.
             sub(/[[:space:]]+$/, "", rhs)
-            # Unquote single- or double-quoted values.
-            if ((match(rhs, /^".*"$/) != 0) || (match(rhs, /^'"'"'.*'"'"'$/) != 0)) {
-                rhs = substr(rhs, 2, length(rhs) - 2)
+            # Unquote first, comment-strip second (#356, row 9).
+            #
+            # The order used to be the other way round, so a # inside a quoted
+            # value started a comment: set_env_value wrote FOO="a # b" and this
+            # read it back as `"a`, quote included -- the writer and the reader
+            # in the same file disagreeing.
+            #
+            # Written with substr rather than a capture group because POSIX
+            # awk match() has none, and the obvious workaround -- match, then
+            # sub() the comment off -- eats the # inside the quotes, which is
+            # the very case being fixed.
+            q = substr(rhs, 1, 1)
+            if (q == "\"" || q == "'"'"'") {
+                # A trailing comment only exists if the value does not already
+                # end at its closing quote.
+                if (substr(rhs, length(rhs), 1) != q) {
+                    sub(/[[:space:]]+#.*$/, "", rhs)
+                    sub(/[[:space:]]+$/, "", rhs)
+                }
+                if (length(rhs) >= 2 && substr(rhs, length(rhs), 1) == q) {
+                    rhs = substr(rhs, 2, length(rhs) - 2)
+                }
+                # An opening quote with no closing one is not a quoted value;
+                # rhs is left as it stands, matching the other two readers.
+            } else {
+                # Unquoted: a whitespace-preceded # starts a comment.
+                sub(/[[:space:]]+#.*$/, "", rhs)
+                sub(/[[:space:]]+$/, "", rhs)
             }
             last = rhs
         }
@@ -93,15 +116,18 @@ load_env_file() {
 
         # Trim trailing space on key.
         key="${key%"${key##*[![:space:]]}"}"
-        # Strip inline comment (whitespace + #).
-        if [[ "$value" =~ [[:space:]]#.*$ ]]; then
-            value="${value%%[[:space:]]#*}"
-        fi
         # Trim trailing whitespace on value.
         value="${value%"${value##*[![:space:]]}"}"
-        # Unquote.
-        if [[ "$value" =~ ^\".*\"$ ]] || [[ "$value" =~ ^\'.*\'$ ]]; then
-            value="${value:1:${#value}-2}"
+        # Unquote first, comment-strip second -- same rule as parse_env_value
+        # above, and for the same reason (#356, row 9).
+        if [[ "$value" =~ ^\"(.*)\"([[:space:]]+#.*)?$ ]] ||
+           [[ "$value" =~ ^\'(.*)\'([[:space:]]+#.*)?$ ]]; then
+            value="${BASH_REMATCH[1]}"
+        else
+            if [[ "$value" =~ [[:space:]]#.*$ ]]; then
+                value="${value%%[[:space:]]#*}"
+            fi
+            value="${value%"${value##*[![:space:]]}"}"
         fi
 
         if (( force )) || [[ -z "${!key:-}" ]]; then
