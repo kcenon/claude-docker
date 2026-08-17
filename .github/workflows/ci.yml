@@ -310,6 +310,10 @@ jobs:
           # rotation keeps the newest three rather than the newest three from
           # whichever installer used the longer format (#356).
           - tests/test_env_backup_rotation.sh
+          # CONTRIBUTING.md names the equivalence tests and the four
+          # implementation layers, which makes it one more copy that drifts on
+          # a rename. Referential integrity only (#356).
+          - tests/test_contributing_references.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
