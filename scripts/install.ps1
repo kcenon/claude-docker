@@ -348,19 +348,10 @@ function Get-Configuration {
         Write-LogInfo "$($Script:RuntimeDisplayName) version: $($Script:RuntimeVersion)"
     }
 
-    # Number of accounts. The upper bound is "zz" from Excel-style letter
-    # enumeration; the validator catches typos like 2600 without capping
-    # legitimate multi-tenant setups at the historic 26-account ceiling.
-    #
-    # Both the bound and the parse come from lib/index.ps1 (#356), so this
-    # prompt cannot drift from what the generator will accept a moment later.
-    $maxAccounts = Get-MaxAccountCount
-    $numInput = Read-Input -Question "Number of accounts to configure (1-$maxAccounts)" -Default '2'
-    $normalizedAccounts = Get-NormalizedAccountCount -Value $numInput
-    if ($null -eq $normalizedAccounts) {
-        Write-LogError "Number of accounts must be an integer between 1 and $maxAccounts (got: $numInput)."
-        exit 1
-    }
+    # Number of accounts. The prompt and its validation live in a function so a
+    # test can drive this path; see Read-AccountCount.
+    $normalizedAccounts = Read-AccountCount
+    if ($null -eq $normalizedAccounts) { exit 1 }
     $Script:NumAccounts = $normalizedAccounts
     Write-LogInfo "Accounts: $($Script:NumAccounts)"
 
@@ -424,7 +415,7 @@ function Get-Configuration {
 function Get-EnvBackupTimestamp {
     <#
     .SYNOPSIS
-    The suffix both installers put on a .env backup: UTC, yyyyMMddHHmmss.
+    The suffix both installers put on a .env backup: "utc" + UTC yyyyMMddHHmmss.
     .DESCRIPTION
     One format on both sides (#356, row 8). install.sh wrote a 10-digit
     `date +%s` epoch while this wrote 14-digit yyyyMMddHHmmss, and both rotate
@@ -434,12 +425,60 @@ function Get-EnvBackupTimestamp {
 
     UTC rather than local: local time is not monotonic across a DST
     fall-back, and the rotation depends on name order matching chronological
-    order. This is the one change to the PowerShell side; the format itself
-    is unchanged, so existing backups here keep sorting correctly.
+    order.
+
+    An earlier version of this note claimed the switch to UTC was harmless
+    here because "the format itself is unchanged, so existing backups keep
+    sorting correctly". That was wrong for any host east of UTC. This function
+    used to return LOCAL time in the same 14-digit shape, so legacy backups are
+    the same width as new ones and a name sort compares them digit for digit --
+    and a local stamp runs ahead of a UTC stamp taken at the same instant. On a
+    UTC+9 host every legacy backup from the previous nine hours outranked a
+    brand-new one, and Remove-StaleEnvBackups deleted the file Copy-Item had
+    just written, in the same invocation.
+
+    The "utc" prefix fixes it: a leading letter sorts above every digit, so any
+    stamp in this format outranks any stamp in either legacy format regardless
+    of timezone, and legacy backups rotate out first. Nothing parses the suffix
+    back -- cleanup.ps1 and remove.ps1 match the `.env.backup.*` glob and
+    select by file age.
     #>
     [CmdletBinding()]
     param()
-    return [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+    return 'utc' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+}
+
+function Read-AccountCount {
+    <#
+    .SYNOPSIS
+    Prompt for the account count and validate it through the shared rule.
+    .DESCRIPTION
+    Returns the normalized count, or $null after reporting the range when the
+    answer is not usable.
+
+    The upper bound is "zz" from Excel-style letter enumeration; the validator
+    catches typos like 2600 without capping legitimate multi-tenant setups at
+    the historic 26-account ceiling. Both the bound and the parse come from
+    lib/index.ps1 (#356), so this prompt cannot drift from what the generator
+    will accept a moment later.
+
+    It is a function rather than inline lines because the only way to reach the
+    validation used to be running the whole interactive installer. No test
+    could get to it, so nothing in CI would notice an edit that went back to
+    typing the bound at this call site -- the regression #356 asks to be
+    guarded against. tests/test_num_accounts_precedence.sh drives it with
+    Read-Input stubbed.
+    #>
+    [CmdletBinding()]
+    param()
+    $maxAccounts = Get-MaxAccountCount
+    $numInput = Read-Input -Question "Number of accounts to configure (1-$maxAccounts)" -Default '2'
+    $normalized = Get-NormalizedAccountCount -Value $numInput
+    if ($null -eq $normalized) {
+        Write-LogError "Number of accounts must be an integer between 1 and $maxAccounts (got: $numInput)."
+        return $null
+    }
+    return $normalized
 }
 
 function Remove-StaleEnvBackups {

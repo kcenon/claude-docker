@@ -46,15 +46,30 @@ if [ -z "$BACKUP_SRC" ]; then
 fi
 eval "$BACKUP_SRC"
 
+# env_backup_timestamp_for UTC_DIGITS
+# A backup suffix in whatever format the installer writes today, but for a
+# fixed instant instead of now. Built by taking a real stamp and swapping its
+# trailing fourteen digits, so the fixtures below keep exercising the shipped
+# format rather than a copy of it that can go stale.
+env_backup_timestamp_for() {
+    local fixed="$1" real
+    real=$(env_backup_timestamp)
+    if [ "${#real}" -lt 14 ]; then
+        echo "  ERROR: env_backup_timestamp returned '$real', too short to rewrite" >&2
+        exit 1
+    fi
+    printf '%s%s\n' "${real:0:${#real}-14}" "$fixed"
+}
+
 # ---------------------------------------------------------------------------
 echo "=== the two installers produce the same timestamp shape ==="
 # ---------------------------------------------------------------------------
 
 bash_ts=$(env_backup_timestamp)
-if [[ "$bash_ts" =~ ^[0-9]{14}$ ]]; then
-    pass "install.sh timestamp is 14 digits ($bash_ts)"
+if [[ "$bash_ts" =~ ^utc[0-9]{14}$ ]]; then
+    pass "install.sh timestamp is utc + 14 digits ($bash_ts)"
 else
-    fail "install.sh timestamp shape" "got '$bash_ts', want 14 digits"
+    fail "install.sh timestamp shape" "got '$bash_ts', want utc + 14 digits"
 fi
 
 if command -v pwsh >/dev/null 2>&1; then
@@ -67,19 +82,27 @@ if command -v pwsh >/dev/null 2>&1; then
         Get-EnvBackupTimestamp
     " 2>/dev/null | tr -d '\r' | tail -1)
 
-    if [[ "$pwsh_ts" =~ ^[0-9]{14}$ ]]; then
-        pass "install.ps1 timestamp is 14 digits ($pwsh_ts)"
+    if [[ "$pwsh_ts" =~ ^utc[0-9]{14}$ ]]; then
+        pass "install.ps1 timestamp is utc + 14 digits ($pwsh_ts)"
     else
-        fail "install.ps1 timestamp shape" "got '$pwsh_ts', want 14 digits"
+        fail "install.ps1 timestamp shape" "got '$pwsh_ts', want utc + 14 digits"
     fi
 
-    # Same second or adjacent: both are UTC now, so they must not differ by an
-    # hour, which is what a local-vs-UTC mismatch would look like.
-    if [ "${bash_ts:0:10}" = "${pwsh_ts:0:10}" ]; then
-        pass "both timestamps agree to the minute (both UTC)"
+    # Bracket the PowerShell stamp between two bash stamps taken around it. If
+    # both are UTC the middle one cannot fall outside the window; if either is
+    # local time it lands hours away and the window rejects it.
+    #
+    # This used to compare the first ten characters -- yyyymmddhh, agreement to
+    # the HOUR, not to the minute as its comment claimed -- and it broke
+    # whenever the two calls straddled an hour boundary. Bracketing is exact
+    # and has no boundary to straddle. Lexicographic comparison stands in for
+    # chronological because both stamps are the same fixed-width format.
+    bash_ts_after=$(env_backup_timestamp)
+    if [[ ! "$pwsh_ts" < "$bash_ts" ]] && [[ ! "$pwsh_ts" > "$bash_ts_after" ]]; then
+        pass "the pwsh stamp falls inside the bash-measured window (both UTC)"
     else
-        fail "the two timestamps disagree beyond seconds" \
-            "bash '$bash_ts' vs pwsh '$pwsh_ts' -- one of them is not UTC"
+        fail "the pwsh stamp falls outside the window bash measured around it" \
+            "bash '$bash_ts' .. '$bash_ts_after' does not contain pwsh '$pwsh_ts' -- one of them is not UTC"
     fi
 elif [ -n "${GITHUB_ACTIONS:-}" ]; then
     echo "  ERROR: pwsh is preinstalled on the CI runner; a skip here hides a failure" >&2
@@ -133,6 +156,53 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== rotation survives the local-time PowerShell legacy format ==="
+# ---------------------------------------------------------------------------
+#
+# The epoch case above is only half the migration, and the easy half. Before
+# the unification install.ps1 stamped `Get-Date -Format yyyyMMddHHmmss` --
+# fourteen digits of LOCAL time -- so its legacy backups are the same width as
+# the fourteen-digit UTC stamps, and a name sort compares them digit for digit
+# with nothing to tell them apart.
+#
+# East of UTC that ordering is inverted: a legacy local stamp is offset hours
+# AHEAD of a UTC stamp minted at the same instant, so on a UTC+9 host every
+# legacy backup written in the last nine hours outranks a brand-new one and
+# rotation discards the file the installer just created.
+#
+# The fixture is fixed rather than derived from the current clock, so the case
+# holds regardless of the timezone this test runs in.
+
+dir_local="$WORK/localmix"
+mkdir -p "$dir_local"
+: > "$dir_local/.env"
+
+# Three legacy PowerShell backups from a UTC+9 host: local 01:00, 02:00 and
+# 03:00 on 2026-08-17, which are 16:00, 17:00 and 18:00 UTC on 2026-08-16.
+for ts in 20260817010000 20260817020000 20260817030000; do
+    : > "$dir_local/.env.backup.$ts"
+done
+# One backup minted by today's code at 19:00 UTC on 2026-08-16 -- an hour after
+# all three above, so it is unambiguously the newest of the four.
+newest_ts="$(env_backup_timestamp_for 20260816190000)"
+: > "$dir_local/.env.backup.$newest_ts"
+
+staged=$(cd "$dir_local" && ls -1 .env.backup.* 2>/dev/null | wc -l | tr -d ' ')
+if [ "$staged" != "4" ]; then
+    fail "the migration fixture did not stage" "expected 4 backups, found $staged"
+else
+    rotate_env_backups "$dir_local/.env" 3
+    if [ -f "$dir_local/.env.backup.$newest_ts" ]; then
+        pass "the newest backup survives alongside legacy local-time stamps"
+    else
+        left=$(cd "$dir_local" && ls -1 .env.backup.* 2>/dev/null | tr '\n' ' ')
+        fail "rotation discarded the backup that was just created" \
+            ".env.backup.$newest_ts is gone; left: $left"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== rotation is a no-op below the keep count ==="
 # ---------------------------------------------------------------------------
 #
@@ -170,6 +240,29 @@ if grep -nE "Get-Date -Format 'yyyyMMddHHmmss'" "$PROJECT_ROOT/scripts/install.p
     fail "install.ps1 still stamps in local time" "Get-Date instead of UtcNow"
 else
     pass "install.ps1 stamps through the shared helper"
+fi
+
+# The two checks above are absence checks, and an absence check passes for the
+# wrong reason as soon as the call is restructured -- rename the helper, spell
+# the format differently, and both go green while the behaviour is gone. Pair
+# them with the positive statement: each installer must actually emit the
+# prefixed UTC form. The shapes asserted at the top of this file come from
+# calling the functions; these two confirm the sources still say so.
+bash_fn=$(sed -n '/^env_backup_timestamp()/,/^}/p' "$PROJECT_ROOT/scripts/install.sh")
+if printf '%s' "$bash_fn" | grep -qF "printf 'utc%s" &&
+   printf '%s' "$bash_fn" | grep -qF 'date -u +%Y%m%d%H%M%S'; then
+    pass "install.sh builds the prefixed UTC stamp"
+else
+    fail "install.sh no longer builds the prefixed UTC stamp" \
+        "env_backup_timestamp must emit utc + date -u +%Y%m%d%H%M%S"
+fi
+
+pwsh_fn=$(sed -n '/^function Get-EnvBackupTimestamp/,/^}/p' "$PROJECT_ROOT/scripts/install.ps1")
+if printf '%s' "$pwsh_fn" | grep -qF "return 'utc' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')"; then
+    pass "install.ps1 builds the prefixed UTC stamp"
+else
+    fail "install.ps1 no longer builds the prefixed UTC stamp" \
+        "Get-EnvBackupTimestamp must emit 'utc' + UtcNow yyyyMMddHHmmss"
 fi
 
 # ---------------------------------------------------------------------------

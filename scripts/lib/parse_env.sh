@@ -68,17 +68,41 @@ parse_env_value() {
             # the very case being fixed.
             q = substr(rhs, 1, 1)
             if (q == "\"" || q == "'"'"'") {
-                # A trailing comment only exists if the value does not already
-                # end at its closing quote.
-                if (substr(rhs, length(rhs), 1) != q) {
+                # Locate the closing quote first, strip the comment second.
+                #
+                # The previous version did it the other way round whenever the
+                # value did not END at a quote -- which is exactly the case
+                # where a trailing comment exists. It ran sub() to drop the
+                # comment, and sub() replaces the LEFTMOST match, so for
+                #     FOO="a # b"  # note
+                # it cut at the # INSIDE the quotes and returned `"a`, opening
+                # quote included. That is the hazard the note above warns
+                # about, reproduced by the code written to avoid it.
+                #
+                # This walks candidate closing quotes from the right, which is
+                # what ^"(.*)"([[:space:]]+#.*)?$ does in load_env_file, in
+                # ConvertFrom-EnvLine and in env.go: a greedy capture takes the
+                # RIGHTMOST closing quote whose remainder is empty or a
+                # whitespace-preceded comment, and backtracks left when it is
+                # not. POSIX awk has no capture groups, so the search is
+                # spelled out.
+                unquoted = 0
+                for (i = length(rhs); i >= 2; i--) {
+                    if (substr(rhs, i, 1) != q) { continue }
+                    rest = substr(rhs, i + 1)
+                    if (rest == "" || rest ~ /^[[:space:]]+#/) {
+                        rhs = substr(rhs, 2, i - 2)
+                        unquoted = 1
+                        break
+                    }
+                }
+                if (unquoted == 0) {
+                    # An opening quote with no usable closing one is not a
+                    # quoted value. The regex readers fail their match here and
+                    # fall through to the plain path, so this does too.
                     sub(/[[:space:]]+#.*$/, "", rhs)
                     sub(/[[:space:]]+$/, "", rhs)
                 }
-                if (length(rhs) >= 2 && substr(rhs, length(rhs), 1) == q) {
-                    rhs = substr(rhs, 2, length(rhs) - 2)
-                }
-                # An opening quote with no closing one is not a quoted value;
-                # rhs is left as it stands, matching the other two readers.
             } else {
                 # Unquoted: a whitespace-preceded # starts a comment.
                 sub(/[[:space:]]+#.*$/, "", rhs)

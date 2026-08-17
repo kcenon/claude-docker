@@ -157,6 +157,10 @@ UNCLOSED_QUOTE="unclosed
 EMBEDDED_QUOTES=say "hi" now
 HASH_FIRST=#nospace
 TRAILING_HASH="abc #"
+QUOTED_HASH_THEN_COMMENT="a # b"  # note
+SQ_HASH_THEN_COMMENT='a # b'  # note
+JUNK_AFTER_QUOTE="abc"def
+BACKTRACK_QUOTE="abc" # x" def
 SYNTH_EOF
 
 echo "== synthetic edge cases =="
@@ -195,6 +199,98 @@ assert_value UNCLOSED_QUOTE       '"unclosed'
 assert_value EMBEDDED_QUOTES      'say "hi" now'
 assert_value HASH_FIRST           '#nospace'
 assert_value TRAILING_HASH        'abc #'
+# The combination the first pass missed: HASH_INSIDE_QUOTES has no trailing
+# comment and QUOTED_THEN_COMMENT has no inner hash, so neither reached the
+# branch where a value carries both. That branch is where parse_env_value
+# diverged from every other reader, itself included -- load_env_file, four
+# functions down the same file, answered `a # b`.
+assert_value QUOTED_HASH_THEN_COMMENT 'a # b'
+assert_value SQ_HASH_THEN_COMMENT     'a # b'
+# Not a quoted value: text follows the closing quote and is not a comment, so
+# the whole right-hand side stands as written.
+assert_value JUNK_AFTER_QUOTE     '"abc"def'
+# The rightmost quote is the one inside the comment, and its remainder (" def")
+# is not a comment, so the reader has to fall back to the quote before it.
+assert_value BACKTRACK_QUOTE      'abc'
+
+# parse_env.sh exports two readers, and only one of them was ever compared.
+# assert_equiv drives parse_env_value; load_env_file, sixty lines further down
+# the same file, was never in the comparison -- so the pair could drift apart
+# inside a single file, and did. The acceptance criterion names "parse_env.sh",
+# which is both of them.
+load_env_value() {
+    local fixture="$1" key="$2"
+    (
+        # Subshell: load_env_file exports, and -a overwrites, so the values
+        # must not leak into the next key's read.
+        unset "$key" 2>/dev/null || true
+        load_env_file "$fixture" -a
+        eval "printf '%s' \"\${$key-}\""
+    )
+}
+
+echo "== parse_env.sh internal agreement: parse_env_value vs load_env_file =="
+SAME_FILE_KEYS=0
+while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    SAME_FILE_KEYS=$((SAME_FILE_KEYS + 1))
+    pv=$(parse_env_value "$SYNTH" "$key")
+    lv=$(load_env_value "$SYNTH" "$key")
+    if [[ "$pv" == "$lv" ]]; then
+        printf '  PASS  same-file  %s\n' "$key"
+        PASS=$((PASS + 1))
+    else
+        printf '  FAIL  same-file  %s\n        parse_env_value: %q\n        load_env_file:   %q\n' \
+            "$key" "$pv" "$lv"
+        FAIL=$((FAIL + 1))
+    fi
+done < <(enumerate_keys "$SYNTH")
+# An empty enumeration would let this whole section report success without
+# comparing anything.
+if [[ "$SAME_FILE_KEYS" -eq 0 ]]; then
+    printf '  FAIL  same-file: enumerated no keys, so nothing was compared\n'
+    FAIL=$((FAIL + 1))
+fi
+
+# The criterion names NUM_ACCOUNTS and GH_USER_* specifically. The readers are
+# key-agnostic, so this adds no new code path -- it exists so the criterion can
+# be checked against the literal keys it was written about.
+AC_KEYS="$SYNTH_DIR/ac-keys.env"
+cat > "$AC_KEYS" <<'AC_EOF'
+NUM_ACCOUNTS=4  # four accounts
+GH_USER_A=alice  # main account
+GH_USER_B="bob # the second"  # backup
+AC_EOF
+
+assert_value_in() {
+    local fixture="$1" key="$2" want="$3" got
+    got=$(parse_env_value "$fixture" "$key")
+    if [[ "$got" == "$want" ]]; then
+        printf '  PASS  value  %s\n' "$key"
+        PASS=$((PASS + 1))
+    else
+        printf '  FAIL  value  %s\n        want: %q\n        got:  %q\n' "$key" "$want" "$got"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+echo "== acceptance-criterion keys, with inline comments =="
+for key in NUM_ACCOUNTS GH_USER_A GH_USER_B; do
+    assert_equiv "$AC_KEYS" "$key"
+    lv=$(load_env_value "$AC_KEYS" "$key")
+    pv=$(parse_env_value "$AC_KEYS" "$key")
+    if [[ "$pv" == "$lv" ]]; then
+        printf '  PASS  same-file  %s\n' "$key"
+        PASS=$((PASS + 1))
+    else
+        printf '  FAIL  same-file  %s\n        parse_env_value: %q\n        load_env_file:   %q\n' \
+            "$key" "$pv" "$lv"
+        FAIL=$((FAIL + 1))
+    fi
+done
+assert_value_in "$AC_KEYS" NUM_ACCOUNTS '4'
+assert_value_in "$AC_KEYS" GH_USER_A    'alice'
+assert_value_in "$AC_KEYS" GH_USER_B    'bob # the second'
 
 echo
 printf '== Summary: PASS=%d FAIL=%d ==\n' "$PASS" "$FAIL"
