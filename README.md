@@ -762,12 +762,22 @@ No `.git/index.lock` contention.
 
 ```bash
 scripts/setup-worktrees.sh ~/work/project    # Create worktrees
+# add the printed PROJECT_DIR_* lines to .env
 scripts/claude-docker up                     # Selects the worktree overlay
 ```
 
+The middle step is not optional. `setup-worktrees.sh` creates the worktrees and
+**prints** the `PROJECT_DIR_<X>` lines; it does not write them anywhere. With
+neither those paths nor an explicit `ISOLATION_MODE` in `.env`, the mode
+resolves to `shared`, the worktree overlay is never composed, and `up` starts
+every container on the one Tier A mount — silently, because that is a valid
+shared install and nothing distinguishes it from an intended one. (Declaring
+`ISOLATION_MODE=worktree` *and* omitting the paths is refused outright; it is
+the inferred case that passes quietly.) Tier C below has the same shape.
+
 On native Windows, use
-`.\scripts\setup-worktrees.ps1 C:\path\to\project`, then start with
-`.\scripts\claude-docker.ps1 up`.
+`.\scripts\setup-worktrees.ps1 C:\path\to\project`, add the printed lines to
+`.env`, then start with `.\scripts\claude-docker.ps1 up`.
 
 Setting `PROJECT_DIR_A` selects worktree mode on its own, which is how installs
 predating `ISOLATION_MODE` keep working unchanged. Setting the key explicitly
@@ -867,10 +877,27 @@ volumes. The selected runtime determines the account and host-config paths:
 | Gemini | `~/.gemini-state/account-a/` | `/home/node/.gemini/` | `~/.gemini/` -> `/home/node/.gemini-host/` |
 
 Mutable credentials, sessions, logs, and runtime history stay in the account
-state mount. Bootstrap modules deliberately exclude known credential and
-session files when they copy or link selected host configuration. That selected
-configuration is still visible to the container, so do not embed secrets in it.
-Other persistent mounts are:
+state mount. When the bootstrap modules **copy or link** host configuration into
+that account state directory, they select specific entries and leave known
+credential and session files out of the selection.
+
+That exclusion is about what gets copied. It is not a statement about what the
+container can reach, and the two are different:
+
+> **The host config mount is the whole directory.** `docker-compose.yml` binds
+> `${HOME}/.claude` (and the codex/gemini equivalents) entire, not the six
+> entries the entrypoint consumes. Inside it are the runtime's OAuth credential
+> file — `.credentials.json`, `auth.json`, `oauth_creds.json` by runtime — and
+> `projects/`, the session transcripts. The container runs as the host user, so
+> the file's `0600` does not withhold it: **every account container can read
+> the host's credentials and transcripts, and therefore each other's.** The
+> mount is read-only, so nothing can be written back through it.
+>
+> `ISOLATION_MODE=isolated` is the only mode that removes the mount. See
+> [`docs/ISOLATION.md`](docs/ISOLATION.md#interaction-with-the-shared-runtime-configuration-mount).
+
+Do not embed secrets in the selected configuration either — it is visible to the
+container by the same route. Other persistent mounts are:
 
 | Data | Host/source | Container destination | Mode |
 |------|-------------|-----------------------|------|
@@ -896,6 +923,7 @@ environment:
 | `NUM_ACCOUNTS` | `2` | `scripts/generate-compose.sh` default |
 | `AGENT_RUNTIME` | `claude` | `scripts/lib/runtime.sh` default |
 | `IMAGE_TAG` | contents of `VERSION` | repo-root `VERSION` file |
+| `ISOLATION_MODE` | `shared` | `scripts/lib/isolation.sh` default |
 
 The `Compose files are current` CI job regenerates under exactly those defaults
 and fails on any difference. Regenerating with your own `.env` during local work
@@ -1245,10 +1273,6 @@ claude-docker/
     +-- env_fixtures/
     +-- entrypoint_fixtures/
 ```
-
-`sources/` contains local nested working directories that are gitignored
-and never copied into the Docker image. They can be removed safely if not
-in use.
 
 ## License
 

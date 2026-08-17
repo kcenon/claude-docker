@@ -60,15 +60,11 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Populates the COMPOSE_CMD array with the full `docker compose ...` invocation.
 # Array-based so paths containing whitespace survive argument parsing.
 #
-# Overlay selection logic:
-# 1. Base docker-compose.yml is always included
-# 2. docker-compose.linux.yml is added on Linux hosts when the file exists
-# 3. The overlay named by the resolved ISOLATION_MODE is added:
-#    docker-compose.worktree.yml for worktree, docker-compose.isolated.yml for
-#    isolated, none for shared (lib/isolation.sh). A mode whose overlay is
-#    missing is refused rather than silently downgraded.
-#
-# build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced above).
+# build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced above),
+# which is labelled canonical and carries the overlay-selection rules. This
+# comment used to restate that list, which is how the two fell out of step when
+# isolated mode added a fourth compose file: the executable copy was updated
+# because it runs, and the prose copy was not (#360). Read the rules there.
 COMPOSE_CMD=()
 COMPOSE_CMD_INITIALIZED=0
 

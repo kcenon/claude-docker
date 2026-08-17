@@ -325,6 +325,11 @@ jobs:
           # *means*: base-10 parsing, casing, and whether whitespace counts as
           # unset (#356).
           - tests/test_env_value_semantics.sh
+          # Enumeration checks only: every tracked compose file is listed where
+          # README enumerates them, every ${VAR} the base compose reads is in
+          # .env.example. Prose correctness is not machine-checkable; these are
+          # the lists that went stale when isolated mode landed (#360).
+          - tests/test_docs_contracts.sh
           - scripts/test-entrypoint-settings.sh
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
