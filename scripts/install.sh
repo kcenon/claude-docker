@@ -149,8 +149,30 @@ check_command() {
     command -v "$1" &>/dev/null
 }
 
+# env_backup_timestamp
+# The suffix both installers put on a .env backup: UTC, yyyymmddHHMMSS.
+#
+# One format on both sides (#356, row 8). This wrote `date +%s` -- a 10-digit
+# epoch -- while install.ps1 wrote a 14-digit yyyyMMddHHmmss, and both rotate
+# by name sort. A 14-digit "2026..." always sorts above any 10-digit epoch, so
+# alternating the two installers on one project root kept the three newest
+# *PowerShell* backups rather than the three newest backups.
+#
+# yyyymmddHHMMSS rather than epoch, and this direction rather than the other,
+# because the migration is self-correcting: existing 10-digit backups sort
+# below every new one, and they are also genuinely older, so rotation removes
+# them first. Standardizing on epoch would have done the reverse -- pre-existing
+# PowerShell backups would outrank every new one and never be rotated out.
+#
+# UTC, not local: local time is not monotonic across a DST fall-back, and the
+# rotation depends on name order matching chronological order.
+env_backup_timestamp() {
+    date -u +%Y%m%d%H%M%S
+}
+
 # Keep at most $keep newest ".env.backup.*" siblings of $env_file.
-# Sort is lexicographic by epoch suffix — monotonic for the foreseeable future.
+# Sort is lexicographic by the timestamp suffix, which env_backup_timestamp
+# keeps monotonic.
 rotate_env_backups() {
     local env_file="$1"
     local keep="${2:-3}"
@@ -645,7 +667,7 @@ generate_env() {
             return 0
         fi
         local backup
-        backup="${env_file}.backup.$(date +%s)"
+        backup="${env_file}.backup.$(env_backup_timestamp)"
         cp "$env_file" "$backup"
         chmod 600 "$backup"
         rotate_env_backups "$env_file" 3

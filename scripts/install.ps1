@@ -409,6 +409,27 @@ function Get-Configuration {
 
 # --- .env Generation ----------------------------------------------------------
 
+function Get-EnvBackupTimestamp {
+    <#
+    .SYNOPSIS
+    The suffix both installers put on a .env backup: UTC, yyyyMMddHHmmss.
+    .DESCRIPTION
+    One format on both sides (#356, row 8). install.sh wrote a 10-digit
+    `date +%s` epoch while this wrote 14-digit yyyyMMddHHmmss, and both rotate
+    by name sort -- so a 14-digit "2026..." outranked every epoch and
+    alternating the two installers on one project root kept the three newest
+    *PowerShell* backups rather than the three newest backups.
+
+    UTC rather than local: local time is not monotonic across a DST
+    fall-back, and the rotation depends on name order matching chronological
+    order. This is the one change to the PowerShell side; the format itself
+    is unchanged, so existing backups here keep sorting correctly.
+    #>
+    [CmdletBinding()]
+    param()
+    return [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+}
+
 function Remove-StaleEnvBackups {
     param(
         [Parameter(Mandatory)][string]$EnvFile,
@@ -432,7 +453,7 @@ function New-EnvFile {
             Write-LogWarn 'Keeping existing .env. Some settings may not match your choices.'
             return
         }
-        $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+        $timestamp = Get-EnvBackupTimestamp
         $backup = "${envFile}.backup.${timestamp}"
         Copy-Item $envFile $backup
         # Grant Modify (R,W,D) so Remove-StaleEnvBackups and remove.ps1 can
