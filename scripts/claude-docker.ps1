@@ -105,7 +105,7 @@ function Resolve-AccountLetter {
     }
     $count = Get-NumAccounts -ProjectRoot $ProjectRoot
     for ($i = 1; $i -le $count; $i++) {
-        $letter = ConvertTo-AccountLetter -Index $i
+        $letter = Get-AccountLetter -Index $i
         if ($candidate -eq $letter) { return $letter }
     }
     return $null
@@ -420,7 +420,7 @@ function Invoke-GhAuthPerAccount {
         }
         $count = Get-NumAccounts -ProjectRoot $ProjectRoot
         for ($i = 1; $i -le $count; $i++) {
-            $letter = ConvertTo-AccountLetter -Index $i
+            $letter = Get-AccountLetter -Index $i
             $upper = Get-AccountEnvSuffix -Letter $letter
             $user = Get-EnvValue -Path $envFile -Key "GH_USER_${upper}"
             if (-not $user) {
@@ -578,7 +578,7 @@ function Update-PerAccountGhTokens {
     $tokens = @()
     $count = Get-NumAccounts -ProjectRoot $ProjectRoot
     for ($i = 1; $i -le $count; $i++) {
-        $upper = (ConvertTo-AccountLetter -Index $i).ToUpperInvariant()
+        $upper = (Get-AccountLetter -Index $i).ToUpperInvariant()
         $user = Get-EnvValue -Path $envFile -Key "GH_USER_${upper}"
         if (-not $user) {
             Write-LogWarn "GH_USER_${upper} is missing; per-account token refresh skipped."
@@ -727,16 +727,15 @@ function Invoke-Update {
 
 function Invoke-Scale {
     if ($Arguments.Count -eq 0) {
-        Write-LogError 'Usage: claude-docker scale <N> (1-702)'
+        Write-LogError "Usage: claude-docker scale <N> (1-$(Get-MaxAccountCount))"
         exit 1
     }
 
+    # Validated through lib/index.ps1, re-exported by ClaudeDocker.psm1 (#356).
     $rawCount = $Arguments[0]
-    $newCount = 0
-    if ($rawCount -notmatch '^\d+$' -or
-        -not [int]::TryParse($rawCount, [ref]$newCount) -or
-        $newCount -lt 1 -or $newCount -gt 702) {
-        Write-LogError "Account count must be between 1 and 702 (got: $rawCount)"
+    $newCount = Get-NormalizedAccountCount -Value ([string]$rawCount)
+    if ($null -eq $newCount) {
+        Write-LogError "Account count must be between 1 and $(Get-MaxAccountCount) (got: $rawCount)"
         exit 1
     }
 
@@ -776,7 +775,7 @@ function Invoke-Scale {
     if ($newCount -gt $currentCount) {
         Write-Host 'Creating new state directories...' -ForegroundColor Cyan
         for ($i = $currentCount + 1; $i -le $newCount; $i++) {
-            $letter = ConvertTo-AccountLetter -Index $i
+            $letter = Get-AccountLetter -Index $i
             $stateDir = Join-Path (Get-AgentStateRoot -ProjectRoot $ProjectRoot) "account-$letter"
             if (-not (Test-Path $stateDir)) {
                 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
@@ -946,7 +945,7 @@ function Show-Help {
     Write-Host '  build-tui             ' -ForegroundColor Green -NoNewline; Write-Host 'Rebuild TUI dashboard binary (requires Go 1.24+)'
     Write-Host ''
     Write-Host 'SCALING' -ForegroundColor White
-    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host 'Set number of accounts (1-702) and regenerate'
+    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host "Set number of accounts (1-$(Get-MaxAccountCount)) and regenerate"
     Write-Host ''
     Write-Host 'ADVANCED' -ForegroundColor White
     Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show resolved compose configuration'

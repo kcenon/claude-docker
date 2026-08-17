@@ -5,6 +5,18 @@
 
 #Requires -Version 7.0
 
+# --- Shared account-index helpers --------------------------------------------
+#
+# lib/index.ps1 is the PowerShell side's single definition of the
+# account-index rules, mirroring scripts/lib/index.sh. This module used to
+# carry its own ConvertTo-AccountLetter instead, which guarded only the lower
+# bound while Get-AccountLetter guards both -- so the same index produced a
+# letter through one entry point and an error through the other (#356).
+#
+# Dot-sourced into module scope and re-exported below, so importing this
+# module is enough; callers do not need to know the file exists.
+. (Join-Path $PSScriptRoot 'lib' 'index.ps1')
+
 # --- Logging -----------------------------------------------------------------
 
 # NOTE: The previous `$env:HOME = $env:USERPROFILE` workaround was removed.
@@ -388,11 +400,9 @@ function Get-NumAccounts {
     }
     if ([string]::IsNullOrEmpty($n)) { return 2 }
 
-    $parsedNumAccounts = 0
-    if ($n -notmatch '^\d+$' -or
-        -not [int]::TryParse([string]$n, [ref]$parsedNumAccounts) -or
-        $parsedNumAccounts -lt 1 -or $parsedNumAccounts -gt 702) {
-        Write-Warning "NUM_ACCOUNTS must be an integer between 1 and 702 (got: $n); using default 2."
+    $parsedNumAccounts = Get-NormalizedAccountCount -Value ([string]$n)
+    if ($null -eq $parsedNumAccounts) {
+        Write-Warning "NUM_ACCOUNTS must be an integer between 1 and $(Get-MaxAccountCount) (got: $n); using default 2."
         return 2
     }
     return $parsedNumAccounts
@@ -511,26 +521,11 @@ function Get-AgentStateRoot {
     return Join-Path $env:USERPROFILE $dirName
 }
 
-function ConvertTo-AccountLetter {
-    <#
-    .SYNOPSIS
-    Convert a 1-based index to Excel-style lowercase letters (a, z, aa, az,
-    ba, zz). Values 1-26 are bit-identical to the previous single-letter
-    scheme.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][int]$Index)
-
-    if ($Index -lt 1) { throw "Index must be 1 or greater (got: $Index)" }
-    [int]$n = $Index
-    $builder = ''
-    while ($n -gt 0) {
-        [int]$rem = ($n - 1) % 26
-        $builder = [char]([int](97 + $rem)) + $builder
-        [int]$n = [math]::Floor(($n - 1) / 26)
-    }
-    return $builder
-}
+# ConvertTo-AccountLetter lived here and is gone (#356). It was a second
+# implementation of lib/index.ps1's Get-AccountLetter that guarded only the
+# lower bound, so index 703 returned "aaa" through the module and threw
+# through the library. Get-AccountLetter is re-exported from the dot-source at
+# the top of this file; call that.
 
 function Get-ServiceNames {
     <#
@@ -547,7 +542,7 @@ function Get-ServiceNames {
     $prefix = Get-ServicePrefix -ProjectRoot $ProjectRoot
     $names = @()
     for ($i = 1; $i -le $n; $i++) {
-        $names += "$prefix-$(ConvertTo-AccountLetter -Index $i)"
+        $names += "$prefix-$(Get-AccountLetter -Index $i)"
     }
     return $names
 }
@@ -777,15 +772,22 @@ function Get-SupportedIsolationMode {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
-        [ValidateRange(1, 702)][int]$AccountCount = 1
+        # Validated in the body, not by [ValidateRange(1, 702)]: an attribute
+        # binds before the body runs, so it cannot consult the shared bound
+        # and has to re-spell it. That is the fifth copy #356 removed.
+        [int]$AccountCount = 1
     )
+
+    if ($null -eq (Get-NormalizedAccountCount -Value ([string]$AccountCount))) {
+        throw "AccountCount must be between 1 and $(Get-MaxAccountCount) (got: $AccountCount)"
+    }
 
     $mode = Get-IsolationMode -ProjectRoot $ProjectRoot
 
     for ($i = 1; $i -le $AccountCount; $i++) {
         # Uppercasing the Excel-style letter is correct for both 'a' -> 'A'
         # and 'aa' -> 'AA', so no separate uppercase converter is needed.
-        $upper = (ConvertTo-AccountLetter -Index $i).ToUpperInvariant()
+        $upper = (Get-AccountLetter -Index $i).ToUpperInvariant()
         $var = Get-IsolationAccountVariable -Mode $mode -Upper $upper
         # shared consumes no per-account path; nothing to check for any account.
         if ([string]::IsNullOrEmpty($var)) { break }
@@ -1281,7 +1283,10 @@ Export-ModuleMember -Function @(
     # Accounts
     'Get-NumAccounts', 'Get-AgentRuntime', 'Get-ServicePrefix',
     'Get-PrimaryService', 'Get-AgentStateRoot', 'Get-ServiceNames',
-    'ConvertTo-AccountLetter',
+    'Get-AccountLetter',
+    'Get-AccountLetterUpper',
+    'Get-NormalizedAccountCount',
+    'Get-MaxAccountCount',
     # Runtime registry
     'Get-RuntimeField', 'Get-RuntimeList',
     # Isolation mode

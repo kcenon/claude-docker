@@ -337,19 +337,20 @@ function Get-Configuration {
         Write-LogInfo "Claude Code version: $($Script:ClaudeVersion)"
     }
 
-    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
+    # Number of accounts. The upper bound is "zz" from Excel-style letter
     # enumeration; the validator catches typos like 2600 without capping
     # legitimate multi-tenant setups at the historic 26-account ceiling.
-    $numInput = Read-Input -Question 'Number of accounts to configure (1-702)' -Default '2'
-    if ($numInput -notmatch '^\d+$') {
-        Write-LogError 'Number of accounts must be a positive integer.'
+    #
+    # Both the bound and the parse come from lib/index.ps1 (#356), so this
+    # prompt cannot drift from what the generator will accept a moment later.
+    $maxAccounts = Get-MaxAccountCount
+    $numInput = Read-Input -Question "Number of accounts to configure (1-$maxAccounts)" -Default '2'
+    $normalizedAccounts = Get-NormalizedAccountCount -Value $numInput
+    if ($null -eq $normalizedAccounts) {
+        Write-LogError "Number of accounts must be an integer between 1 and $maxAccounts (got: $numInput)."
         exit 1
     }
-    $Script:NumAccounts = [int]$numInput
-    if ($Script:NumAccounts -lt 1 -or $Script:NumAccounts -gt 702) {
-        Write-LogError 'Number of accounts must be between 1 and 702.'
-        exit 1
-    }
+    $Script:NumAccounts = $normalizedAccounts
     Write-LogInfo "Accounts: $($Script:NumAccounts)"
 
     # GitHub authentication mode. Per-account setup reads each explicitly
