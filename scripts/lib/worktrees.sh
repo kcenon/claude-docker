@@ -88,7 +88,7 @@ worktree_selectable_paths() {
 _worktree_env_keys() {
     local env_file="$1"
     [[ -r "$env_file" ]] || return 0
-    sed -n 's/^[[:space:]]*\(\(PROJECT_DIR\|ISOLATED_WORKSPACE\)_[A-Z][A-Z]*\)[[:space:]]*=.*/\1/p' \
+    sed -nE 's/^[[:space:]]*((PROJECT_DIR|ISOLATED_WORKSPACE)_[A-Z][A-Z]*)[[:space:]]*=.*/\1/p' \
         "$env_file" | sort -u
 }
 

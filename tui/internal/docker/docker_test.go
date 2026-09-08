@@ -362,7 +362,7 @@ func TestServiceNames_DefaultMatchesGenerator(t *testing.T) {
 	}
 }
 
-// TestBuildArgs verifies the binary is "docker", "build" is always present,
+// TestBuildArgs verifies the platform wrapper is used, "build" is present,
 // and "--no-cache" is added only when noCache is true.
 func TestBuildArgs(t *testing.T) {
 	c := NewClient("/tmp/proj", nil)
@@ -382,8 +382,8 @@ func TestBuildArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildArgs: %v", err)
 			}
-			if bin != "docker" {
-				t.Errorf("bin = %q, want %q", bin, "docker")
+			if bin != "bash" && bin != "pwsh" {
+				t.Errorf("lifecycle must use a platform wrapper, got %q", bin)
 			}
 			joined := strings.Join(args, " ")
 			if !strings.Contains(joined, "build") {
@@ -412,10 +412,10 @@ func TestUpRecreateArgs(t *testing.T) {
 		t.Fatalf("UpRecreateArgs: %v", err)
 	}
 
-	if bin != "docker" {
-		t.Errorf("bin = %q, want %q", bin, "docker")
+	if bin != "bash" && bin != "pwsh" {
+		t.Errorf("lifecycle must use a platform wrapper, got %q", bin)
 	}
-	for _, want := range []string{"up", "-d", "--force-recreate"} {
+	for _, want := range []string{"up", "--force-recreate"} {
 		found := false
 		for _, a := range args {
 			if a == want {
@@ -468,7 +468,15 @@ func TestClientPathsCarryIsolatedOverlay(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
-			if !containsArg(args, isolatedFile) {
+			if name == "UpRecreateArgs" || name == "RestartArgs" || name == "BuildArgs" {
+				wrapper := filepath.Join(root, "scripts", "claude-docker")
+				if runtime.GOOS == "windows" {
+					wrapper += ".ps1"
+				}
+				if !containsArg(args, wrapper) {
+					t.Errorf("%s bypassed the installation lifecycle wrapper: %v", name, args)
+				}
+			} else if !containsArg(args, isolatedFile) {
 				t.Errorf("%s: isolated overlay %q missing in %v", name, isolatedFile, args)
 			}
 		})

@@ -54,6 +54,13 @@ assert_contains() {
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+SOURCE_ROOT="$PROJECT_ROOT"
+SANDBOX="$WORK/installation"
+mkdir -p "$SANDBOX/tui/internal/config"
+cp -R "$SOURCE_ROOT/scripts" "$SANDBOX/scripts"
+cp "$SOURCE_ROOT/tui/internal/config/runtimes.json" "$SANDBOX/tui/internal/config/"
+cp "$SOURCE_ROOT/VERSION" "$SANDBOX/"
+printf 'NUM_ACCOUNTS=2\nISOLATION_MODE=shared\n' > "$SANDBOX/.env"
 
 echo "== No assignment to the readonly UID remains =="
 
@@ -65,12 +72,15 @@ assert_eq "install.sh assigns neither UID nor GID directly" "0" "$uid_assignment
 echo "== start_containers reaches docker compose up -d =="
 
 mkdir -p "$WORK/bin"
-cat > "$WORK/bin/docker" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$DOCKER_LOG"
-exit 0
-STUB
+cp "$SOURCE_ROOT/tests/lib/mock_compose.py" "$WORK/bin/docker"
 chmod +x "$WORK/bin/docker"
+# Exercise the Linux branch of the shell command builder even on macOS.
+cat > "$WORK/bin/uname" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == -s ]]; then echo Linux; else /usr/bin/uname "$@"; fi
+STUB
+chmod +x "$WORK/bin/uname"
+env -u NUM_ACCOUNTS -u AGENT_RUNTIME bash "$SANDBOX/scripts/generate-compose.sh" >/dev/null
 
 status=0
 (
@@ -81,7 +91,7 @@ status=0
     mkdir -p "$HOME"
 
     # shellcheck source=../scripts/install.sh
-    . "$PROJECT_ROOT/scripts/install.sh"
+    . "$SANDBOX/scripts/install.sh"
 
     # The value detect_platform would return on a native Linux host. Set
     # explicitly because the runner may be WSL2, where the block never ran and
@@ -107,9 +117,26 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 if [[ -f "$WORK/docker.log" ]]; then
-    assert_contains "docker was invoked with 'up -d'" "up -d" "$(cat "$WORK/docker.log")"
+    assert_contains "docker was invoked with detached up" "up --detach" "$(cat "$WORK/docker.log")"
 else
     assert_eq "docker was invoked" "invoked" "not invoked"
+fi
+
+# A conditional caller suppresses bash's implicit errexit inside functions.
+# A failed native wrapper must still stop before the success message.
+failed_status=0
+(
+    export CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY=1
+    export PATH="$WORK/bin:$PATH" HOME="$WORK/home" MOCK_UP_FAILURE=17
+    # shellcheck source=../scripts/install.sh
+    . "$SANDBOX/scripts/install.sh"
+    start_containers
+) > "$WORK/failure.log" 2>&1 || failed_status=$?
+assert_eq "startup propagates the native failure" "17" "$failed_status"
+if [[ "$(cat "$WORK/failure.log")" == *"Containers started"* ]]; then
+    assert_eq "failure never reports startup success" "absent" "present"
+else
+    assert_eq "failure never reports startup success" "absent" "absent"
 fi
 
 echo "== build_compose_cmd still supplies UID/GID for the linux overlay =="

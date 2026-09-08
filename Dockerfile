@@ -45,6 +45,8 @@ RUN apt-get update \
        sudo \
        procps \
        python3 \
+       bubblewrap \
+       socat \
        tzdata \
     && rm -rf /var/lib/apt/lists/*
 

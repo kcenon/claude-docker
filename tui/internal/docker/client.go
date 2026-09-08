@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -60,6 +62,13 @@ func (c *Client) PS() ([]ContainerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Keep the complete Compose file set stable until Docker finishes reading
+	// it. A preliminary existence check alone leaves a publication race.
+	release, err := config.AcquireLifecycleLock(c.projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	args := append(base, "ps", "--format", "json", "--all")
 	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
 	defer cancel()
@@ -115,22 +124,20 @@ func parseComposePS(out string) ([]ContainerInfo, error) {
 // operation partway. It is also operator-initiated with a toast explaining
 // the wait, where PS runs on every refresh with nothing on screen to say so.
 func (c *Client) Up() error {
-	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	bin, args, err := c.LifecycleArgs("up")
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("docker", append(base, "up", "-d")...)
-	return cmd.Run()
+	return exec.Command(bin, args...).Run()
 }
 
 // Down stops all services.
 func (c *Client) Down() error {
-	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	bin, args, err := c.LifecycleArgs("down")
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("docker", append(base, "down")...)
-	return cmd.Run()
+	return exec.Command(bin, args...).Run()
 }
 
 // The *Args methods return (bin, args, error) rather than building a command.
@@ -154,37 +161,23 @@ func (c *Client) ExecArgs(service string, cmd ...string) (string, []string, erro
 // BuildArgs returns (bin, args) for `docker compose build`.
 // When noCache is true, passes --no-cache to force a full rebuild.
 func (c *Client) BuildArgs(noCache bool) (string, []string, error) {
-	base, err := BuildComposeArgs(c.projectRoot, c.env)
-	if err != nil {
-		return "", nil, err
-	}
-	args := append(base, "build")
+	args := []string{}
 	if noCache {
 		args = append(args, "--no-cache")
 	}
-	return "docker", args, nil
+	return c.LifecycleArgs("build", args...)
 }
 
 // UpRecreateArgs returns (bin, args) for `docker compose up -d --force-recreate`.
 // Used after image rebuild or .env change so containers pick up new config.
 func (c *Client) UpRecreateArgs(services ...string) (string, []string, error) {
-	base, err := BuildComposeArgs(c.projectRoot, c.env)
-	if err != nil {
-		return "", nil, err
-	}
-	args := append(base, "up", "-d", "--force-recreate")
-	args = append(args, services...)
-	return "docker", args, nil
+	return c.LifecycleArgs("up", append([]string{"--force-recreate"}, services...)...)
 }
 
 // RestartArgs returns (bin, args) for restarting a single service.
 // service must be a name produced by ServiceNames() (e.g. "claude-a").
 func (c *Client) RestartArgs(service string) (string, []string, error) {
-	base, err := BuildComposeArgs(c.projectRoot, c.env)
-	if err != nil {
-		return "", nil, err
-	}
-	return "docker", append(base, "restart", service), nil
+	return c.LifecycleArgs("restart", service)
 }
 
 // HasRunningContainers returns true if any compose service is currently up.
@@ -222,4 +215,16 @@ func (c *Client) ServiceNames() []string {
 		names[i-1] = prefix + "-" + config.IndexToLetter(i)
 	}
 	return names
+}
+
+// LifecycleArgs routes mutations through the same lock, resolved preflight and
+// resource report as the CLI. Interactive callers show that report before up.
+func (c *Client) LifecycleArgs(operation string, extra ...string) (string, []string, error) {
+	if _, err := BuildComposeArgs(c.projectRoot, c.env); err != nil {
+		return "", nil, err
+	}
+	if runtime.GOOS == "windows" {
+		return "pwsh", append([]string{"-NoProfile", "-File", filepath.Join(c.projectRoot, "scripts", "claude-docker.ps1"), operation}, extra...), nil
+	}
+	return "bash", append([]string{filepath.Join(c.projectRoot, "scripts", "claude-docker"), operation}, extra...), nil
 }

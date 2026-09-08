@@ -56,6 +56,8 @@ assert_dir_exists() {
 }
 
 WORK="$(mktemp -d)"
+# Git reports physical paths on macOS (/private/var rather than /var).
+WORK="$(cd "$WORK" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
 
 # --- Fixture ------------------------------------------------------------------
@@ -101,7 +103,7 @@ assert_eq "a path containing a space survives intact" \
 
 assert_eq "the main working tree is listed first" \
     "$PROJECT" \
-    "$(worktree_list_paths | head -n 1)"
+    "$(worktree_list_paths | sed -n '1p')"
 
 # --- worktree_selectable_paths ------------------------------------------------
 

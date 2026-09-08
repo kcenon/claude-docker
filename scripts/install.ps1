@@ -225,6 +225,7 @@ function Install-Prerequisite {
 function Invoke-PrerequisiteChecks {
     Write-LogStep 'Checking prerequisites'
 
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot version
     $missing = @()
 
     if (-not (Test-Docker))        { $missing += 'docker' }
@@ -944,7 +945,7 @@ function Start-Containers {
     Push-Location $ProjectRoot
     try {
         Write-LogInfo 'Starting with docker compose up -d...'
-        Invoke-Compose -ProjectRoot $ProjectRoot up --detach 2>&1
+        & (Join-Path $PSScriptRoot 'claude-docker.ps1') up 2>&1
 
         if ($LASTEXITCODE -ne 0) {
             Write-LogError 'Failed to start containers.'

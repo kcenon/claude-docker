@@ -126,19 +126,29 @@ Assert-Eq 'the worktree add result is checked' $true `
 Assert-Eq 'the failure throws rather than warning' $true `
     ($wt -match 'throw "git worktree add failed')
 
-Write-Host '== scale validates before it mutates =='
+Write-Host '== scale propagates the shared engine failure =='
 
-# The bash half of this is exercised end to end by
-# tests/test_scale_prevalidation.sh; here it is the PowerShell caller's shape.
-$cli = $lines -join "`n"
-$validateIdx = $cli.IndexOf('Get-SupportedIsolationMode -ProjectRoot $ProjectRoot -AccountCount $newCount')
-$writeIdx = $cli.IndexOf("Set-EnvValue -Path `$envFile -Key 'NUM_ACCOUNTS'")
-Assert-Eq 'scale calls the isolation check' $true ($validateIdx -ge 0)
-Assert-Eq 'scale writes NUM_ACCOUNTS' $true ($writeIdx -ge 0)
-if ($validateIdx -ge 0 -and $writeIdx -ge 0) {
-    # Order is the whole point: the generator was already fail-closed, and the
-    # caller moved first anyway.
-    Assert-Eq 'the check happens before the write' $true ($validateIdx -lt $writeIdx)
+# Run the actual frontend function with only the native engine replaced. The
+# complete transaction fault matrix lives in tests/test_lifecycle.py.
+$fixture = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
+try {
+    $null = New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/lib') -Force
+    [System.IO.File]::WriteAllText((Join-Path $fixture 'scripts/lib/lifecycle.py'), "raise SystemExit(17)`n")
+    [System.IO.File]::WriteAllText((Join-Path $fixture '.env'), "NUM_ACCOUNTS=2`n")
+    Copy-Item (Join-Path $ScriptsDir 'lib/host.ps1') (Join-Path $fixture 'scripts/lib/host.ps1')
+    . (Join-Path $fixture 'scripts/lib/host.ps1')
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($cliPath, [ref]$null, [ref]$null)
+    $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Scale' }, $true)
+    . ([scriptblock]::Create($function.Extent.Text))
+    $ProjectRoot = $fixture
+    $Arguments = @('3')
+    $failureCode = 0
+    $PSNativeCommandUseErrorActionPreference = $true
+    try { Invoke-Scale } catch { $failureCode = $_.Exception.Data['ExitCode'] }
+    Assert-Eq 'native engine exit code is retained' 17 $failureCode
+    Assert-Eq 'frontend leaves env unchanged on engine failure' "NUM_ACCOUNTS=2`n" ([System.IO.File]::ReadAllText((Join-Path $fixture '.env')))
+} finally {
+    if (Test-Path $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }
 
 Write-Host ''

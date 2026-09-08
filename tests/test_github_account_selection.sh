@@ -148,7 +148,7 @@ GH_MOCK_LOG="$bash_dir/gh.log" DOCKER_MOCK_LOG="$bash_dir/docker.log" \
     bash "$bash_dir/scripts/claude-docker" gh-auth b --user replacement-user-b \
     >"$bash_dir/command.out" 2>&1
 assert_case Bash "$bash_dir"
-if [[ "$(stat -c '%a' "$bash_dir/.env")" == "600" ]]; then
+if [[ "$(stat -c '%a' "$bash_dir/.env" 2>/dev/null || stat -f '%Lp' "$bash_dir/.env")" == "600" ]]; then
     pass 'Bash retains restrictive .env permissions'
 else
     fail 'Bash retains restrictive .env permissions'

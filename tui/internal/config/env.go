@@ -3,7 +3,9 @@ package config
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,7 +78,9 @@ type Env struct {
 	index   map[string]int // key -> entries[i]
 	// loadErr is non-nil when this Env stands in for a .env that could not be
 	// read. Reads answer with defaults; Save refuses. See NewUnloadableEnv.
-	loadErr error
+	loadErr      error
+	sourceDigest [sha256.Size]byte
+	sourceKnown  bool
 }
 
 type entry struct {
@@ -87,6 +91,10 @@ type entry struct {
 
 // LoadEnv parses a .env file, preserving comments and blank lines.
 func LoadEnv(path string) (*Env, error) {
+	if err := CheckLifecycleLock(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open env file: %w", err)
@@ -94,7 +102,8 @@ func LoadEnv(path string) (*Env, error) {
 	defer f.Close()
 
 	e := &Env{path: path, index: make(map[string]int)}
-	scanner := bufio.NewScanner(f)
+	digest := sha256.New()
+	scanner := bufio.NewScanner(io.TeeReader(f, digest))
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
@@ -115,6 +124,8 @@ func LoadEnv(path string) (*Env, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan env: %w", err)
 	}
+	copy(e.sourceDigest[:], digest.Sum(nil))
+	e.sourceKnown = true
 	return e, nil
 }
 
@@ -249,6 +260,12 @@ func (e *Env) Set(key, value string) {
 // Save writes the env file back to disk, preserving order/comments.
 // Uses atomic rename + 0600 permissions because the file holds secrets.
 func (e *Env) Save() error {
+	if e != nil && e.path != "" {
+		if err := CheckLifecycleLock(filepath.Dir(e.path)); err != nil {
+			return err
+		}
+	}
+
 	if e == nil {
 		return fmt.Errorf("no env loaded")
 	}
@@ -259,6 +276,7 @@ func (e *Env) Save() error {
 	e.mu.RLock()
 	path := e.path
 	loadErr := e.loadErr
+	sourceDigest, sourceKnown := e.sourceDigest, e.sourceKnown
 	snapshot := make([]entry, len(e.entries))
 	copy(snapshot, e.entries)
 	e.mu.RUnlock()
@@ -278,6 +296,19 @@ func (e *Env) Save() error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
+	// Reserve the same installation lock as the host lifecycle engine. Checking
+	// for it alone leaves a race between that check and the atomic env rename.
+	release, err := AcquireLifecycleLock(dir)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if sourceKnown {
+		current, err := os.ReadFile(path)
+		if err != nil || sha256.Sum256(current) != sourceDigest {
+			return fmt.Errorf("configuration changed since the dashboard loaded it; restart the dashboard before saving")
+		}
+	}
 	tmp, err := os.CreateTemp(dir, ".env.tmp-*")
 	if err != nil {
 		return fmt.Errorf("create tmp: %w", err)
@@ -285,7 +316,8 @@ func (e *Env) Save() error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
-	w := bufio.NewWriter(tmp)
+	digest := sha256.New()
+	w := bufio.NewWriter(io.MultiWriter(tmp, digest))
 	for _, ent := range snapshot {
 		if ent.key != "" {
 			if _, err := fmt.Fprintf(w, "%s=%s\n", ent.key, formatEnvValue(ent.value)); err != nil {
@@ -303,6 +335,10 @@ func (e *Env) Save() error {
 		tmp.Close()
 		return fmt.Errorf("flush: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close: %w", err)
 	}
@@ -315,6 +351,10 @@ func (e *Env) Save() error {
 	if err := hardenSecretFile(path); err != nil {
 		return err
 	}
+	e.mu.Lock()
+	copy(e.sourceDigest[:], digest.Sum(nil))
+	e.sourceKnown = true
+	e.mu.Unlock()
 	return nil
 }
 
@@ -465,10 +505,18 @@ func (e *Env) RuntimeCommandArgs(skipPermissions bool) []string {
 	spec := e.RuntimeSpec()
 	args := []string{spec.Binary}
 	args = append(args, strings.Fields(spec.ExtraRunArgs)...)
-	if skipPermissions {
+	if skipPermissions && e.ValidateRuntimeCommandArgs(skipPermissions) == nil {
 		args = append(args, spec.SkipPermissionsFlag)
 	}
 	return args
+}
+
+// ValidateRuntimeCommandArgs keeps approval bypass separate from sandbox policy.
+func (e *Env) ValidateRuntimeCommandArgs(skipPermissions bool) error {
+	if skipPermissions && e.IsolationMode() == "isolated" && e.RuntimeSpec().SkipDisablesSandbox {
+		return fmt.Errorf("permission bypass also disables the runtime sandbox and is unavailable in isolated mode")
+	}
+	return nil
 }
 
 // SupportsClaudeUsage reports whether Claude-specific usage integrations apply.
@@ -652,4 +700,30 @@ func LetterToIndex(s string) int {
 		n = n*26 + int(c-'a') + 1
 	}
 	return n
+}
+
+// CheckLifecycleLock refuses active or interrupted publication. Callers that
+// read several managed files must also acquire the lock for the actual read.
+func CheckLifecycleLock(projectRoot string) error {
+	_, err := os.Lstat(filepath.Join(projectRoot, ".claude-docker-lifecycle"))
+	if err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("lifecycle operation in progress; retry after it finishes, or run claude-docker recover after interruption")
+	}
+	return nil
+}
+
+// AcquireLifecycleLock shares the host engine's installation mutex. It is used
+// for short Compose reads and env saves; lifecycle mutations use the CLI.
+func AcquireLifecycleLock(projectRoot string) (func(), error) {
+	lock := filepath.Join(projectRoot, ".claude-docker-lifecycle")
+	if err := os.Mkdir(lock, 0700); err != nil {
+		return nil, fmt.Errorf("lifecycle operation in progress; retry after it finishes: %w", err)
+	}
+	release := func() { _ = os.RemoveAll(lock) }
+	owner := fmt.Sprintf(`{"pid":%d,"token":"tui-%d"}`, os.Getpid(), os.Getpid())
+	if err := os.WriteFile(filepath.Join(lock, "owner.json"), []byte(owner), 0600); err != nil {
+		release()
+		return nil, fmt.Errorf("write lifecycle owner: %w", err)
+	}
+	return release, nil
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test_parse_env_equivalence.sh -- Verify the three .env parsers produce
+# test_parse_env_equivalence.sh -- Verify the four .env parsers produce
 # identical output for the same input (cross-language equivalence).
 #
 # The implementations are scripts/lib/parse_env.sh (parse_env_value),
@@ -70,7 +70,7 @@ FAIL=0
 # convention.
 assert_equiv() {
     local fixture="$1" key="$2"
-    local bash_val pwsh_val go_val
+    local bash_val pwsh_val go_val python_val
     bash_val=$(parse_env_value "$fixture" "$key")
     pwsh_val=$(pwsh -NoProfile -Command "
         Import-Module '$PSM1_PATH' -Force
@@ -78,13 +78,23 @@ assert_equiv() {
         if (\$null -eq \$v) { '' } else { \$v }
     ")
     go_val=$("$GO_PROBE" "$fixture" "$key")
+    python_val=$(python3 - "$PROJECT_ROOT/scripts/lib/lifecycle.py" "$fixture" "$key" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("lifecycle", sys.argv[1])
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+print(policy.read_env(Path(sys.argv[2])).get(sys.argv[3], ""))
+PY
+)
 
-    if [[ "$bash_val" == "$pwsh_val" && "$pwsh_val" == "$go_val" ]]; then
+    if [[ "$bash_val" == "$pwsh_val" && "$pwsh_val" == "$go_val" && "$go_val" == "$python_val" ]]; then
         printf '  PASS  %s : %s\n' "$(basename "$fixture")" "$key"
         PASS=$((PASS + 1))
     else
-        printf '  FAIL  %s : %s\n        bash: %q\n        pwsh: %q\n        go:   %q\n' \
-            "$(basename "$fixture")" "$key" "$bash_val" "$pwsh_val" "$go_val"
+        printf '  FAIL  %s : %s\n        bash: %q\n        pwsh: %q\n        go:   %q\n        python: %q\n' \
+            "$(basename "$fixture")" "$key" "$bash_val" "$pwsh_val" "$go_val" "$python_val"
         FAIL=$((FAIL + 1))
     fi
 }

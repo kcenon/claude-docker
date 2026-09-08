@@ -46,9 +46,9 @@ generate_container_settings() {
     local src="$1"
     local dst="$2"
 
-    jq '
-        # 1. Disable sandbox (container IS the isolation boundary)
-        .sandbox.enabled = false
+    jq --arg mode "${ISOLATION_MODE:-shared}" '
+        # 1. Preserve isolated policy; keep the shared/worktree transformation.
+        if $mode == "isolated" then . else .sandbox.enabled = false end
 
         # 2. Strip file-tool permission deny rules that use a glob.
         #
@@ -62,7 +62,7 @@ generate_container_settings() {
         #    written against a Windows host path may be meaningless on Linux,
         #    but a deny rule that does not match is inert, whereas one that
         #    was silently removed is not there to match.
-        | if .permissions.deny then
+        | if $mode != "isolated" and .permissions.deny then
             .permissions.deny = [
                 .permissions.deny[]
                 | select((test("^(Read|Edit|Write|Glob|Grep)\\(") and test("[*]")) | not)
@@ -238,7 +238,11 @@ runtime_bootstrap() {
                     if [ "$pwsh_count" -gt 0 ]; then
                         echo "[entrypoint] settings.json: rewrote $pwsh_count PowerShell hook(s) to bash"
                     fi
-                    echo "[entrypoint] settings.json: container-optimized (sandbox=off, file-tool glob deny rules stripped)"
+                    if [[ "${ISOLATION_MODE:-shared}" == isolated ]]; then
+                        echo "[entrypoint] settings.json: platform hooks adapted; sandbox and deny rules preserved"
+                    else
+                        echo "[entrypoint] settings.json: container-optimized (sandbox=off, file-tool glob deny rules stripped)"
+                    fi
 
                     # Name the removed deny rules, one per line. The summary
                     # line above used to be the only trace, so a rule that

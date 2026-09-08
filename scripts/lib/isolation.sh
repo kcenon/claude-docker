@@ -144,7 +144,7 @@ _isolation_lookup() {
         return 0
     fi
     [[ -n "${PROJECT_ROOT:-}" ]] || return 0
-    parse_env_value "${PROJECT_ROOT}/.env" "$var"
+    parse_env_value "${CLAUDE_DOCKER_ENV_FILE:-${PROJECT_ROOT}/.env}" "$var"
 }
 
 # resolve_isolation_mode
@@ -168,7 +168,7 @@ resolve_isolation_mode() {
     local mode="${ISOLATION_MODE:-}"
 
     if [[ -z "$mode" && -n "${PROJECT_ROOT:-}" ]]; then
-        mode=$(parse_env_value "${PROJECT_ROOT}/.env" "ISOLATION_MODE")
+        mode=$(parse_env_value "${CLAUDE_DOCKER_ENV_FILE:-${PROJECT_ROOT}/.env}" "ISOLATION_MODE")
     fi
 
     if [[ -z "$mode" && -n "$(_isolation_lookup PROJECT_DIR_A)" ]]; then

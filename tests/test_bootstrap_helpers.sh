@@ -69,7 +69,7 @@ assert_contains() {
     fi
 }
 
-mode_of() { stat -c '%a' "$1" 2>/dev/null; }
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 
 WORK="$(mktemp -d)"
 trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
@@ -225,7 +225,7 @@ echo "=== bootstrap-codex.sh: hooks copy does not leak per restart ==="
     runtime_bootstrap >/dev/null 2>&1
     runtime_bootstrap >/dev/null 2>&1
 
-    stale=$(find "$CODEX_HOME" -maxdepth 1 -name 'hooks.stale.*' | wc -l)
+    stale=$(find "$CODEX_HOME" -maxdepth 1 -name 'hooks.stale.*' | wc -l | tr -d '[:space:]')
     echo "$stale" > "$WORK/codex-stale-count"
     [[ -f "$CODEX_HOME/hooks/one.sh" ]] && echo yes > "$WORK/codex-hooks-present" || echo no > "$WORK/codex-hooks-present"
 )
@@ -321,7 +321,7 @@ echo "=== bootstrap-claude.sh: account state directory is 0700 ==="
     mkdir -p "$CLAUDE_CONFIG_DIR"
     chmod 755 "$CLAUDE_CONFIG_DIR"
     runtime_bootstrap >/dev/null 2>&1
-    stat -c '%a' "$CLAUDE_CONFIG_DIR" > "$WORK/claude-home-mode"
+    mode_of "$CLAUDE_CONFIG_DIR" > "$WORK/claude-home-mode"
 )
 
 # The directory holds the OAuth .credentials.json. codex and gemini both

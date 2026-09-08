@@ -510,6 +510,10 @@ install_prerequisite() {
 run_prerequisite_checks() {
     log_step "Checking prerequisites"
 
+    if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
+        log_error "Python 3.9+ is required. Install it with your package manager (brew install python / apt install python3)."
+        return 1
+    fi
     local missing=()
 
     check_docker || missing+=("docker")
@@ -1167,7 +1171,7 @@ start_containers() {
     build_compose_cmd
 
     log_info "Compose command: ${COMPOSE_CMD[*]} up -d"
-    "${COMPOSE_CMD[@]}" up -d 2>&1
+    bash "$SCRIPT_DIR/claude-docker" up 2>&1 || return $?
 
     log_success "Containers started"
 }

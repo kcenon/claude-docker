@@ -26,7 +26,7 @@ one side and the two drifted":
 declares itself a mirror of that file. The drift outlived the commit that
 created it by months.
 
-## The four layers
+## The implementation layers
 
 When you change a rule, ask which of these implement it. Usually more than one.
 
@@ -36,11 +36,13 @@ When you change a rule, ask which of these implement it. Usually more than one.
 | PowerShell | `scripts/*.ps1`, `scripts/ClaudeDocker.psm1`, `scripts/lib/index.ps1` | the Windows-native counterparts of all of the above |
 | Go | `tui/internal/config` | the TUI dashboard, which reads `.env` and the runtime registry itself |
 | container | `scripts/entrypoint.sh`, `scripts/lib/bootstrap-*.sh` | runs inside every container; ships in the image, so a change here needs a `VERSION` bump |
+| shared host policy | `scripts/lib/lifecycle.py`, `scripts/lib/host.sh`, `scripts/lib/host.ps1` | Python 3.9+ engine used by both shell frontends for resolved boundaries, budgets, clone setup, lifecycle locking and scale recovery; TUI mutations call the wrappers |
 
 `tui/internal/config/runtimes.json` is the cross-language single source of
 truth for per-runtime values (binary name, build arg, state directory, config
 paths). **Read a runtime value from the registry rather than restating it.**
-All three languages have an accessor.
+All registry consumers must use an accessor or load this JSON. Keep new lifecycle
+policy in the shared host engine instead of duplicating it in each frontend.
 
 ## The tests that hold the layers together
 
@@ -49,13 +51,20 @@ a fixture, which is what makes them able to notice drift:
 
 | Test | Pins |
 |------|------|
-| `tests/test_parse_env_equivalence.sh` | bash `parse_env_value` vs PowerShell `Get-EnvValue` produce identical output for identical input |
+| `tests/test_parse_env_equivalence.sh` | Bash, PowerShell, Go and Python produce identical parsed values for identical input |
 | `tests/test_compose_generator_equivalence.sh` | `generate-compose.sh` and `generate-compose.ps1` emit byte-identical compose files |
 | `tests/test_runtime_registry_equivalence.sh` | all three registry readers return byte-identical values for every (runtime, field) pair |
 | `tests/test_installer_github_equivalence.sh` | both installers write the same GitHub block into `.env` in per-account mode |
 | `tests/test_isolation_modes.sh` | the shell, PowerShell and compose layers accept and refuse the same `ISOLATION_MODE` values |
 | `tests/test_num_accounts_precedence.sh` | all four shell-side `NUM_ACCOUNTS` readers use one precedence order |
 | `tests/test_bash32_portability.sh` | no bash 4+ construct enters `scripts/` or `tests/` |
+| `tests/test_lifecycle.py` | real Bash/PowerShell generators, native exit codes, transaction fault injection, setup preview, recovery and resolved boundary mutations |
+
+Use disposable checkouts with placeholder `.env` inputs for generation and
+resolution. `tests/test_resolved_boundaries.py` needs the Compose plugin but no
+daemon. The live harness and container benchmark require a daemon; their plans
+and skips are not runtime evidence. See `docs/ISSUE-335-VALIDATION.md` for the
+recorded checks and outstanding platform/integration evidence.
 
 The `bash-tests` job in `.github/workflows/ci.yml` is the authoritative list;
 this table is the subset that exists to catch cross-layer drift specifically.
