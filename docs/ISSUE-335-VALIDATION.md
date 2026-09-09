@@ -178,5 +178,54 @@ platform-specific signal skips; native command exits remain separate CI steps.
 No live provider credentials were discovered or reused. The exact opt-in file
 schema, bounded commands, cleanup/ref handling, CI secret scope and reproduction
 commands are in [ISSUE-335-WORKFLOWS.md](ISSUE-335-WORKFLOWS.md). Missing credentials
-produce skipped cases, and `--require-complete` fails on those skips. PR #395 stays
-a draft and references `Refs #335` while mandatory evidence/review remains absent.
+produce skipped cases, and `--require-complete` fails on those skips. PR #395
+merged as `05cbfc0e1025c2e3ae506504a9d66576ee4fe804`. Its final PR head
+`f04f50f432d935c5d222124367462141fb69deb0` passed 65 checks; the final matrix used
+merge checkout `8eecb26d9a38ac2b846faacc11a0eb93e3756cea`. Those are pre-merge
+results, not a new test execution of the squash commit. Issue #335 remains open
+at 15/17 criteria. Follow-ups use `Refs #335` while required evidence or review
+is missing.
+
+## Terminal and completion follow-up
+
+This follow-up starts from `develop` at `05cbfc0e1025c2e3ae506504a9d66576ee4fe804`
+in a separate worktree. Existing installation configuration and credentials were
+not used. Image inputs, resource defaults and the measured workload are unchanged.
+
+| Requirement | Reviewable implementation/evidence | Remaining prerequisite |
+|---|---|---|
+| Wrapper and actual TUI attach | POSIX PTY/Windows ConPTY adapters; both accounts and every runtime; fresh hook/statusline challenges; dashboard help response after runtime exit | Live installed-runtime tests with explicit credentials; native Windows execution |
+| Correct terminal failures and cleanup | Native child/descendant cleanup, output drain, timeout/early exit tests; actual compiled UI with wrong-account and failed-child controls | ConPTY CI execution and real container-side cleanup on each backend |
+| Credential identity and file privacy | Open-handle owner/mode/DACL checks; no caller ACL changes; GitHub identity must match; atomic absence lease on ref creation and SHA lease on deletion | Native Windows ACL results and purpose-provided accounts/remote |
+| Compatible requested inner sandbox | Effective restrictive settings plus authenticated Bash file work and a distinct mount namespace; capability refusal remains separate | Compatible host/kernel/runtime and explicit Claude credentials |
+| Complete workflow reports | 62 expected rows for all runtimes, missing/duplicate/status/provenance/cleanup rejection; setup failures retain skipped prerequisites | Actual complete authenticated/platform reports |
+| Backend and resource provenance | Native host/daemon profile assertions; enforced cgroup CPU/memory/PID, scratch and outer security checks; explicit Desktop application version | Desktop, WSL2 and rootless Linux runs |
+| Reviewed performance proposals | Report hashes/source/image/workload/host bound in `budget-review.json`; pending decisions rejected by `--require-accepted` | Explicit maintainer acceptance with reviewer/date/link/accepted regressions |
+
+Defect regressions were demonstrated before each fix:
+
+- Report coverage: four failures against the original writer, including missing
+  cases returning exit code 0 and zero cases labelled `complete`.
+- Dashboard attach failure: `failed attach disappeared on dashboard return: ""`
+  against the original `sessionFinishedMsg` handler.
+- Remote-ref race: `WorkflowFailure not raised` when the original push replaced
+  a concurrently created ref. The new local bare-remote test preserves that ref.
+
+The native terminal CI matrix now includes Linux, macOS and Windows. Its
+placeholder process adapter does not establish Docker Desktop compatibility.
+Local execution is macOS arm64 with Python 3.9.6, Bash 3.2, PowerShell 7.6.3 and
+Go 1.27.1. No local Docker daemon is available. Provider credentials, a disposable
+authenticated remote, native Windows/WSL2/rootless hosts and a maintainer budget
+decision have not been supplied. No authenticated calls, external pushes or new
+container measurements are claimed. Reproduction commands and exact report
+scope are in [the workflow guide](ISSUE-335-WORKFLOWS.md).
+
+[Local verification summary](benchmarks/issue-335/local-terminal-verification-darwin-arm64.json):
+33 Bash suites and eight portable PowerShell suites passed. The 14 Python suites
+passed with 99 unit checks (90 passed, nine platform-specific skips), plus the
+resolved Compose model check. Go race tests, vet, formatting, all 12 dashboard
+benchmark smoke cases, 56 shellcheck inputs, workflow syntax validation and
+Windows cross-builds passed. Cross-builds are not native Windows execution.
+The retained full container report remains valid at nine cells/45 samples; its
+budget review is pending. No image inputs changed, so no image tag or generated
+Compose changes are needed.

@@ -587,6 +587,11 @@ connectivity is a separate test so an outage has a useful diagnosis. The
 recreation checks, the explicit credential/remote contract, bounded provider
 sessions, hook/statusline dispatch and daemon recovery commands. Missing
 credentials are reported as skipped; completion validation rejects those skips.
+The authenticated profile now checks both account selections through the wrapper
+and compiled TUI, using POSIX PTYs or Windows ConPTY. Native process-adapter CI
+tests remain separate from live Desktop/WSL2/rootless runtime evidence. The
+requested-inner-sandbox scenario must perform authenticated Bash tool work in a
+distinct mount namespace; a successful refusal test cannot satisfy that case.
 
 On the measured Linux runner (AppArmor, built-in seccomp, no added capabilities),
 the requested sandbox's actual namespace probe is unavailable. Both ordinary and

@@ -8,14 +8,40 @@ from pathlib import Path
 import subprocess
 import tempfile
 import textwrap
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from container_fixture import ROOT
+from test_credential_file import make_private_fixture
 from workflow_support import (AuthenticatedFixture, WorkflowFailure, finish,
-                              load_credentials, record, runtime_command)
+                              load_credentials, provenance, record, runtime_command)
 
 
 class WorkflowSupportTest(unittest.TestCase):
+    def test_local_daemon_context_survives_private_home_without_publishing_endpoint(self):
+        endpoint = "unix:///private/test-owned-endpoint-canary.sock"
+        fixture = SimpleNamespace(host_env={"DOCKER_CONTEXT": "test-desktop"}, image="test-image", uid=1001, gid=1001)
+        def run(argv, **unused):
+            if argv[:3] == ["docker", "context", "inspect"]:
+                return json.dumps([{"Endpoints": {"docker": {"Host": endpoint}}}])
+            self.assertEqual(endpoint, fixture.host_env["DOCKER_HOST"])
+            self.assertNotIn("DOCKER_CONTEXT", fixture.host_env)
+            if argv[:2] == ["docker", "info"]:
+                return json.dumps({"ServerVersion": "fixture", "OperatingSystem": "Docker Desktop"})
+            if argv[:3] == ["docker", "image", "inspect"]:
+                return json.dumps([{"Id": "sha256:" + "1" * 64}])
+            return ""
+        fixture.run = run
+        with patch("benchmark_isolation.source_fingerprint", return_value="2" * 64):
+            result = provenance(fixture)
+        self.assertNotIn("endpoint-canary", json.dumps(result))
+        self.assertEqual(endpoint, fixture.host_env["DOCKER_HOST"])
+
+    def test_remote_daemon_is_refused_before_fixture_mounts(self):
+        fixture = SimpleNamespace(host_env={"DOCKER_HOST": "ssh://fixture.invalid"})
+        with self.assertRaisesRegex(WorkflowFailure, "^workflow_requires_local_daemon_endpoint$"):
+            provenance(fixture)
+
     def test_dispatch_credentials_are_private_removed_and_not_in_child_environment(self):
         workflow = (ROOT / ".github/workflows/isolation-authenticated.yml").read_text()
         embedded = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split("          PY\n", 1)[0])
@@ -71,6 +97,7 @@ class WorkflowSupportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "credentials.json"
             path.touch(mode=0o600)
+            make_private_fixture(path)
             data = {"disposable": True, "github_remote": "https://github.com/fixture/disposable.git",
                     "runtimes": {"claude": {"model": "fixture-model", "accounts": [
                         {"api_key": "canary-provider-a", "github_user": "fixture-a", "github_token": "canary-gh-a"},

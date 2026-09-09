@@ -185,7 +185,31 @@ repositories/dependencies and unrelated daemon workloads still need measurement.
 Mac/Windows Desktop and rootless results are required before extending this
 profile to those backends.
 
-Budget review is pending in [PR #395](https://github.com/kcenon/claude-docker/pull/395).
+Budget review remains pending after [PR #395](https://github.com/kcenon/claude-docker/pull/395) merged.
 No maintainer acceptance date or accepted regression has been recorded. Issue
 #335's budget/capacity criterion stays open until that review and the remaining
 workflow/platform evidence are available.
+
+The concrete [review record](benchmarks/issue-335/budget-review.json) binds each
+proposal to the retained report's SHA-256, source identity, workload and host.
+It includes all nine Linux metrics and both separately scoped macOS dashboard
+budgets, with explicit units and per-account/batch scope. Acceptance values,
+reviewer, date, decision link and accepted regressions are deliberately unset.
+Populate them only from an explicit maintainer decision; a merge or benchmark
+pass is not approval. The raw measurement files retain their original provenance
+and pending-review field even after a separate review record is accepted.
+
+```bash
+python3 tests/benchmark_report.py docs/benchmarks/issue-335/container-linux-x86_64-claude.json --require-full
+python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json
+# Exits nonzero while the decision is pending or rejected.
+python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json --require-accepted
+```
+
+The review validator checks bindings and decision-field completeness; a reviewer
+must verify the linked maintainer decision itself. This follow-up changes test
+coverage and attach-error display, without changing the measured npm workload,
+container image, resource/security configuration, sampling implementation or
+`Manager.ListAccounts` benchmark. The retained measurements were revalidated,
+not relabelled as measurements of the follow-up tree. Rerun the full matrix when
+those measurement inputs change, and keep other backend reports separate.

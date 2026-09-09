@@ -7,14 +7,14 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
-import subprocess
-import sys
-import time
 import uuid
 from container_fixture import ROOT, policy
 from workflow_support import (AuthenticatedFixture, WorkflowFailure, finish,
-                              load_credentials, provenance, record, runtime_command)
+                              expected_workflows, load_credentials, provenance, record, runtime_command)
+from workflow_terminal import arm_markers, build_tui, markers_match, terminal_attach
+from workflow_environment import PROFILES, verify_environment
 
 
 def writable_workflow(fixture, index, recreated=False):
@@ -67,16 +67,23 @@ def prepare_auth(fixture, credentials):
         service["environment"]["GH_HOST"] = "github.com"
 
 
-def provider_workflow(fixture, index, credentials):
+def provider_workflow(fixture, index, credentials, sandbox=False):
     workspace = fixture.workspaces[index]
     nonce = uuid.uuid4().hex
     (workspace / "integration-input.txt").write_text(nonce + "\n")
     destination = workspace / "integration-output.txt"
     destination.unlink(missing_ok=True)
-    if fixture.runtime == "claude":
-        (fixture.states[index] / "hook-dispatched").unlink(missing_ok=True)
+    challenge = arm_markers(fixture, index) if fixture.runtime == "claude" else None
     prompt = "Read integration-input.txt and copy its exact contents to integration-output.txt in the current directory. Use the file tools. Do no other work."
     command = runtime_command(fixture.runtime, fixture.spec, credentials["model"], prompt, credentials["claude_budget"])
+    namespace = workspace / "sandbox-namespace.txt"
+    if sandbox:
+        namespace.unlink(missing_ok=True)
+        shell = "cat integration-input.txt > integration-output.txt; readlink /proc/self/ns/mnt > sandbox-namespace.txt"
+        prompt = "Use the Bash tool once to run exactly this command: " + shell + ". Do no other work."
+        command = runtime_command(fixture.runtime, fixture.spec, credentials["model"], prompt, credentials["claude_budget"])
+        command[command.index("--allowedTools") + 1] = "Bash"
+        outer_namespace = fixture.execute(index, "readlink", "/proc/self/ns/mnt").strip()
     help_text = fixture.execute(index, fixture.spec["binary"], "--help")
     if fixture.runtime == "codex":
         help_text += fixture.execute(index, fixture.spec["binary"], "exec", "--help")
@@ -89,12 +96,16 @@ def provider_workflow(fixture, index, credentials):
     if any(flag not in help_text for flag in required):
         raise WorkflowFailure("unsupported_runtime_version")
     fixture.execute(index, "timeout", "--signal=TERM", "--kill-after=5s", str(credentials["timeout"]) + "s",
-                    *command, timeout=credentials["timeout"] + 20)
+                    *(["entrypoint.sh"] if sandbox else []), *command, timeout=credentials["timeout"] + 20)
     if not destination.is_file() or destination.read_text() != nonce + "\n":
         raise WorkflowFailure("provider_work_result_missing")
-    if fixture.runtime == "claude" and not (fixture.states[index] / "hook-dispatched").exists():
+    if challenge and not markers_match(fixture, index, challenge, statusline=False):
         raise WorkflowFailure("runtime_hook_not_dispatched")
-    return {"runtime_version": fixture.execute(index, fixture.spec["binary"], "--version").strip(),
+    if sandbox and (not namespace.is_file() or namespace.read_text().strip() == outer_namespace
+                    or not re.fullmatch(r"mnt:\[[0-9]+\]", namespace.read_text().strip())):
+        raise WorkflowFailure("runtime_inner_namespace_not_observed")
+    return {"inner_sandbox": "authenticated_tool_namespace_verified" if sandbox else "not_requested",
+            "runtime_version": fixture.execute(index, fixture.spec["binary"], "--version").strip(),
             "model": credentials["model"], "auth_method": "explicit account API key",
             "result_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
             "hook_dispatch": "passed" if fixture.runtime == "claude" else "not_applicable"}
@@ -113,8 +124,18 @@ def push_workflow(fixture, index, remote):
     cleanup = {"runtime": fixture.runtime, "account": index + 1, "ref": reference, "commit": commit,
                "cleanup": "unverified"}
     fixture.remote_refs.append(cleanup)
+    created = False
     try:
-        fixture.execute(index, "git", "push", remote, commit + ":" + reference, timeout=60)
+        # Absence is checked atomically on the remote, including a ref created
+        # by somebody else after the earlier ls-remote probe.
+        result = fixture.execute(index, "git", "push", "--porcelain", "--force-with-lease=" + reference + ":",
+                                 remote, commit + ":" + reference, timeout=60)
+        # Git can report success/up-to-date without checking a lease when a
+        # racing ref already points at this SHA. Only '*' proves creation.
+        created = any(line.startswith("*\t") and line.split("\t")[1] == commit + ":" + reference
+                      for line in result.splitlines())
+        if not created:
+            raise WorkflowFailure("remote_ref_creation_not_verified")
         actual = fixture.execute(index, "git", "ls-remote", "--exit-code", remote, reference, timeout=30).split()[0]
         if actual != commit:
             raise WorkflowFailure("remote_commit_mismatch")
@@ -123,6 +144,9 @@ def push_workflow(fixture, index, remote):
         # creation. It never permits overwriting an existing branch history.
         current = fixture.probe(index, "git", "ls-remote", "--exit-code", remote, reference, timeout=30)
         if current.returncode == 0:
+            if not created:
+                cleanup["cleanup"] = "creation_unconfirmed_deletion_refused"
+                raise WorkflowFailure("remote_creation_unconfirmed_cleanup_refused")
             if current.stdout.split()[0] != commit:
                 cleanup["cleanup"] = "ref_changed_deletion_refused"
                 raise WorkflowFailure("remote_ref_changed_cleanup_refused")
@@ -136,45 +160,40 @@ def push_workflow(fixture, index, remote):
     return {"created_and_removed_ref": reference, "commit": commit}
 
 
-def terminal_statusline(fixture, index):
-    if os.name == "nt":
-        raise WorkflowFailure("terminal_probe_requires_posix_pty")
-    import pty
-    import select
+def verify_identity(fixture, index, credentials):
+    actual = fixture.execute(index, "gh", "api", "user", "--jq", ".login", timeout=30).strip()
+    if actual.casefold() != credentials["accounts"][index]["github_user"].casefold():
+        raise WorkflowFailure("github_account_mismatch")
+    return {"expected_account_match": True}
+
+
+def requested_sandbox(fixture, index, credentials):
     state = fixture.states[index]
-    marker = state / "statusline-dispatched"
-    marker.unlink(missing_ok=True)
-    master, slave = pty.openpty()
-    prefix = (["pwsh", "-NoProfile", "-File", str(fixture.root / "scripts/claude-docker.ps1")]
-              if fixture.language == "powershell" else ["bash", str(fixture.root / "scripts/claude-docker")])
-    env = {key: value for key, value in fixture.host_env.items() if key != "HOME"}
-    process = subprocess.Popen(prefix + [fixture.runtime, fixture.services[index]], cwd=fixture.root, env=env,
-                               stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
-    os.close(slave)
-    began, accepted = time.monotonic(), False
+    paths = [state / "local-config/settings.json", state / "settings.json"]
+    originals = {path: path.read_bytes() for path in paths}
     try:
-        while time.monotonic() - began < 30 and process.poll() is None:
-            if marker.exists():
-                return {"statusline_dispatch": "passed", "entry_point": fixture.language + " wrapper", "model_tasks_submitted": 0}
-            if select.select([master], [], [], 0.1)[0]:
-                output = os.read(master, 8192)
-                # The terminal sees only this test-owned repository. No task
-                # is submitted; headless sessions separately prove API use.
-                if not accepted and b"trust" in output.lower():
-                    os.write(master, b"\r")
-                    accepted = True
-        raise WorkflowFailure("terminal_statusline_not_observed")
+        for path in paths:
+            settings = json.loads(path.read_text())
+            settings["sandbox"] = {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False}
+            path.write_text(json.dumps(settings))
+        # The actual entrypoint probes this account's current security policy.
+        # A refusal is a failed authenticated case, never a successful session.
+        fixture.execute(index, "entrypoint.sh", "true", timeout=60)
+        effective = json.loads(fixture.execute(index, "cat", fixture.spec["containerConfigMount"] + "/settings.json"))["sandbox"]
+        if (effective.get("enabled") is not True or effective.get("failIfUnavailable") is not True
+                or effective.get("allowUnsandboxedCommands") is not False
+                or effective.get("enableWeakerNestedSandbox") or effective.get("enableWeakerNetworkIsolation")
+                or effective.get("filesystem", {}).get("disabled")):
+            raise WorkflowFailure("effective_inner_sandbox_not_restrictive")
+        return provider_workflow(fixture, index, credentials, sandbox=True)
     finally:
-        try:
-            os.write(master, b"\x03\x03")
-            process.wait(timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
-            process.kill()
-            process.wait(timeout=5)
-        os.close(master)
-        # Terminate any container-side terminal child as well.
-        fixture.run(fixture.cmd + ["stop", fixture.services[index]], timeout=60)
-        fixture.up()
+        for path, content in originals.items():
+            path.write_bytes(content)
+
+
+def skip(report, runtime, name, reason, account=None):
+    report["cases"].append({"runtime": runtime, "account": account, "name": name,
+                            "status": "skipped", "reason": reason})
 
 
 def run_runtime(runtime, args, report):
@@ -189,18 +208,23 @@ def run_runtime(runtime, args, report):
             prepare_auth(fixture, credentials)
         fixture.materialize_for_wrapper()
         fixture.wrapper("up", "--no-build", "--wait", "--wait-timeout", "90")
+        if not record(report, runtime, "runtime_environment", lambda: verify_environment(
+                fixture, report["provenance"][runtime], args.profile, args.desktop_version)):
+            raise WorkflowFailure("runtime_environment_prerequisite_failed")
         for index in range(2):
             record(report, runtime, "writable_paths", lambda i=index: writable_workflow(fixture, i), index + 1)
             record(report, runtime, "offline_package_workflow", lambda i=index: package_workflow(fixture, i), index + 1)
             if credentials:
+                identity = record(report, runtime, "authenticated_identity",
+                                  lambda i=index: verify_identity(fixture, i, credentials), index + 1)
                 passed = record(report, runtime, "authenticated_session", lambda i=index: provider_workflow(fixture, i, credentials), index + 1)
-                if passed:
+                if passed and identity:
                     record(report, runtime, "authenticated_push", lambda i=index: push_workflow(fixture, i, credentials["remote"]), index + 1)
                 else:
                     report["cases"].append({"runtime": runtime, "account": index + 1, "name": "authenticated_push",
                                             "status": "skipped", "reason": "session_prerequisite_failed"})
             else:
-                for name in ("authenticated_session", "authenticated_push"):
+                for name in ("authenticated_identity", "authenticated_session", "authenticated_push"):
                     report["cases"].append({"runtime": runtime, "account": index + 1, "name": name,
                                             "status": "skipped", "reason": "explicit_test_credentials_missing"})
         fixture.run(fixture.cmd + ["up", "--force-recreate", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
@@ -211,12 +235,23 @@ def run_runtime(runtime, args, report):
         else:
             report["cases"].append({"runtime": runtime, "account": 1, "name": "authenticated_after_recreation",
                                     "status": "skipped", "reason": "explicit_test_credentials_missing"})
-        if runtime == "claude":
-            if credentials and args.terminal:
-                record(report, runtime, "terminal_statusline", lambda: terminal_statusline(fixture, 0), 1)
-            else:
-                report["cases"].append({"runtime": runtime, "account": 1, "name": "terminal_statusline",
-                                        "status": "skipped", "reason": "explicit_terminal_and_credentials_required"})
+        binary = None
+        if credentials and args.terminal:
+            binary = build_tui(fixture)
+        for index in range(2):
+            for entry_point in ("wrapper", "tui"):
+                name = entry_point + "_attach"
+                if credentials and args.terminal:
+                    record(report, runtime, name, lambda i=index, entry=entry_point:
+                           terminal_attach(fixture, i, entry, binary), index + 1)
+                else:
+                    skip(report, runtime, name, "explicit_terminal_and_credentials_required", index + 1)
+            if runtime == "claude":
+                if credentials and args.requested_inner_sandbox:
+                    record(report, runtime, "requested_inner_sandbox", lambda i=index:
+                           requested_sandbox(fixture, i, credentials), index + 1)
+                else:
+                    skip(report, runtime, "requested_inner_sandbox", "explicit_sandbox_and_credentials_required", index + 1)
     finally:
         report.setdefault("remote_refs", []).extend(fixture.remote_refs)
         record(report, runtime, "fixture_cleanup", fixture.close)
@@ -229,13 +264,17 @@ def main():
     parser.add_argument("--runtime", choices=tuple(registry) + ("all",), default="all")
     parser.add_argument("--language", choices=("bash", "powershell"), default="powershell" if os.name == "nt" else "bash")
     parser.add_argument("--credentials-file", type=Path)
-    parser.add_argument("--terminal", action="store_true")
+    parser.add_argument("--terminal", action="store_true", help="Exercise wrapper and compiled TUI attach for both accounts")
+    parser.add_argument("--requested-inner-sandbox", action="store_true", help="Require authenticated Claude Bash tool execution inside its inner sandbox")
+    parser.add_argument("--profile", choices=PROFILES, help="Assert the observed native host/backend matches this profile")
+    parser.add_argument("--desktop-version", help="Docker Desktop application version from About, required on Desktop profiles")
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("runtime-workflows.json"))
     parser.add_argument("--plan", action="store_true")
     args = parser.parse_args()
     runtimes = list(registry) if args.runtime == "all" else [args.runtime]
-    report = {"schema": 1, "started_at": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
+    report = {"schema": 2, "runtimes": runtimes, "profile_requested": args.profile,
+              "terminal_requested": args.terminal, "sandbox_requested": args.requested_inner_sandbox, "started_at": datetime.now(timezone.utc).isoformat(), "platform": platform.platform(),
               "language": args.language, "authenticated_requested": bool(args.credentials_file), "cases": []}
     if args.plan:
         print(json.dumps({"runtimes": runtimes, "accounts_per_runtime": 2, "executed": 0,
@@ -245,6 +284,11 @@ def main():
         parser.error("--image is required for executed workflows")
     for runtime in runtimes:
         record(report, runtime, "runtime_workflow", lambda r=runtime: run_runtime(r, args, report))
+    # Setup exceptions still retain every promised row. The aggregate failure
+    # remains a failure; prerequisite skips explain why the rest did not run.
+    present = {(row["runtime"], row.get("account"), row["name"]) for row in report["cases"]}
+    for runtime, account, name in sorted(expected_workflows(runtimes) - present, key=str):
+        skip(report, runtime, name, "runtime_setup_or_prerequisite_failed", account)
     raise SystemExit(finish(report, args.output, args.require_complete))
 
 
