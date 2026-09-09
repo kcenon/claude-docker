@@ -70,7 +70,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case sessionFinishedMsg:
-		// After an attached agent session ends, refresh account list.
+		// A failed child must stay visible after Bubble Tea restores the screen.
+		if msg.err != nil {
+			m = m.toast(opResultText("Attach", msg.err), statusErr)
+			return m, tea.Batch(m.Refresh(), m.toastExpireCmd())
+		}
 		return m, m.Refresh()
 
 	case dockerOpDoneMsg:

@@ -1,11 +1,11 @@
 """Bounded integration execution with reports that never contain command output."""
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
 from urllib.parse import urlsplit
 from container_fixture import ContainerFixture, policy
+from credential_file import read_private_file
 
 
 class WorkflowFailure(Exception):
@@ -62,10 +62,12 @@ def load_credentials(path, runtime):
     path = Path(path)
     if not path.is_file() or path.is_symlink():
         raise WorkflowFailure("credentials_file_required")
-    if os.name != "nt" and path.stat().st_mode & 0o077:
-        raise WorkflowFailure("credentials_file_must_be_private")
     try:
-        data = json.loads(path.read_text())
+        content = read_private_file(path)
+    except (OSError, ValueError):
+        raise WorkflowFailure("credentials_file_must_be_private") from None
+    try:
+        data = json.loads(content)
         if data.get("disposable") is not True:
             raise ValueError()
         remote = urlsplit(data["github_remote"])
@@ -130,6 +132,18 @@ def provenance(fixture):
     """Allowlist host/daemon/image details; never publish the resolved model."""
     from benchmark_isolation import source_fingerprint
     from container_fixture import ROOT
+    # Wrappers and the TUI must discover only fixture HOME/state. Freeze the
+    # selected local daemon endpoint first so that changing HOME cannot switch
+    # a Desktop/rootless context back to a different daemon's default socket.
+    if fixture.host_env.get("DOCKER_CONTEXT") or not fixture.host_env.get("DOCKER_HOST"):
+        contexts = json.loads(fixture.run(["docker", "context", "inspect"], timeout=10))
+        endpoint = contexts[0]["Endpoints"]["docker"]["Host"]
+    else:
+        endpoint = fixture.host_env["DOCKER_HOST"]
+    if not endpoint.startswith(("unix://", "npipe://")):
+        raise WorkflowFailure("workflow_requires_local_daemon_endpoint")
+    fixture.host_env["DOCKER_HOST"] = endpoint
+    fixture.host_env.pop("DOCKER_CONTEXT", None)
     info = json.loads(fixture.run(["docker", "info", "--format", "{{json .}}"], timeout=15))
     image = json.loads(fixture.run(["docker", "image", "inspect", fixture.image]))[0]
     fixture.image = image["Id"]
@@ -141,13 +155,66 @@ def provenance(fixture):
             "container_uid": fixture.uid, "container_gid": fixture.gid}
 
 
+def expected_workflows(runtimes):
+    expected = set()
+    for runtime in runtimes:
+        for name in ("runtime_workflow", "fixture_cleanup", "runtime_environment"):
+            expected.add((runtime, None, name))
+        for account in (1, 2):
+            for name in ("writable_paths", "offline_package_workflow", "authenticated_identity",
+                         "authenticated_session", "authenticated_push", "wrapper_attach", "tui_attach"):
+                expected.add((runtime, account, name))
+            if runtime == "claude":
+                expected.add((runtime, account, "requested_inner_sandbox"))
+        for name in ("writable_paths_after_recreation", "package_after_recreation", "authenticated_after_recreation"):
+            expected.add((runtime, 1, name))
+    return expected
+
+
+def coverage_errors(report):
+    cases = report["cases"]
+    keys = [(row.get("runtime"), row.get("account"), row.get("name")) for row in cases]
+    errors = []
+    if not cases:
+        errors.append("no_cases")
+    if len(keys) != len(set(keys)):
+        errors.append("duplicate_cases")
+    if any(row.get("status") not in ("passed", "failed", "skipped") for row in cases):
+        errors.append("invalid_case_status")
+    if any(row.get("cleanup") != "absence_verified" for row in report.get("remote_refs", [])):
+        errors.append("remote_cleanup_unverified")
+    if report.get("schema", 1) not in (1, 2):
+        errors.append("unsupported_schema")
+    if report.get("schema") == 2:
+        from container_fixture import ROOT
+        registry = json.loads((ROOT / "tui/internal/config/runtimes.json").read_text())["runtimes"]
+        runtimes = report.get("runtimes", [])
+        if (not runtimes or len(runtimes) != len(set(runtimes)) or any(r not in registry for r in runtimes)):
+            errors.append("invalid_runtime_selection")
+        expected = expected_workflows(runtimes)
+        if expected - set(keys):
+            errors.append("missing_required_cases")
+        if set(keys) - expected:
+            errors.append("unexpected_cases")
+        for runtime in runtimes:
+            evidence = report.get("provenance", {}).get(runtime, {})
+            if (not re.fullmatch(r"[0-9a-f]{40}", evidence.get("source_commit", ""))
+                    or not re.fullmatch(r"[0-9a-f]{64}", evidence.get("source_fingerprint_sha256", ""))
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", evidence.get("image_id", ""))
+                    or type(evidence.get("source_dirty")) is not bool or not evidence.get("daemon")):
+                errors.append("runtime_provenance_missing:" + runtime)
+    return errors
+
+
 def finish(report, path, require_complete=False):
     counts = {status: sum(row["status"] == status for row in report["cases"])
               for status in ("passed", "failed", "skipped")}
     report["counts"] = dict(counts, executed=counts["passed"] + counts["failed"], planned=len(report["cases"]))
-    report["status"] = "failed" if counts["failed"] else ("incomplete" if counts["skipped"] else "complete")
+    errors = coverage_errors(report)
+    report["coverage_errors"] = errors
+    report["status"] = "failed" if counts["failed"] or errors else ("incomplete" if counts["skipped"] else "complete")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"status": report["status"], "counts": report["counts"]}))
-    return 1 if counts["failed"] or require_complete and counts["skipped"] or not report["cases"] else 0
+    return 1 if counts["failed"] or errors or require_complete and counts["skipped"] else 0

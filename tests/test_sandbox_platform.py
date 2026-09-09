@@ -35,7 +35,8 @@ def main():
         fixture.prepare()
         fixture.up()
         for degraded in (False, True):
-            record(report, "claude", "requested_sandbox", lambda d=degraded: verify(fixture, d), 1)
+            name = "requested_sandbox_degraded_override" if degraded else "requested_sandbox"
+            record(report, "claude", name, lambda d=degraded: verify(fixture, d), 1)
     except Exception:
         report["cases"].append({"name": "startup", "status": "failed", "reason": "fixture_startup_failed"})
     finally:

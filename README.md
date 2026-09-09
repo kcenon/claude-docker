@@ -1332,5 +1332,7 @@ See [migration, rollback and platform limits](docs/ISOLATION.md) and the
 samples, with four accounts as the largest tested count for its deterministic
 npm workload. [Workflow reproduction](docs/ISSUE-335-WORKFLOWS.md) covers package
 writes, recreation, explicit authenticated integration and interruption recovery.
+The opt-in profile includes both accounts through the shell wrapper and compiled
+TUI, with native PTY/ConPTY support and a separate requested-inner-sandbox check.
 Authenticated sessions, Desktop/rootless runs and performance-budget review
 remain necessary before claiming all of issue #335 is verified.
