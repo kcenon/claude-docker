@@ -599,6 +599,22 @@ def copy_windows_security(source, destination):
     # entries as explicit grants. Moving the prepared file avoids that merge.
     if not set_security(str(destination), information, descriptor):
         raise PolicyError("Cannot preserve existing Windows file permissions.")
+    if control.value & 0x0400:  # SE_DACL_AUTO_INHERITED
+        # SetFileSecurity retains legacy ACLs but clears this modern-inheritance
+        # marker. Use the modern setter only for descriptors already carrying
+        # it, so legacy inherited grants are never converted to explicit ones.
+        present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), ctypes.c_void_p()
+        get_dacl = advapi.GetSecurityDescriptorDacl
+        get_dacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int),
+                            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_int)]
+        if not get_dacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)) or not present.value:
+            raise PolicyError("Cannot read Windows file access rules.")
+        set_named = advapi.SetNamedSecurityInfoW
+        set_named.argtypes = [ctypes.c_wchar_p, ctypes.c_int, ctypes.c_ulong,
+                              ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        set_named.restype = ctypes.c_ulong
+        if set_named(str(destination), 1, information & ~0x3, None, None, dacl, None):
+            raise PolicyError("Cannot preserve Windows file inheritance metadata.")
 
 
 def atomic_file(source, destination, mode=None):

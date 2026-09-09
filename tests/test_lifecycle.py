@@ -435,10 +435,16 @@ class LifecycleTest(unittest.TestCase):
     def test_windows_protected_file_acl_survives_publication_and_rollback(self):
         self.windows_acl_roundtrip(protected=True)
 
-    def windows_acl_roundtrip(self, protected):
+    @unittest.skipUnless(os.name == "nt", "Native Windows ACL validation requires Windows")
+    def test_windows_automatic_acl_survives_publication_and_rollback(self):
+        self.windows_acl_roundtrip(protected=False, auto_inherit=True)
+
+    def windows_acl_roundtrip(self, protected, auto_inherit=False):
         self.generate()
         if protected:
             policy.protect(self.root / ".env")
+        elif auto_inherit:
+            self.real_run(["icacls", str(self.root / ".env"), "/inheritance:e"])
         helper = self.root / "read-acl.ps1"
         helper.write_text("param([string]$TargetPath)\n(Get-Acl -LiteralPath $TargetPath).Sddl\n")
         def acl():
