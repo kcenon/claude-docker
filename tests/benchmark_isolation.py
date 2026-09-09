@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import sys
 import threading
@@ -166,9 +167,11 @@ def measure_cell(mode, count, args, cell=None, checkpoint=lambda: None):
                 status="running", cleanup="pending", samples=[])
     fixture = ContainerFixture(mode, count, args.runtime, args.image)
     try:
+        cell["phase"] = "fixture_prepare"
         fixture.prepare()
         cell.update(setup_seconds=fixture.setup_seconds, manifest=fixture.manifest)
         began = time.perf_counter()
+        cell["phase"] = "initial_start"
         fixture.up()
         cell["initial_start_seconds"] = time.perf_counter() - began
         identifiers = fixture.run(fixture.cmd + ["ps", "-q"]).split()
@@ -177,9 +180,11 @@ def measure_cell(mode, count, args, cell=None, checkpoint=lambda: None):
         cell["runtime_versions"] = [fixture.execute(i, fixture.spec["binary"], "--version").strip() for i in range(count)]
         cell["tool_versions"] = [{"node": fixture.execute(i, "node", "--version").strip(),
                                   "npm": fixture.execute(i, "npm", "--version").strip()} for i in range(count)]
+        cell["phase"] = "initial_workload"
         cell["initial_workload"] = workloads(fixture)
         checkpoint()
         for index in range(args.samples):
+            cell["phase"] = "sample_" + str(index + 1)
             fixture.run(fixture.cmd + ["stop"], timeout=180)
             began = time.perf_counter()
             fixture.up()
@@ -233,7 +238,9 @@ def collect(args, report):
         validate(report)
     except BaseException as error:
         report.update(status="incomplete", finished_at=now())
-        report["failures"].append({"stage": "measurement", "type": type(error).__name__})
+        diagnostic = re.search(r"Offline npm workload failed at [a-z]+; exit [0-9]+; [A-Z,]*", str(error))
+        report["failures"].append({"stage": report["cells"][-1].get("phase", "measurement") if report["cells"] else "measurement",
+                                   "type": type(error).__name__, "workload_error": diagnostic.group(0) if diagnostic else None})
         raise
     finally:
         checkpoint()
@@ -280,7 +287,7 @@ def main():
               "docker_capacity": {"cpus": info["NCPU"], "memory_bytes": info["MemTotal"]},
               "runtime": args.runtime, "workload": "npm-local-build-test-v1",
               "readiness": "container running then installed CLI --version; no authenticated session",
-              "sampling": "5+ stop/up samples; persistent dependency volumes retained; tmpfs cleared; initial setup/start/workload separate; initial and measured work concurrent across accounts; host page caches not flushed; cgroup sampling timestamps delimit observed peaks; disk collection excluded from workload time",
+              "sampling": "5+ stop/up samples; npm uses an explicit private persistent dependency-volume cache in every mode; tmpfs cleared; initial setup/start/workload separate; initial and measured work concurrent across accounts; host page caches not flushed; cgroup sampling timestamps delimit observed peaks; disk collection excluded from workload time",
               "disk_accounting": "Logical per-account bytes and category totals deduplicated by physical source; Linux filesystem apparent/allocated bytes exclude VM sparse allocation/compression",
               "budget_review": "pending", "scope": "smoke" if args.smoke else "full matrix",
               "planned_cells": cells, "samples_per_cell": args.samples, "cells": [], "failures": []}

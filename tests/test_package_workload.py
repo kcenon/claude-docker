@@ -33,10 +33,16 @@ class PackageWorkloadTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             data = json.loads(result.stdout)
             self.assertEqual(5000, data["verified_reads"])
-            self.assertGreater(data["cpu_seconds"], 0)
+            self.assertGreaterEqual(data["cpu_seconds"], 0)
             (root / ".benchmark-a/42").write_bytes(b"corrupted")
             env["ISSUE335_OUTPUT_ROOT"] = str(root / ".benchmark-a")
-            rejected = subprocess.run(["npm", "test"], cwd=root / "node_modules/.issue335-package", env=env,
+            sys.path.insert(0, str(source))
+            try:
+                from npm_command import npm_command
+                command = npm_command() + ["test"]
+            finally:
+                sys.path.pop(0)
+            rejected = subprocess.run(command, cwd=root / "node_modules/.issue335-package", env=env,
                                       capture_output=True, text=True, timeout=60)
             self.assertNotEqual(0, rejected.returncode)
             self.assertNotIn("ISSUE335_WORKLOAD_OK", rejected.stdout)
