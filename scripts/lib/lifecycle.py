@@ -600,7 +600,9 @@ def journal_write(lock, journal):
     temp = lock / "journal.next"
     temp.write_text(json.dumps(journal), encoding="utf-8")
     protect(temp)
-    with temp.open("rb") as file:
+    # Windows fsync requires write access even when the bytes are already
+    # written; keep the journal flush before its atomic publication.
+    with temp.open("rb+") as file:
         os.fsync(file.fileno())
     os.replace(temp, lock / "journal.json")
 

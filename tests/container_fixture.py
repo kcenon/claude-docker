@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -42,7 +43,15 @@ class ContainerFixture:
                        self.spec["configSourceEnv"]: self.spec["containerConfigMount"] + "/local-config"}
 
     def run(self, argv, timeout=120):
-        return policy.run(argv, self.host_env, self.root, timeout)
+        result = subprocess.run(argv, env=self.host_env, cwd=self.root,
+                                capture_output=True, text=True, timeout=timeout)
+        if result.returncode:
+            # This fixture admits only placeholder credentials and disposable
+            # mounts. Preserve diagnostics here without exposing production
+            # Compose output through the host policy's redacted runner.
+            raise policy.PolicyError("Fixture command failed: " + str(argv[0]) + "\n" +
+                                     result.stdout + result.stderr, result.returncode)
+        return result.stdout
 
     def prepare(self):
         started = time.perf_counter()
@@ -136,7 +145,14 @@ class ContainerFixture:
 
     def up(self):
         policy.prepare_dependency_volumes(self.model, self.cmd, self.host_env, self.root)
-        self.run(self.cmd + ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
+        try:
+            self.run(self.cmd + ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
+        except (policy.PolicyError, subprocess.TimeoutExpired):
+            try:
+                print(self.run(self.cmd + ["logs", "--no-color", "--tail", "80"], timeout=30), file=sys.stderr)
+            except (policy.PolicyError, subprocess.SubprocessError, OSError) as error:
+                print("Fixture startup logs unavailable: " + str(error), file=sys.stderr)
+            raise
 
     def execute(self, index, *argv, timeout=60):
         return self.run(self.cmd + ["exec", "-T", self.services[index]] + list(argv), timeout)

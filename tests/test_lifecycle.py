@@ -66,6 +66,23 @@ class LifecycleTest(unittest.TestCase):
     def snapshot(self):
         return {name: ((self.root / name).read_bytes(), stat.S_IMODE((self.root / name).stat().st_mode)) for name in policy.FILES}
 
+    def test_journal_sync_requires_a_writable_descriptor(self):
+        lock = self.root / "journal-test"
+        lock.mkdir()
+        journal = {"phase": "staged", "files": [".env"]}
+        real_fsync = os.fsync
+        synced = []
+        def sync(fd):
+            # Windows rejects fsync on a read-only handle. A zero-byte write
+            # exercises that same handle requirement on every test platform.
+            os.write(fd, b"")
+            real_fsync(fd)
+            synced.append(fd)
+        with patch.object(policy.os, "fsync", sync):
+            policy.journal_write(lock, journal)
+        self.assertEqual(1, len(synced))
+        self.assertEqual(journal, json.loads((lock / "journal.json").read_text()))
+
     def model(self, env=None, count=None):
         env = env or self.env
         count = count or int(env["NUM_ACCOUNTS"])
@@ -94,7 +111,7 @@ class LifecycleTest(unittest.TestCase):
     def fake_run(self, argv, env=None, cwd=None, timeout=60):
         env = env or self.env
         if Path(argv[0]).name != "docker":
-            if self.failure == "generator":
+            if self.failure == "generator" and any(Path(arg).name in ("generate-compose.sh", "generate-compose.ps1") for arg in argv):
                 output = Path(argv[-1])
                 (output / "docker-compose.yml").write_text("partial staged output")
                 raise policy.PolicyError("Injected generator failure.")
