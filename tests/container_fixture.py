@@ -21,8 +21,10 @@ class ContainerFixture:
         self.mode, self.count, self.runtime, self.network = mode, count, runtime, network
         self.temp = tempfile.TemporaryDirectory(prefix="cd335-")
         self.root = Path(self.temp.name).resolve()
+        policy.protect(self.root, directory=True)
         self.project = "cd335-" + uuid.uuid4().hex[:12]
         self.image = image or "claude-code-base:" + (ROOT / "VERSION").read_text().strip()
+        self.language = "powershell" if os.name == "nt" else "bash"
         self.spec = json.loads((ROOT / "tui/internal/config/runtimes.json").read_text())["runtimes"][runtime]
         self.services = [self.spec["servicePrefix"] + "-" + policy.account_letter(i) for i in range(1, count + 1)]
         # Keep the developer HOME unchanged. Literal fixture mount overrides,
@@ -61,6 +63,8 @@ class ContainerFixture:
         shutil.copy(ROOT / "VERSION", self.root / "VERSION")
         self.run(["git", "init", "-q", str(self.source)])
         (self.source / "tracked.txt").write_text("disposable benchmark and isolation fixture\n")
+        shutil.copytree(ROOT / "tests/fixtures/isolation-workload", self.source / ".isolation-workload",
+                        ignore=shutil.ignore_patterns("node_modules", "__pycache__"))
         self.run(["git", "-C", str(self.source), "add", "."])
         self.run(["git", "-C", str(self.source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"])
         for i in range(1, self.count + 1):
@@ -108,20 +112,38 @@ class ContainerFixture:
 
     def generate(self):
         self.values["ISOLATED_NETWORK_MODE"] = self.network
-        (self.root / ".env").write_text("\n".join(k + "=" + v for k, v in self.values.items()) + "\n")
-        self.run(["bash", str(self.root / "scripts/generate-compose.sh")])
+        env_file = self.root / ".env"
+        env_file.touch(mode=0o600)
+        policy.protect(env_file)
+        env_file.write_text("\n".join(k + "=" + v for k, v in self.values.items()) + "\n")
+        generator = (["pwsh", "-NoProfile", "-File", str(self.root / "scripts/generate-compose.ps1")]
+                     if self.language == "powershell" else ["bash", str(self.root / "scripts/generate-compose.sh")])
+        self.run(generator)
+        self.cmd = ["docker", "compose", "--project-directory", str(self.root), "--env-file", str(env_file),
+                    "--project-name", self.project, "-f", str(self.root / "docker-compose.yml")]
+        if os.name != "nt" and os.uname().sysname == "Linux":
+            self.cmd += ["-f", str(self.root / "docker-compose.linux.yml")]
+        if self.mode != "shared":
+            self.cmd += ["-f", str(self.root / ("docker-compose." + self.mode + ".yml"))]
+        generated = json.loads(self.run(self.cmd + ["config", "--format", "json"]))
         lines = ["services:"]
         for i, service in enumerate(self.services):
-            letter = policy.account_letter(i + 1)
-            target = "/project" if self.mode == "shared" else ("/workspace-" if self.mode == "isolated" else "/project-") + letter
-            mounts = [{"type": "bind", "source": str(self.workspaces[i]), "target": target},
-                      {"type": "bind", "source": str(self.states[i]), "target": self.spec["containerConfigMount"]},
-                      {"type": "volume", "source": "node_modules_" + letter, "target": target + "/node_modules"}]
-            # Worktree metadata is deliberately shared; keep the original
-            # absolute gitdir path reachable without mounting its working tree.
-            if self.mode == "worktree":
-                mounts.append({"type": "bind", "source": str(self.source / ".git"), "target": "/git-common"})
-                mounts.append({"type": "bind", "source": str(self.states[i] / ".container-worktree.git"), "target": target + "/.git", "read_only": True})
+            mounts = []
+            for original in generated["services"][service].get("volumes", []):
+                mount = dict(original)
+                if mount["type"] == "bind":
+                    source = Path(mount["source"]).resolve()
+                    if not source.is_relative_to(self.root):
+                        # Preserve the generated topology, replacing only
+                        # known home-relative sources with empty fixture data.
+                        home = Path(self.host_env.get("HOME", str(Path.home()))).resolve()
+                        if not source.is_relative_to(home):
+                            raise AssertionError("Generated fixture has an unexpected external bind.")
+                        source = self.home / source.relative_to(home)
+                    if not source.exists():
+                        source.mkdir(parents=True)
+                    mount["source"] = str(source)
+                mounts.append(mount)
             # Keep the entrypoint's advisory gh identity lookup on loopback.
             # Local smoke/benchmarks must not depend on an Internet endpoint;
             # --external uses explicit HTTPS/Git URLs in its separate phase.
@@ -129,19 +151,48 @@ class ContainerFixture:
                       "    environment:", "      GH_HOST: '127.0.0.1:9'", "    volumes: !override"]
             lines += ["      - " + json.dumps(mount) for mount in mounts]
         (self.root / "fixture.yml").write_text("\n".join(lines) + "\n")
-        self.cmd = ["docker", "compose", "--project-directory", str(self.root), "--env-file", str(self.root / ".env"), "--project-name", self.project, "-f", str(self.root / "docker-compose.yml")]
-        if os.name != "nt" and os.uname().sysname == "Linux":
-            self.cmd += ["-f", str(self.root / "docker-compose.linux.yml")]
-        if self.mode != "shared":
-            self.cmd += ["-f", str(self.root / ("docker-compose." + self.mode + ".yml"))]
         self.cmd += ["-f", str(self.root / "fixture.yml")]
         self.model = json.loads(self.run(self.cmd + ["config", "--format", "json"]))
+        for name in self.services:
+            before = generated["services"][name]
+            after = self.model["services"][name]
+            topology = lambda items: [(m["type"], m["target"], bool(m.get("read_only"))) for m in items]
+            if topology(before["volumes"]) != topology(after["volumes"]):
+                raise AssertionError("Fixture changed the generated mount topology.")
+            for key in ("read_only", "cap_drop", "security_opt", "init", "networks", "network_mode", "deploy", "tmpfs"):
+                if before.get(key) != after.get(key):
+                    raise AssertionError("Fixture changed generated security/resource policy.")
         for service in self.model["services"].values():
             for mount in service.get("volumes", []):
                 if mount["type"] == "bind" and not Path(mount["source"]).resolve().is_relative_to(self.root):
                     raise AssertionError("Fixture would mount a path outside its disposable root.")
         self.manifest = policy.validate_model(self.model, self.values, self.root, host=True)
         self.manifest["budget"] = policy.resolved_budget(self.model, self.manifest)
+
+    def materialize_for_wrapper(self):
+        """Keep the same resolved fixture model while exercising real wrappers."""
+        for name in policy.FILES:
+            if name == ".env":
+                continue
+            path = self.root / name
+            policy.protect(path)
+            path.write_text(json.dumps(self.model if name == "docker-compose.yml" else {"services": {}}))
+        self.cmd = self.cmd[:-2]  # the fixture override is now materialized
+        resolved = json.loads(self.run(self.cmd + ["config", "--format", "json"]))
+        if policy.describe(resolved) != policy.describe(self.model):
+            raise AssertionError("Wrapper fixture differs from its validated generated topology.")
+
+    def wrapper(self, *arguments, timeout=240):
+        command = (["pwsh", "-NoProfile", "-File", str(self.root / "scripts/claude-docker.ps1")]
+                   if self.language == "powershell" else ["bash", str(self.root / "scripts/claude-docker")])
+        previous = self.host_env
+        # Let the explicit fixture .env supply HOME to the host policy. The
+        # parent environment and developer home are never modified.
+        self.host_env = {key: value for key, value in previous.items() if key != "HOME"}
+        try:
+            return self.run(command + list(arguments), timeout)
+        finally:
+            self.host_env = previous
 
     def up(self):
         policy.prepare_dependency_volumes(self.model, self.cmd, self.host_env, self.root)

@@ -1,0 +1,50 @@
+name: Isolation evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/benchmark*.py'
+      - 'tests/container_fixture.py'
+      - 'tests/fixtures/isolation-workload/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'VERSION'
+      - '.github/workflows/isolation-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: Runtime for the nine-cell reference workload
+        type: choice
+        options: [claude, codex, gemini]
+        default: claude
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolation-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container-matrix:
+    name: Nine cells and 45 measured samples
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      EVIDENCE_RUNTIME: ${{ inputs.runtime || 'claude' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build the measured image
+        run: docker build --tag claude-code-base:evidence335 .
+      - name: Collect the full matrix
+        run: python3 tests/benchmark_isolation.py --image claude-code-base:evidence335 --runtime "$EVIDENCE_RUNTIME" --samples 5 --output /tmp/container-linux-reference.json
+      - name: Validate all required samples
+        run: python3 tests/benchmark_report.py /tmp/container-linux-reference.json --require-full
+      - name: Retain raw evidence including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-linux-reference
+          path: /tmp/container-linux-reference.json
+          if-no-files-found: error
+          retention-days: 30

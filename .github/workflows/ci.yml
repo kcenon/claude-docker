@@ -429,6 +429,16 @@ jobs:
         run: bash tests/test_container_isolation.sh --image claude-code-base:ci335 --runtime claude --external
       - name: Measure one benchmark cell with five samples
         run: python3 tests/benchmark_isolation.py --image claude-code-base:ci335 --smoke --output /tmp/isolation-benchmark-smoke.json
+      - name: Validate measured smoke evidence
+        run: python3 tests/benchmark_report.py /tmp/isolation-benchmark-smoke.json
+      - name: Retain benchmark report including incomplete runs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: isolation-benchmark-smoke
+          path: /tmp/isolation-benchmark-smoke.json
+          if-no-files-found: error
+          retention-days: 14
 
   host-policy-tests:
     name: Host policy (${{ matrix.os }})
@@ -445,6 +455,10 @@ jobs:
         run: python tests/test_lifecycle.py
       - name: Benchmark statistics tests
         run: python tests/test_benchmark_harness.py
+      - name: Benchmark report corruption tests
+        run: python tests/test_benchmark_report.py
+      - name: Offline package workflow and corruption control
+        run: python tests/test_package_workload.py
       - name: Resolve every runtime and overlay combination
         if: runner.os == 'Linux'
         run: python3 tests/test_resolved_boundaries.py

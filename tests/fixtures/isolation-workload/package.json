@@ -1,0 +1,12 @@
+{
+  "name": "issue335-workload",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.cjs",
+    "test": "node test.cjs"
+  },
+  "dependencies": {
+    "issue335-digest": "file:vendor/issue335-digest-1.0.0.tgz"
+  }
+}

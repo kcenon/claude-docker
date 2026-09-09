@@ -1,10 +1,36 @@
 #!/usr/bin/env python3
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
+import benchmark_isolation
 from benchmark_isolation import COUNTS, METRICS, MODES, summarize
 from container_fixture import ContainerFixture
 
 
 class BenchmarkHarnessTest(unittest.TestCase):
+    def test_workload_changes_change_the_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("scripts", "tui/internal", "tests"):
+                (root / name).mkdir(parents=True)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            (root / "VERSION").write_text("fixture\n")
+            workload = root / "tests/benchmark_isolation.py"
+            workload.write_text("workload version one\n")
+            with patch.object(benchmark_isolation, "ROOT", root):
+                before = benchmark_isolation.source_fingerprint()
+                workload.write_text("workload version two\n")
+                self.assertNotEqual(before, benchmark_isolation.source_fingerprint())
+
+    def test_summary_rejects_negative_measurements(self):
+        for key in METRICS:
+            with self.subTest(metric=key):
+                samples = [{metric: 1 for metric in METRICS} for _ in range(5)]
+                samples[2][key] = -1
+                with self.assertRaises(ValueError):
+                    summarize(samples)
+
     def test_matrix_and_sample_statistics(self):
         executed = 0
         for _mode in MODES:
