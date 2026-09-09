@@ -454,12 +454,16 @@ jobs:
       # exit code with a later successful command's result.
       - name: Transaction and boundary fault tests
         run: python tests/test_lifecycle.py
+      - name: Native wrapper process interruption and recovery
+        run: python tests/test_lifecycle_process.py
       - name: Benchmark statistics tests
         run: python tests/test_benchmark_harness.py
       - name: Benchmark report corruption tests
         run: python tests/test_benchmark_report.py
       - name: Offline package workflow and corruption control
         run: python tests/test_package_workload.py
+      - name: Explicit integration credentials and redaction
+        run: python tests/test_workflow_support.py
       - name: Resolve every runtime and overlay combination
         if: runner.os == 'Linux'
         run: python3 tests/test_resolved_boundaries.py
