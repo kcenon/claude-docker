@@ -569,29 +569,55 @@ def protect(path, directory=False):
         path.chmod(0o700 if directory else 0o600)
 
 
+def copy_windows_security(source, destination):
+    """Copy owner/group/DACL before publication, preserving inheritance flags."""
+    import ctypes
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    get_security = advapi.GetFileSecurityW
+    get_security.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_void_p,
+                            ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    set_security = advapi.SetFileSecurityW
+    set_security.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_void_p]
+    information = 0x1 | 0x2 | 0x4  # OWNER, GROUP and DACL_SECURITY_INFORMATION
+    needed = ctypes.c_ulong()
+    get_security(str(source), information, None, 0, ctypes.byref(needed))
+    if not needed.value:
+        raise PolicyError("Cannot read existing Windows file permissions.")
+    descriptor = ctypes.create_string_buffer(needed.value)
+    if not get_security(str(source), information, descriptor, needed.value, ctypes.byref(needed)):
+        raise PolicyError("Cannot read existing Windows file permissions.")
+    control, revision = ctypes.c_ushort(), ctypes.c_ulong()
+    get_control = advapi.GetSecurityDescriptorControl
+    get_control.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ushort), ctypes.POINTER(ctypes.c_ulong)]
+    if not get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)):
+        raise PolicyError("Cannot read Windows file permission inheritance.")
+    # PROTECTED/UNPROTECTED_DACL_SECURITY_INFORMATION preserves whether future
+    # parent ACL changes are inherited, including an explicitly private .env.
+    information |= 0x80000000 if control.value & 0x1000 else 0x20000000
+    # This low-level API retains legacy inherited ACE flags too. ReplaceFileW
+    # merges the DACL via automatic inheritance and can duplicate inherited
+    # entries as explicit grants. Moving the prepared file avoids that merge.
+    if not set_security(str(destination), information, descriptor):
+        raise PolicyError("Cannot preserve existing Windows file permissions.")
+
+
 def atomic_file(source, destination, mode=None):
     """One atomic replacement; the lifecycle lock protects the whole set."""
     fd, name = tempfile.mkstemp(prefix=".publish-", dir=destination.parent)
     temp = Path(name)
     try:
         with os.fdopen(fd, "wb") as output, source.open("rb") as input_file:
+            if os.name == "nt":
+                if destination.exists():
+                    copy_windows_security(destination, temp)
+                else:
+                    protect(temp)
             shutil.copyfileobj(input_file, output)
             output.flush()
             os.fsync(output.fileno())
-        if os.name == "nt" and destination.exists():
-            # ReplaceFile preserves the destination ACL, unlike shutil.move.
-            import ctypes
-            replace = ctypes.windll.kernel32.ReplaceFileW
-            replace.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
-                                ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
-            if not replace(str(destination), str(temp), None, 0, None, None):
-                raise PolicyError("Atomic file publication failed on Windows.")
-        else:
-            if mode is not None:
-                temp.chmod(mode)
-            if os.name == "nt":
-                protect(temp)
-            os.replace(temp, destination)
+        if mode is not None:
+            temp.chmod(mode)
+        os.replace(temp, destination)
     finally:
         temp.unlink(missing_ok=True)
 
