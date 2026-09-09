@@ -501,10 +501,10 @@ jobs:
         run: python tests/test_credential_file.py
       - name: PTY and native ConPTY drain, timeout and process cleanup
         if: ${{ !cancelled() }}
-        run: python tests/test_terminal_support.py
+        run: python tests/run_terminal_suite.py test_terminal_support.py
       - name: Actual dashboard account selection, attach and return
         if: ${{ !cancelled() }}
-        run: python tests/test_tui_terminal.py
+        run: python tests/run_terminal_suite.py test_tui_terminal.py
 
   pwsh-tests:
     name: PowerShell Tests (${{ matrix.test }})
