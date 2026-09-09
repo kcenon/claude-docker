@@ -74,20 +74,28 @@ def checked(success):
 
 
 class WindowsTerminal:
-    def __init__(self, argv, cwd, env, columns, rows):
+    def __init__(self):
         self.handles = []
         self.console, self.job, self.process = None, None, Process()
+        try:
+            self.input_read, self.input = w.HANDLE(), w.HANDLE()
+            self.output, self.output_write = w.HANDLE(), w.HANDLE()
+            checked(create_pipe(c.byref(self.input_read), c.byref(self.input), None, 0))
+            self.handles.extend([self.input_read, self.input])
+            checked(create_pipe(c.byref(self.output), c.byref(self.output_write), None, 0))
+            self.handles.extend([self.output, self.output_write])
+        except BaseException:
+            self.close()
+            raise
+
+    def start(self, argv, cwd, env, columns, rows):
+        # The host must drain output before either native startup call: console
+        # initialization can fill the synchronous pipe while CreateProcess waits.
         attributes = None
         initialized = False
         try:
-            input_read, self.input = w.HANDLE(), w.HANDLE()
-            self.output, output_write = w.HANDLE(), w.HANDLE()
-            checked(create_pipe(c.byref(input_read), c.byref(self.input), None, 0))
-            self.handles.extend([input_read, self.input])
-            checked(create_pipe(c.byref(self.output), c.byref(output_write), None, 0))
-            self.handles.extend([self.output, output_write])
             console = w.HANDLE()
-            if create_console(Coord(columns, rows), input_read, output_write, 0, c.byref(console)) < 0:
+            if create_console(Coord(columns, rows), self.input_read, self.output_write, 0, c.byref(console)) < 0:
                 raise OSError("ConPTY unavailable")
             self.console = console
             size = c.c_size_t()
@@ -117,25 +125,13 @@ class WindowsTerminal:
             checked(assign_job(self.job, self.process.process))
             if resume(self.process.thread) == 0xFFFFFFFF:
                 raise OSError("Resume failed")
-            for handle in (input_read, output_write, self.process.thread):
+            for handle in (self.input_read, self.output_write, self.process.thread):
                 checked(close_handle(handle))
                 self.handles.remove(handle)
         except BaseException:
             if self.process.process:
                 kill_process(self.process.process, 1)
-            # Drain even construction failures before closing the pseudoconsole.
-            if self.console:
-                def discard():
-                    try:
-                        while self.read() != b"":
-                            pass
-                    except OSError:
-                        pass
-                threading.Thread(target=discard, daemon=True).start()
-            try:
-                self.terminate()
-            finally:
-                self.close()
+            # Terminal's active drainer also services failure cleanup.
             raise
         finally:
             if initialized:

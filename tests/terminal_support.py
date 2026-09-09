@@ -77,7 +77,7 @@ class Terminal:
         try:
             if os.name == "nt":
                 from terminal_windows import WindowsTerminal
-                self.backend = WindowsTerminal(argv, cwd, env, columns, rows)
+                self.backend = WindowsTerminal()
             else:
                 self.backend = PosixTerminal(argv, cwd, env, columns, rows)
         except Exception:
@@ -86,6 +86,12 @@ class Terminal:
         self._writer = threading.Thread(target=self._write, daemon=True)
         self._reader.start()
         self._writer.start()
+        if os.name == "nt":
+            try:
+                self.backend.start(argv, cwd, env, columns, rows)
+            except Exception:
+                self.close()
+                raise WorkflowFailure("terminal_start_failed") from None
 
     def _drain(self):
         query_tail = b""

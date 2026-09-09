@@ -4,13 +4,45 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from terminal_support import Terminal
 from workflow_support import WorkflowFailure
 
 
 class TerminalTest(unittest.TestCase):
+    def test_console_output_is_drained_during_native_startup(self):
+        class StartupNeedsDrainer:
+            def __init__(self, *args):
+                self.reading = threading.Event()
+                if args:
+                    self.start(*args)
+
+            def start(self, *args):
+                if not self.reading.wait(0.3):
+                    raise TimeoutError("native startup waiting for output drain")
+
+            def read(self):
+                self.reading.set()
+                time.sleep(0.01)
+
+            def write(self, data):
+                pass
+
+            def terminate(self):
+                pass
+
+            def close(self):
+                pass
+
+        with patch.dict(sys.modules, {"terminal_windows": SimpleNamespace(WindowsTerminal=StartupNeedsDrainer)}), patch(
+                "terminal_support.os.name", "nt"):
+            with Terminal(["placeholder"], ".", {}) as terminal:
+                self.assertTrue(terminal.backend.reading.is_set())
+
     def session(self, script, directory):
         path = Path(directory) / "child.py"
         path.write_text(script)
