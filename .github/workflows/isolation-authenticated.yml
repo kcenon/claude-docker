@@ -1,0 +1,52 @@
+name: Authenticated isolation integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      disposable_remote_confirmed:
+        description: Integration credentials designate an owned disposable repository
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    if: inputs.disposable_remote_confirmed && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: issue335-integration
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build the integration image
+        run: docker build --tag claude-code-base:integration335 .
+      - name: Run explicitly credentialed sessions and disposable pushes
+        env:
+          ISSUE335_TEST_CREDENTIALS: ${{ secrets.ISSUE335_TEST_CREDENTIALS }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          path = Path(os.environ['RUNNER_TEMP']) / 'issue335-credentials.json'
+          try:
+              with open(path, 'x', opener=lambda p, f: os.open(p, f, 0o600)) as output:
+                  output.write(os.environ.pop('ISSUE335_TEST_CREDENTIALS', ''))
+              result = subprocess.run([sys.executable, 'tests/test_runtime_workflows.py', '--image',
+                  'claude-code-base:integration335', '--runtime', 'all', '--credentials-file', str(path),
+                  '--terminal', '--require-complete', '--output', '/tmp/authenticated-workflows.json'])
+              raise SystemExit(result.returncode)
+          finally:
+              path.unlink(missing_ok=True)
+          PY
+      - name: Retain only the sanitized integration report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: authenticated-workflows-linux
+          path: /tmp/authenticated-workflows.json
+          if-no-files-found: error
+          retention-days: 14

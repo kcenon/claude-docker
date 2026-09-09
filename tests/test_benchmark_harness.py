@@ -1,10 +1,63 @@
 #!/usr/bin/env python3
+import tempfile
+import json
+import os
+import subprocess
+import sys
+from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from unittest.mock import patch
+import benchmark_isolation
 from benchmark_isolation import COUNTS, METRICS, MODES, summarize
 from container_fixture import ContainerFixture
 
 
 class BenchmarkHarnessTest(unittest.TestCase):
+    def test_unavailable_oom_counter_is_not_reported_as_zero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, value in (("memory/memory.usage_in_bytes", "128"),
+                                ("memory/memory.max_usage_in_bytes", "256"), ("pids/pids.current", "2")):
+                path = root / name
+                path.parent.mkdir(exist_ok=True)
+                path.write_text(value)
+            probe = benchmark_isolation.RESOURCE_PROBE.replace("pathlib.Path('/sys/fs/cgroup')", "pathlib.Path(" + repr(str(root)) + ")")
+            output = subprocess.check_output([sys.executable, "-c", probe], text=True,
+                                             env=dict(os.environ, ISOLATION_MODE="shared"))
+            self.assertIsNone(json.loads(output)["oom_kills"])
+            fixture = SimpleNamespace(count=1, execute=lambda *args: output)
+            with self.assertRaisesRegex(AssertionError, "OOM counter unavailable"):
+                benchmark_isolation.stats(fixture)
+
+    def test_workload_changes_change_the_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("scripts", "tui/internal", "tests"):
+                (root / name).mkdir(parents=True)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            (root / "VERSION").write_text("fixture\n")
+            with patch.object(benchmark_isolation, "ROOT", root):
+                for name in ("tests/benchmark_isolation.py", "scripts/claude-docker", "scripts/claude-docker.cmd", ".dockerignore"):
+                    with self.subTest(input=name):
+                        workload = root / name
+                        workload.write_text("workload version one\n")
+                        before = benchmark_isolation.source_fingerprint()
+                        workload.write_text("workload version two\n")
+                        self.assertNotEqual(before, benchmark_isolation.source_fingerprint())
+                before = benchmark_isolation.source_fingerprint()
+                (root / "tests/report.json").write_text('{"output": true}')
+                (root / "scripts/.env.fixture").write_text("TOKEN=placeholder-secret\n")
+                self.assertEqual(before, benchmark_isolation.source_fingerprint())
+
+    def test_summary_rejects_negative_measurements(self):
+        for key in METRICS:
+            with self.subTest(metric=key):
+                samples = [{metric: 1 for metric in METRICS} for _ in range(5)]
+                samples[2][key] = -1
+                with self.assertRaises(ValueError):
+                    summarize(samples)
+
     def test_matrix_and_sample_statistics(self):
         executed = 0
         for _mode in MODES:

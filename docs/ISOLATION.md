@@ -8,9 +8,10 @@ file happened to be passed.
 Status: workspace/network profiles, resolved boundary checks, sandbox refusal,
 resource reports and transactional scaling are implemented. Local regression,
 Compose-model and TUI benchmark evidence is recorded in
-[ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md). Live-container, native Windows
-and full container-performance evidence remain required before issue #335 can
-be closed. The host, daemon owner and kernel/runtime compromise remain outside
+[ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md). Linux live-container and full
+45-sample performance evidence, plus native Windows policy/ACL CI, are recorded.
+Authenticated workflows, Desktop/rootless platform runs and budget review remain
+required before issue #335 can be closed. The host, daemon owner and kernel/runtime compromise remain outside
 this boundary.
 
 ## Modes
@@ -483,7 +484,8 @@ the memory cgroup budget rather than additional reserved RAM.
 
 The total default scratch ceiling is 672 MiB/account. Positive finite settings
 are validated before generation; regenerate after changing them. These defaults
-have not been tuned by the outstanding container benchmark. `/home/node/.local`
+remain unchanged: the measured persistent-cache npm profile does not establish
+scratch requirements for authenticated agent sessions. `/home/node/.local`
 stays visible because it contains the native Claude binary.
 
 Docker initially owns fresh named-volume roots as root. The wrapper initializes
@@ -558,9 +560,10 @@ on native Windows. The image and runtime gates execute on Linux. Rootless Docker
 is an optional daemon choice; no host security setting is changed. Its nested
 sandbox capability must be checked under the actual daemon/kernel profile.
 
-Local evidence is listed in [ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md).
-Native Windows ACL/process behavior and live Linux/Desktop/rootless combinations
-need their CI/platform runs. A running sleep service and a successful CLI version
+Executed and outstanding platforms are listed in
+[ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md). Linux workflows and actual
+daemon restart recovery have passed CI. macOS/Windows Docker Desktop and rootless
+execution still require platform runs. A running sleep service and a successful CLI version
 probe are named separately from an authenticated agent session. Live provider
 calls and remote authenticated pushes require an opt-in disposable integration
 account; no successful unauthenticated probe is presented as authentication.
@@ -570,12 +573,25 @@ bash tests/test_container_isolation.sh --image claude-code-base:TAG --runtime al
 bash tests/test_container_isolation.sh --image claude-code-base:TAG --runtime claude --external
 python3 tests/test_resolved_boundaries.py
 python3 tests/test_lifecycle.py
+python3 tests/test_lifecycle_process.py
+python3 tests/test_runtime_workflows.py --image claude-code-base:TAG --runtime all --output runtime-workflows.json
+python3 tests/test_sandbox_platform.py --image claude-code-base:TAG --output sandbox-platform.json
 ```
 
 The live harness owns unique projects and literal fixture mounts, verifies
 markers in both directions, tests a running sibling listener by name and IP,
 uses leak/network mutation controls, checks writable/security/resource paths,
 recreation and offline egress, and cleans only its project resources. External
-connectivity is a separate test so an outage has a useful diagnosis. Full
-container measurements and reviewed budgets remain open in
-[PERFORMANCE.md](PERFORMANCE.md).
+connectivity is a separate test so an outage has a useful diagnosis. The
+[workflow guide](ISSUE-335-WORKFLOWS.md) documents actual npm/build/test and
+recreation checks, the explicit credential/remote contract, bounded provider
+sessions, hook/statusline dispatch and daemon recovery commands. Missing
+credentials are reported as skipped; completion validation rejects those skips.
+
+On the measured Linux runner (AppArmor, built-in seccomp, no added capabilities),
+the requested sandbox's actual namespace probe is unavailable. Both ordinary and
+degraded-settings cases refuse before the requested command executes. This is
+verified fail-closed behavior, not a claim that an authenticated inner sandbox
+session ran. No privileged or unconfined workaround is used. Full measured
+container results and proposed budgets are in [PERFORMANCE.md](PERFORMANCE.md);
+maintainer budget acceptance remains pending.

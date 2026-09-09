@@ -1327,6 +1327,10 @@ The native CLI directory `.local` remains visible. Existing dependency volume
 permissions are preserved and unwritable account paths refuse startup.
 
 See [migration, rollback and platform limits](docs/ISOLATION.md) and the
-[requirement/evidence table](docs/ISSUE-335-VALIDATION.md). Full container benchmark
-results, native-platform runs and performance-budget review remain necessary
-before claiming all of issue #335 is verified.
+[requirement/evidence table](docs/ISSUE-335-VALIDATION.md). The
+[Linux performance report](docs/PERFORMANCE.md) contains nine cells and 45 measured
+samples, with four accounts as the largest tested count for its deterministic
+npm workload. [Workflow reproduction](docs/ISSUE-335-WORKFLOWS.md) covers package
+writes, recreation, explicit authenticated integration and interruption recovery.
+Authenticated sessions, Desktop/rootless runs and performance-budget review
+remain necessary before claiming all of issue #335 is verified.

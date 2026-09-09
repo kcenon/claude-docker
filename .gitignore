@@ -6,6 +6,7 @@
 # npm cache (from host claude install)
 .npm-cache/
 package-lock.json
+!tests/fixtures/isolation-workload/package-lock.json
 node_modules/
 
 # TUI dashboard build artifacts (Go binary, built by install.sh or 'build-tui').
