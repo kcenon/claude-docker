@@ -46,11 +46,11 @@ services:
         limits:
           pids: ${ISOLATED_PIDS_LIMIT:-1024}
     tmpfs:
-      - /tmp:mode=1777
-      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /tmp:mode=1777,size=268435456
+      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=16777216
+      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=134217728
+      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=268435456
+      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=16777216
     networks:
       - isolated_net_a
     environment: !override
@@ -58,6 +58,7 @@ services:
       - TZ=${TZ:-UTC}
       - HOME=/home/node
       - AGENT_RUNTIME=claude
+      - ISOLATION_MODE=isolated
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}
@@ -84,11 +85,11 @@ services:
         limits:
           pids: ${ISOLATED_PIDS_LIMIT:-1024}
     tmpfs:
-      - /tmp:mode=1777
-      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700
-      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700
+      - /tmp:mode=1777,size=268435456
+      - /home/node/.config:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=16777216
+      - /home/node/.cache:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=134217728
+      - /home/node/.npm:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=268435456
+      - /home/node/.agents:uid=${UID:-1000},gid=${GID:-1000},mode=0700,size=16777216
     networks:
       - isolated_net_b
     environment: !override
@@ -96,6 +97,7 @@ services:
       - TZ=${TZ:-UTC}
       - HOME=/home/node
       - AGENT_RUNTIME=claude
+      - ISOLATION_MODE=isolated
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - CLAUDE_CONFIG_SOURCE=${CLAUDE_CONFIG_SOURCE:-}
       - CLAUDE_NORMALIZE_CRLF=${CLAUDE_NORMALIZE_CRLF:-}

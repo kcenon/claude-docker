@@ -74,9 +74,16 @@ printf 'KEY=oldbak\n' > "$OLD_BAK"
 printf 'KEY=sevenandahalf\n' > "$HALF_DAY_BACKUP"
 
 # Mark old files 30 days in the past, leave fresh backup at current mtime.
-# Use `touch -d` (GNU/BSD-portable form).
-touch -d "30 days ago" "$OLD_BACKUP" "$OLD_BAK"
-touch -d "180 hours ago" "$HALF_DAY_BACKUP"
+# Python avoids GNU/BSD touch date syntax differences; only fixture mtimes move.
+python3 - "$OLD_BACKUP" "$OLD_BAK" "$HALF_DAY_BACKUP" <<'PY'
+import os
+import sys
+import time
+now = time.time()
+for path, hours in zip(sys.argv[1:], (720, 720, 180)):
+    when = now - hours * 3600
+    os.utime(path, (when, when))
+PY
 
 echo "== Pre-check: fixture layout =="
 assert_present ".env exists"               "$ENV_FILE"

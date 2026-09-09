@@ -5,16 +5,13 @@ under. This document states what each mode does and does not protect against,
 so a boundary is chosen deliberately rather than inferred from which compose
 file happened to be passed.
 
-Status: stages 1 to 4 of issue #335 are implemented. `isolated` isolates the
-**workspace** (independent clones, independent git metadata, no shared host
-configuration), runs under a hardened container profile (read-only root
-filesystem, every capability dropped, no-new-privileges, an init process and a
-bounded PID limit), receives no shared GitHub credential, and sits on its own
-network. What remains is capacity and performance work — see
-[Delivery order](#delivery-order). Read
-[What each mode protects against](#what-each-mode-protects-against) before
-relying on it: several concerns are still outside the model, container escape
-among them.
+Status: workspace/network profiles, resolved boundary checks, sandbox refusal,
+resource reports and transactional scaling are implemented. Local regression,
+Compose-model and TUI benchmark evidence is recorded in
+[ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md). Live-container, native Windows
+and full container-performance evidence remain required before issue #335 can
+be closed. The host, daemon owner and kernel/runtime compromise remain outside
+this boundary.
 
 ## Modes
 
@@ -27,14 +24,23 @@ among them.
 ### Setting up `isolated`
 
 ```bash
-scripts/setup-isolated.sh /path/to/repo [account-count]   # or setup-isolated.ps1
+scripts/setup-isolated.sh --dry-run /path/to/repo 2
+scripts/setup-isolated.sh /path/to/repo 2
+# Windows: .\scripts\setup-isolated.ps1 -RepoDir C:\Projects\repo -AccountCount 2 -DryRun
 ```
 
-It creates `<repo>-isolated-<letter>` per account with `git clone
---no-hardlinks` and prints the `.env` keys to add. `--no-hardlinks` is what
-makes the clone independent: cloning a local path hardlinks the object store by
-default, which would leave every account sharing objects — the property that
-disqualifies `worktree` as a boundary.
+The preview lists every clone, state path, mount, network and resource budget.
+It does not change destinations, installation files, credentials or Docker
+resources. Daemon discovery is read-only and bounded; missing capacity is shown
+as unknown. Apply uses the same plan after validating all destinations.
+
+Fresh clones are staged beside the source, created with
+`git clone --no-hardlinks --dissociate`, and verified before publication.
+Dissociation is necessary when the source itself borrows objects. The Git/common
+directories must remain internal, with no alternates, symlinked object stores or
+hardlinked objects. Existing destinations are verified before reuse; unsafe
+repositories are refused and preserved. No untracked files or host configuration
+are copied. A failed publication removes only this setup's new destinations.
 
 The clones' `origin` is repointed at the source repository's own upstream,
 because the source path is deliberately not mounted into an isolated container.
@@ -44,9 +50,9 @@ every clone.
 Regenerate compose afterwards; `ISOLATION_MODE=isolated` without
 `ISOLATED_WORKSPACE_<X>` for every account is refused, not guessed.
 
-Two optional keys tune the profile, both read only under `isolated`:
+Optional keys tune the isolated profile:
 `ISOLATED_NETWORK_MODE` (`bridge` by default, or `none` for an offline
-profile — see [Network policy](#network-policy)) and `ISOLATED_PIDS_LIMIT`.
+profile — see [Network policy](#network-policy)) `ISOLATED_PIDS_LIMIT` and the scratch limits below.
 Changing either means regenerating: they select what the generator writes, not
 what Compose interpolates at start time.
 
@@ -392,9 +398,8 @@ credentials and transcripts.
 **As shipped, `isolated` takes the absent-by-default half of that requirement.**
 An isolated service receives no `~/.claude` mount, no agents/skills mount and
 no shared `gh` config — those are the shared host-home surfaces the mode exists
-to remove. The container still starts: `scripts/lib/bootstrap-claude.sh`
-returns early when its config source is missing, so the runtime degrades rather
-than failing.
+to remove. Missing shared configuration skips import; account-local sandbox
+requirements and writable-path gates still run before the requested command.
 
 What an isolated account gives up, concretely: shared hooks, skills, commands,
 statusline and `CLAUDE.md`.
@@ -419,64 +424,158 @@ which files are safe to copy — not the plumbing.
 
 The read-only mount is unchanged in `shared` and `worktree`.
 
-## Delivery order
+## Runtime sandbox contract
 
-Issue #335 is delivered in six stages. Each is a separate PR.
+Every container declares its effective `ISOLATION_MODE`; the mode overlay wins
+including when a Linux overlay is present. Isolated Claude settings preserve
+sandbox and deny entries while adapting platform-specific hook/statusline
+commands. Shared/worktree retain the established settings transformation.
 
-1. **Configuration contract, threat model, resolved-compose test helpers.** ✅
-2. **Worktree mount correction and regression tests.** ✅
-3. **Independent workspace setup and isolated mount generation.** ✅
-4. **Runtime, configuration, credential and network hardening.** ✅
-5. Resource validation, transactional scaling, TUI cache correction, benchmarks.
-   Partly delivered — see below.
-6. Cross-platform rollout, migration documentation, final benchmark report.
+When account, project or managed settings request Claude sandboxing, startup
+checks dependencies and executes a bounded bubblewrap probe under the actual
+container UID/security policy, even with no shared configuration source. Claude
+must be at least 2.1.83, which introduced
+[`sandbox.failIfUnavailable`](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#2183).
+Successful probing adds hard-failure controls to account settings; unavailable
+sandboxing, malformed settings or conflicting weaker settings refuse the
+requested command. `CLAUDE_ALLOW_DEGRADED_SETTINGS=1` does not bypass this gate.
+No capability, privileged mode, unconfined policy or weaker nested sandbox is
+enabled automatically. See [upstream sandbox behavior](https://code.claude.com/docs/en/sandboxing).
 
-Stage 5 is not one piece of work either. It bundles five independent axes
-across three languages, and they are landing separately for the same reason
-stage 4 split in two:
+The Codex registry marks its combined approval/sandbox bypass flag. CLI and TUI
+reject that bypass in isolated mode; ordinary launch and other modes keep their
+existing arguments. Approval prompts and sandbox enforcement are separate
+controls. Claude's gate is not a claim that every runtime/version offers the
+same inner sandbox. Unsupported kernel/runtime combinations must refuse a
+requested sandbox. The outer account boundary remains in force.
 
-| Axis | State |
-|---|---|
-| TUI usage-cache correction and large-history benchmark | ✅ |
-| Node heap limit validated below the container memory cap | ✅ |
-| Per-account and aggregate resource budgets surfaced before startup | open |
-| Transactional `scale` | open |
-| 1/2/4-account benchmark matrix and reviewed budgets | open |
+## Host validation and resource budgets
 
-The heap axis is documented under
-[Node heap headroom](../README.md#node-heap-headroom) rather than here: it
-applies to every mode, not only to `isolated`.
+Python 3.9+ is a host prerequisite. `scripts/lib/lifecycle.py` implements the
+shared policy for both shell wrappers; it uses only the standard library. The
+TUI starts containers through the same wrapper. Normal `config` and startup
+reports use the resolved Compose model and list environment **key names only**.
+Raw `compose config` is an advanced pass-through and can expose resolved secrets;
+use `config` for diagnostics and reports.
 
-`isolated` became usable at stage 3, which removed a refusal rather than adding
-a name — the contract had accepted the value since stage 1 precisely so that
-stages could turn it on without changing what users configure.
+Preflight keeps the installation project name/root and environment snapshot.
+It validates every account, rejects UID 0, overlapping bind sources (including
+real symlink/Windows aliases at startup), unapproved mounts, shared volumes or
+networks, host namespaces, devices and weakened outer policy. Syntactic fixture
+checks do not require host paths. Startup requires real workspaces and verifies
+Git independence. Configuration sources must be reachable within approved
+account-local mounts; the shared host configuration mount is not restored.
 
-Stage 4 landed as two PRs because its axes are independent: the container
-profile constrains what an account can do to its own container, while
-credential and network scoping constrain what it can reach. Landing them
-separately kept a read-only-root regression and a network regression from
-arriving in one CI run.
+Reports show actual per-service and total CPU/memory limits/reservations, heap,
+PID caps and scratch sizes. Docker capacity comes from the active daemon,
+including Desktop VM limits, with a five-second query bound. Unavailable
+capacity is explicitly unknown; aggregate ceilings above it generate a warning.
+Ceilings are not steady-state use, reservations are separate, and scratch consumes
+the memory cgroup budget rather than additional reserved RAM.
 
-One item from stage 4's issue text is **not** implemented: the allowlisted
-configuration import described in
-[Interaction with the shared runtime configuration mount](#interaction-with-the-shared-runtime-configuration-mount).
-It is optional in the issue's own wording ("**If** configuration import is
-supported"), and the requirement it belongs to is satisfied by the
-absent-by-default source.
+| Scratch path | Setting (MiB) | Provisional default |
+|---|---|---|
+| `/tmp` | `ISOLATED_TMP_MB` | 256 |
+| `/home/node/.config` | `ISOLATED_CONFIG_MB` | 16 |
+| `/home/node/.cache` | `ISOLATED_CACHE_MB` | 128 |
+| `/home/node/.npm` | `ISOLATED_NPM_MB` | 256 |
+| `/home/node/.agents` | `ISOLATED_AGENTS_MB` | 16 |
 
-## Verifying the active mode
+The total default scratch ceiling is 672 MiB/account. Positive finite settings
+are validated before generation; regenerate after changing them. These defaults
+have not been tuned by the outstanding container benchmark. `/home/node/.local`
+stays visible because it contains the native Claude binary.
+
+Docker initially owns fresh named-volume roots as root. The wrapper initializes
+only newly created account dependency volumes with a short offline, read-only
+initializer receiving that volume alone, UID 0, zero capabilities and
+no-new-privileges. It sets mode 1777 so the account's non-root host UID can write.
+No credentials or host binds enter that initializer. The persistent volume is
+still exclusive to its account; account services remain non-root. Existing
+volume permissions are not broadened. Global Git configuration is stored in
+the writable account state in every mode, so arbitrary non-root host UIDs do
+not need to write the image-owned `/home/node/.gitconfig`. An entrypoint write probe refuses an
+unwritable workspace, runtime state, dependency or scratch path.
+
+Worktree startup prepares `.container-worktree.git` inside account state and
+mounts it read-only over the worktree's `.git` file. `/git-common` exposes only
+the shared administrative directory. The host worktree gitfile remains intact,
+so both host and container Git work on Linux/macOS and Windows path spellings.
+A stale generated gitfile is refused with a repair hint. Shared metadata remains
+a deliberate trust limitation.
+
+## Scaling, interruption and migration
+
+`scale N` acquires the installation lifecycle lock, snapshots configuration,
+generates all four files into protected staging, and resolves/validates them
+before publishing any `.env` change or creating final state directories. The
+explicit count wins over inherited `NUM_ACCOUNTS`. Atomic replacement applies
+per file; the lock protects the set. Changed services are reconciled with
+Compose, unchanged services are preserved, and previously stopped services are
+not started as a side effect. Scale-down retains account data and volumes.
+
+On failure, prior managed files/modes/ACLs and service configuration are restored.
+Only transaction-owned additions are removed; unrelated user/runtime writes and
+nonempty account state are retained. Failed compensation is reported separately
+from the original failure and retains a protected journal. A dashboard save
+also refuses if configuration changed after it was loaded, preserving a
+completed CLI scale. Restart the dashboard before retrying that save. Do not delete the
+journal or retry through raw Compose. Restore daemon access, then run:
 
 ```bash
-scripts/claude-docker config     # prints the mode and its trust boundary, the network policy when the mode is isolated, then the resolved compose model
-scripts/claude-docker up         # prints the same banner before starting containers
-scripts/claude-docker tui        # dashboard shows the mode above the account table
+scripts/claude-docker recover
+# Windows: .\scripts\claude-docker.ps1 recover
 ```
 
-Run the contract and mount regression suite with:
+Recovery refuses while the lock owner is alive. Lifecycle wrappers and the TUI
+refuse to read an incomplete publication. An interrupted operation is not a
+multi-file atomic filesystem operation, and daemon outages can prevent immediate
+container compensation.
+
+To migrate into isolated mode:
+
+1. Stop the old stack using its current mode, without `--volumes`.
+2. Run isolated setup with `--dry-run`, then apply it. Reconcile any uncommitted
+   source changes explicitly; clones contain tracked commits only.
+3. Set `ISOLATION_MODE=isolated` and every printed workspace path. Choose matching
+   per-account credentials or no GitHub credential. Shared config stays absent;
+   optionally place a Linux-native config inside each account state/workspace
+   and set the runtime's configuration-source path to that container path.
+4. Regenerate with the platform generator and start through `claude-docker up`.
+   Inspect the redacted report and run the live harness with disposable fixtures.
+
+To migrate back, stop the isolated stack using the isolated configuration without
+removing volumes. Set `ISOLATION_MODE=shared` with `PROJECT_DIR`, or `worktree`
+with all worktree paths, regenerate and start. Retain the isolated clone/state
+paths until account work is reconciled. Switching modes does not copy commits,
+credentials or history between accounts. Worktree gitfiles generated by this
+version can be regenerated without editing the host worktree's `.git` file.
+
+## Verification and supported combinations
+
+Generators and host policy support Bash 3.2+ on Linux/macOS/WSL2 and PowerShell 7
+on native Windows. The image and runtime gates execute on Linux. Rootless Docker
+is an optional daemon choice; no host security setting is changed. Its nested
+sandbox capability must be checked under the actual daemon/kernel profile.
+
+Local evidence is listed in [ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md).
+Native Windows ACL/process behavior and live Linux/Desktop/rootless combinations
+need their CI/platform runs. A running sleep service and a successful CLI version
+probe are named separately from an authenticated agent session. Live provider
+calls and remote authenticated pushes require an opt-in disposable integration
+account; no successful unauthenticated probe is presented as authentication.
 
 ```bash
-bash tests/test_isolation_modes.sh
+bash tests/test_container_isolation.sh --image claude-code-base:TAG --runtime all
+bash tests/test_container_isolation.sh --image claude-code-base:TAG --runtime claude --external
+python3 tests/test_resolved_boundaries.py
+python3 tests/test_lifecycle.py
 ```
 
-The resolved-mount assertions need `docker` and `jq`; without them the suite
-reports a skip locally and fails in CI, where both are present.
+The live harness owns unique projects and literal fixture mounts, verifies
+markers in both directions, tests a running sibling listener by name and IP,
+uses leak/network mutation controls, checks writable/security/resource paths,
+recreation and offline egress, and cleans only its project resources. External
+connectivity is a separate test so an outage has a useful diagnosis. Full
+container measurements and reviewed budgets remain open in
+[PERFORMANCE.md](PERFORMANCE.md).

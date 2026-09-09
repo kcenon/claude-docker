@@ -161,6 +161,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor < len(m.accounts) {
 				acct := m.accounts[m.cursor]
 				if acct.IsRunning() {
+					if err := m.env.ValidateRuntimeCommandArgs(m.skipPermissions); err != nil {
+						return m.composeErr("Attach", err)
+					}
 					bin, args, err := m.client.ExecArgs(acct.ServiceName, m.env.RuntimeCommandArgs(m.skipPermissions)...)
 					if err != nil {
 						return m.composeErr("Attach", err)
@@ -172,13 +175,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 		case "u":
-			m.busy = true
-			m = m.toast("Starting containers (docker compose up -d)...", statusInfo)
-			client := m.client
-			return m, func() tea.Msg {
-				err := client.Up()
-				return dockerOpDoneMsg{kind: opUp, err: err}
+			bin, args, err := m.client.LifecycleArgs("up")
+			if err != nil {
+				return m.composeErr("Start", err)
 			}
+			m.busy = true
+			return m, tea.ExecProcess(exec.Command(bin, args...), func(err error) tea.Msg {
+				return dockerOpDoneMsg{kind: opUp, err: err}
+			})
 		case "d":
 			m.busy = true
 			m = m.toast("Stopping containers (docker compose down)...", statusInfo)
@@ -246,6 +250,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			})
 
 		case "p":
+			if err := m.env.ValidateRuntimeCommandArgs(!m.skipPermissions); err != nil {
+				return m.composeErr("Permissions", err)
+			}
 			m.skipPermissions = !m.skipPermissions
 			flag := m.env.SkipPermissionsFlag()
 			if m.skipPermissions {

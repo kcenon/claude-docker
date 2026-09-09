@@ -15,6 +15,10 @@ import (
 	"github.com/kcenon/claude-docker/tui/internal/docker"
 )
 
+type containerLister interface {
+	PS() ([]docker.ContainerInfo, error)
+}
+
 // Manager provides CRUD operations on accounts.
 //
 // The usageCache field is gone with the JSONL pipeline it served (#358, item
@@ -25,7 +29,7 @@ import (
 // ever wanted back.
 type Manager struct {
 	env    *config.Env
-	client *docker.Client
+	client containerLister
 	// cooldowns tracks per-account API backoff in memory. It was a file in
 	// each state directory until #358; see apiCooldowns for why that was a
 	// worse place for a 25-second value with no cross-process reader.
@@ -33,7 +37,7 @@ type Manager struct {
 }
 
 // NewManager creates an account manager.
-func NewManager(env *config.Env, client *docker.Client) *Manager {
+func NewManager(env *config.Env, client containerLister) *Manager {
 	return &Manager{
 		env:       env,
 		client:    client,

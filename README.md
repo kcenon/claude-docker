@@ -23,6 +23,7 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - [Node.js](https://nodejs.org/) 20+ (optional -- needed for `usage` subcommand token reports)
 - [Go](https://go.dev/dl/) 1.24+ (optional -- needed only to build the TUI from source)
 - Git
+- Python 3.9+ (standard library only; shared host validation and lifecycle transactions)
 
 **Platform-specific:**
 
@@ -180,7 +181,7 @@ scripts/claude-docker help       # Show all available commands
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
 | **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI (build it first with `build-tui`) |
 | | `build-tui` | Build the TUI from source; requires Go 1.24+ |
-| **Scaling** | `scale <N>` | Set 1-702 accounts and regenerate Compose files |
+| **Scaling** | `scale <N>` / `recover` | Stage, validate and apply account changes; recover an interrupted transaction |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
 
@@ -516,12 +517,18 @@ The entrypoint does not use `settings.json` verbatim. For both the default host
 mount and an explicit `CLAUDE_CONFIG_SOURCE`, it writes a container-local
 working copy before Claude Code starts. The transform performs four operations:
 
-1. sets `sandbox.enabled` to `false`;
-2. removes wildcard `permissions.deny` entries for the file tools;
+1. in shared/worktree mode, sets `sandbox.enabled` to `false`;
+2. in shared/worktree mode, removes wildcard `permissions.deny` entries for the file tools;
 3. replaces a PowerShell `statusLine.command` with the Linux statusline script;
 4. rewrites PowerShell hook commands to their bash equivalents.
 
-**1. `sandbox.enabled` is forced to `false`.**
+**Isolated mode preserves sandbox and permission-deny settings.** Requested
+Claude sandboxing requires version 2.1.83+ and a successful capability probe.
+Unsupported combinations refuse startup without weakening Docker restrictions;
+`CLAUDE_ALLOW_DEGRADED_SETTINGS` cannot bypass this gate. See the
+[runtime sandbox contract](docs/ISOLATION.md#runtime-sandbox-contract).
+
+**1. Shared/worktree mode forces `sandbox.enabled` to `false`.**
 
 The host sandbox gates filesystem and network access on the host. Inside a
 container it would re-confine already-confined code and, more importantly,
@@ -596,12 +603,12 @@ A syntactically valid but semantically incorrect rewrite can still fail only
 when the hook runs. If a hook works on the host but not in the container, check
 the startup logs and the patterns above. The workaround is to provide
 Linux-native commands through `CLAUDE_CONFIG_SOURCE`, so the PowerShell rewriter
-has nothing to change. The sandbox and file-tool deny transforms still apply,
+has nothing to change. In shared/worktree mode, the sandbox and file-tool deny transforms still apply,
 and `.sh` files in that explicit source are CRLF-normalized in place.
 
 **Degraded settings stop the container.**
 
-`sandbox.enabled = false` and the deny stripping are applied first and cannot
+In shared/worktree mode, `sandbox.enabled = false` and the deny stripping are applied first and cannot
 fail; only the compensating hook rewrite can. A container that started anyway
 would be running with the sandbox off, deny rules stripped, and the guard hook
 that was supposed to make that safe not firing — previously behind a single
@@ -845,16 +852,19 @@ scripts/claude-docker scale 4
 scripts/claude-docker scale 2
 ```
 
-The `scale` command automatically:
-1. Updates `NUM_ACCOUNTS` in `.env`
-2. Creates new state directories (when scaling up)
-3. Regenerates Docker Compose files
-4. Restarts containers if running
+`scale` validates a protected candidate configuration and all four staged Compose
+files before changing `.env` or account directories. It preserves unchanged
+services, leaves previously stopped services stopped, and compensates for a
+failed publication/startup. A retained recovery journal blocks further lifecycle
+work until `scripts/claude-docker recover` succeeds. Scale-down preserves account
+state, credentials, history and dependency volumes. Runtime/user writes made
+during application are not erased by rollback.
 
-Each additional container needs ~4 GB RAM (2 GB reserved, 4 GB limit).
-Scaling down does not delete account state directories, credentials, or
-history; remove retained state explicitly only after confirming it is no
-longer needed.
+Startup, scaling and `config` show resolved per-account/aggregate resource budgets
+and available Docker capacity. Limits are ceilings, not measured RAM requirements.
+The default per-account memory cap is 4 GiB with a 2 GiB reservation; actual values
+come from the resolved configuration. See [isolation and migration](docs/ISOLATION.md)
+and [measured performance](docs/PERFORMANCE.md).
 
 Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
 53→`ba`, ..., 702→`zz`. The `scale` command and both compose generators accept
@@ -1291,3 +1301,32 @@ claude-docker/
 ## License
 
 [BSD 3-Clause](LICENSE)
+
+### Isolation preview and diagnostics
+
+```bash
+scripts/setup-isolated.sh --dry-run /path/to/repo 2
+scripts/setup-isolated.sh /path/to/repo 2
+# Set the printed ISOLATED_WORKSPACE_* entries and ISOLATION_MODE=isolated.
+scripts/generate-compose.sh
+scripts/claude-docker config
+scripts/claude-docker up
+```
+
+On Windows use `setup-isolated.ps1 -RepoDir C:\Projects\repo -AccountCount 2
+-DryRun` and the PowerShell generator/wrapper. Python 3.9+ is required. Preview
+lists clone/state paths, mounts, networks and provisional budgets without
+persistent changes. Normal diagnostics show environment key names only; raw
+`compose config` can print resolved secrets.
+
+Use the lifecycle wrapper for startup: it validates resolved account boundaries,
+prepares container worktree gitfiles and initializes fresh private dependency
+volumes for non-root host UIDs. Isolated scratch defaults total 672 MiB/account,
+with per-path settings in `.env.example`; tmpfs consumes the memory cgroup cap.
+The native CLI directory `.local` remains visible. Existing dependency volume
+permissions are preserved and unwritable account paths refuse startup.
+
+See [migration, rollback and platform limits](docs/ISOLATION.md) and the
+[requirement/evidence table](docs/ISSUE-335-VALIDATION.md). Full container benchmark
+results, native-platform runs and performance-budget review remain necessary
+before claiming all of issue #335 is verified.

@@ -156,6 +156,7 @@ SANDBOX="$STUB_ROOT/project"
 mkdir -p "$SANDBOX/scripts/lib" "$SANDBOX/tui/internal/config"
 cp "$PROJECT_ROOT/scripts/generate-compose.sh" "$SANDBOX/scripts/"
 cp "$PROJECT_ROOT"/scripts/lib/*.sh "$SANDBOX/scripts/lib/"
+cp "$PROJECT_ROOT/scripts/lib/lifecycle.py" "$SANDBOX/scripts/lib/"
 cp "$PROJECT_ROOT/tui/internal/config/runtimes.json" "$SANDBOX/tui/internal/config/"
 if [ -f "$PROJECT_ROOT/VERSION" ]; then
     cp "$PROJECT_ROOT/VERSION" "$SANDBOX/"

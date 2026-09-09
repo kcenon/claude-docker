@@ -15,18 +15,26 @@
 services:
   claude-a:
     working_dir: ${CONTAINER_PROJECT_DIR_A:-/project-a}
+    environment:
+      - ISOLATION_MODE=worktree
     volumes: !override
       - ${PROJECT_DIR_A}:${CONTAINER_PROJECT_DIR_A:-/project-a}
       - ${HOME}/.claude-state/account-a:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro
+      - ${PROJECT_DIR}/.git:/git-common
+      - ${HOME}/.claude-state/account-a/.container-worktree.git:${CONTAINER_PROJECT_DIR_A:-/project-a}/.git:ro
       - node_modules_a:${CONTAINER_PROJECT_DIR_A:-/project-a}/node_modules
 
   claude-b:
     working_dir: ${CONTAINER_PROJECT_DIR_B:-/project-b}
+    environment:
+      - ISOLATION_MODE=worktree
     volumes: !override
       - ${PROJECT_DIR_B}:${CONTAINER_PROJECT_DIR_B:-/project-b}
       - ${HOME}/.claude-state/account-b:/home/node/.claude
       - ${HOME}/.claude:/home/node/.claude-host:ro
       - ${GH_CONFIG_DIR:-${HOME}/.config/gh}:/home/node/.config/gh:ro
+      - ${PROJECT_DIR}/.git:/git-common
+      - ${HOME}/.claude-state/account-b/.container-worktree.git:${CONTAINER_PROJECT_DIR_B:-/project-b}/.git:ro
       - node_modules_b:${CONTAINER_PROJECT_DIR_B:-/project-b}/node_modules

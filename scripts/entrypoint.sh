@@ -57,6 +57,18 @@ fi
 . "$LIB_DIR/$BOOTSTRAP_MODULE"
 runtime_bootstrap
 
+# This gate also runs when bootstrap had no shared configuration source.
+# CLAUDE_ALLOW_DEGRADED_SETTINGS deliberately cannot bypass it.
+# shellcheck source=scripts/lib/bootstrap-sandbox.sh
+. "$LIB_DIR/bootstrap-sandbox.sh"
+if ! runtime_sandbox_check; then
+    echo '[entrypoint] ERROR: refusing the requested command because required sandboxing is unavailable.' >&2
+    exit 1
+fi
+if ! runtime_writable_check; then
+    exit 1
+fi
+
 # --- Git identity ----------------------------------------------------------------
 # Shared mode preserves the existing initialize-once behavior. Per-account
 # mode reapplies the selected account identity on each start so changing an

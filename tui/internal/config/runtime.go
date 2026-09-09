@@ -33,6 +33,7 @@ type RuntimeSpec struct {
 	BuildArg             string `json:"buildArg"`
 	InstallMethod        string `json:"installMethod"`
 	SkipPermissionsFlag  string `json:"skipPermissionsFlag"`
+	SkipDisablesSandbox  bool   `json:"skipDisablesSandbox"`
 	ConfigFormat         string `json:"configFormat"`
 	BootstrapModule      string `json:"bootstrapModule"`
 	ExtraEnv             string `json:"extraEnv"`

@@ -371,6 +371,16 @@ function Set-EnvValue {
     Protect-EnvFile -Path $Path
 }
 
+# Resolve the snapshot selected by either generator before reading any policy.
+function Get-ConfigurationEnvFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+    if (-not [string]::IsNullOrEmpty($env:CLAUDE_DOCKER_ENV_FILE)) {
+        return $env:CLAUDE_DOCKER_ENV_FILE
+    }
+    return (Join-Path $ProjectRoot '.env')
+}
+
 # --- Account Helpers ---------------------------------------------------------
 
 function Get-NumAccounts {
@@ -392,7 +402,7 @@ function Get-NumAccounts {
 
     $n = [Environment]::GetEnvironmentVariable('NUM_ACCOUNTS')
     if ([string]::IsNullOrEmpty($n)) {
-        $envFile = Join-Path $ProjectRoot '.env'
+        $envFile = Get-ConfigurationEnvFile -ProjectRoot $ProjectRoot
         if (Test-Path $envFile) {
             $envData = Read-EnvFile -Path $envFile
             $n = $envData['NUM_ACCOUNTS']
@@ -480,7 +490,7 @@ function Get-AgentRuntime {
 
     $runtime = [Environment]::GetEnvironmentVariable('AGENT_RUNTIME')
     if ([string]::IsNullOrWhiteSpace($runtime)) {
-        $envFile = Join-Path $ProjectRoot '.env'
+        $envFile = Get-ConfigurationEnvFile -ProjectRoot $ProjectRoot
         if (Test-Path $envFile) {
             $runtime = Get-EnvValue -Path $envFile -Key 'AGENT_RUNTIME'
         }
@@ -672,7 +682,7 @@ function Get-IsolationValue {
     $value = [Environment]::GetEnvironmentVariable($Key)
     if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
 
-    $envFile = Join-Path $ProjectRoot '.env'
+    $envFile = Get-ConfigurationEnvFile -ProjectRoot $ProjectRoot
     if (-not (Test-Path $envFile)) { return '' }
     return (Get-EnvValue -Path $envFile -Key $Key)
 }
@@ -706,7 +716,7 @@ function Get-IsolationMode {
     # The rule applied here and below: whitespace is never silently treated as
     # unset. A value made only of spaces is a value, and an invalid one.
     $mode = [Environment]::GetEnvironmentVariable('ISOLATION_MODE')
-    $envFile = Join-Path $ProjectRoot '.env'
+    $envFile = Get-ConfigurationEnvFile -ProjectRoot $ProjectRoot
 
     if ([string]::IsNullOrEmpty($mode) -and (Test-Path $envFile)) {
         $mode = Get-EnvValue -Path $envFile -Key 'ISOLATION_MODE'
@@ -1299,7 +1309,10 @@ function Test-FileAgeExceedsDays {
 
 # --- Exports -----------------------------------------------------------------
 
+. (Join-Path $PSScriptRoot 'lib/host.ps1')
+
 Export-ModuleMember -Function @(
+    'Invoke-HostPolicy',
     # Logging
     'Write-LogInfo', 'Write-LogSuccess', 'Write-LogWarn', 'Write-LogError',
     'Initialize-StepCounter', 'Write-LogStep',

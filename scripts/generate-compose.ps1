@@ -15,7 +15,9 @@
 [CmdletBinding()]
 param(
     [int]$NumAccounts = 0,
-    [string]$ImageTag = ''
+    [string]$ImageTag = '',
+    [string]$EnvFile = '',
+    [string]$OutputDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,7 +39,18 @@ Import-Module (Join-Path $ScriptDir 'ClaudeDocker.psm1') -Force
 
 # --- Read configuration -------------------------------------------------------
 
-$envFile = Join-Path $ProjectRoot '.env'
+if (-not $EnvFile) { $EnvFile = Join-Path $ProjectRoot '.env' }
+if (-not $OutputDir) { $OutputDir = $ProjectRoot }
+if ($IsWindows -and $OutputDir -eq $ProjectRoot -and -not $env:CLAUDE_DOCKER_LOCK_TOKEN) {
+    $generatorArgs = @('-NoProfile', '-File', $PSCommandPath, '-EnvFile', $EnvFile, '-OutputDir', $OutputDir)
+    if ($NumAccounts -gt 0) { $generatorArgs += @('-NumAccounts', [string]$NumAccounts) }
+    if ($ImageTag) { $generatorArgs += @('-ImageTag', $ImageTag) }
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot run-locked -- pwsh @generatorArgs
+    exit 0
+}
+$savedConfigurationEnvFile = $env:CLAUDE_DOCKER_ENV_FILE
+try {
+$env:CLAUDE_DOCKER_ENV_FILE = $EnvFile
 $envData = @{}
 if (Test-Path $envFile) {
     $envData = Read-EnvFile -Path $envFile
@@ -283,6 +296,11 @@ function Get-AccountVolumeLines {
         }
     }
 
+    if ($Mode -eq 'worktree') {
+        $lines += '      - ${PROJECT_DIR}/.git:/git-common'
+        $lines += "      - `${HOME}/${RtStateDir}/account-${Letter}/.container-worktree.git:${ProjectTarget}/.git:ro"
+    }
+
     $lines += "      - node_modules_${Letter}:${ProjectTarget}/node_modules"
     return $lines
 }
@@ -328,6 +346,7 @@ function Get-AccountEnvironmentLines {
     # for claude too is functionally inert and keeps the env block
     # uniform across runtimes.
     $lines.Add("      - AGENT_RUNTIME=${AgentRuntime}")
+    $lines.Add("      - ISOLATION_MODE=${Mode}")
     $lines.Add("      - ${RtConfigDirEnv}=${RtConfigDirEnvValue}")
     $lines.Add("      - ${RtConfigSourceEnv}=`${${RtConfigSourceEnv}:-}")
     # CLAUDE_NORMALIZE_CRLF is a claude-only env var (read directly by
@@ -396,15 +415,9 @@ function Get-AccountEnvironmentLines {
         $lines.Add('      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}')
     }
 
-    if ($Mode -eq 'isolated') {
-        # $HOME is on the read-only root filesystem, so "git config --global"
-        # and "gh auth setup-git" cannot write ~/.gitconfig. Redirect the global
-        # config into the per-account state mount, which is writable and already
-        # account-private. Without this the entrypoint's credential-helper setup
-        # fails silently and git push breaks with no diagnostic. Requires git
-        # 2.32+ (image ships 2.39 on bookworm).
-        $lines.Add("      - GIT_CONFIG_GLOBAL=${RtContainerConfigMount}/gitconfig")
-    }
+    # Arbitrary host UIDs cannot write image-owned /home/node, even with a
+    # writable root. Use persistent account state in every mode.
+    $lines.Add("      - GIT_CONFIG_GLOBAL=${RtContainerConfigMount}/gitconfig")
 
     return $lines.ToArray()
 }
@@ -471,52 +484,11 @@ function Get-IsolatedNetworksBlockLines {
 }
 
 function Get-IsolatedTmpfsLines {
-    <#
-    .SYNOPSIS
-    Return the tmpfs block for one isolated service, including its `tmpfs:` key.
-    .DESCRIPTION
-    Mirrors emit_isolated_tmpfs in generate-compose.sh.
-
-    Every path below is an image layer rather than a mount, so with
-    read_only: true the first write to it fails. The inventory is what the
-    entrypoint and toolchain actually write outside the account's own mounts:
-
-      /tmp                 general tool scratch
-      /home/node/.config   bootstrap-claude.sh creates the ccstatusline XDG link
-      /home/node/.cache    generic tool caches
-      /home/node/.npm      npm cache
-      /home/node/.agents   bootstrap-codex/gemini create skills/ under it
-
-    /home/node/.local is deliberately absent: the agent CLI is installed there
-    (Dockerfile) and is on PATH, so covering it with a tmpfs would hide the
-    binary. $HOME itself is likewise left read-only; the one thing that needed
-    to write there, the global git config, is redirected via GIT_CONFIG_GLOBAL.
-
-    uid/gid repeat the host-user defaults the base stack uses for `user:`.
-    Without them a tmpfs mounts root-owned with mode 1777 — writable by the
-    service, but world-writable, which contradicts the point of this profile.
-    /tmp keeps the conventional 1777 with its sticky bit instead, because tools
-    expect a shared scratch there.
-    #>
-    [CmdletBinding()]
-    param()
-
-    $owner = 'uid=${UID:-1000},gid=${GID:-1000},mode=0700'
-
-    return @(
-        '    tmpfs:'
-        '      - /tmp:mode=1777'
-        "      - /home/node/.config:$owner"
-        "      - /home/node/.cache:$owner"
-        "      - /home/node/.npm:$owner"
-        "      - /home/node/.agents:$owner"
-    )
+    return $IsolatedTmpfsLines
 }
 
-# --- Generate docker-compose.yml ---------------------------------------------
-
 function New-BaseCompose {
-    $outFile = Join-Path $ProjectRoot 'docker-compose.yml'
+    $outFile = Join-Path $OutputDir 'docker-compose.yml'
     $sb = [System.Text.StringBuilder]::new()
 
     [void]$sb.AppendLine('# docker-compose.yml — Base config (Tier A: shared source)')
@@ -596,7 +568,7 @@ function New-BaseCompose {
 # --- Generate docker-compose.worktree.yml ------------------------------------
 
 function New-WorktreeCompose {
-    $outFile = Join-Path $ProjectRoot 'docker-compose.worktree.yml'
+    $outFile = Join-Path $OutputDir 'docker-compose.worktree.yml'
     $sb = [System.Text.StringBuilder]::new()
 
     [void]$sb.AppendLine('# docker-compose.worktree.yml')
@@ -622,6 +594,8 @@ function New-WorktreeCompose {
 
         [void]$sb.AppendLine("  ${svc}:")
         [void]$sb.AppendLine("    working_dir: `${CONTAINER_PROJECT_DIR_${upper}:-/project-$letter}")
+        [void]$sb.AppendLine("    environment:")
+        [void]$sb.AppendLine("      - ISOLATION_MODE=worktree")
         [void]$sb.AppendLine('    volumes: !override')
         foreach ($volumeLine in (Get-AccountVolumeLines -Mode 'worktree' -Letter $letter `
                     -ProjectSource "`${PROJECT_DIR_${upper}}" `
@@ -641,7 +615,7 @@ function New-WorktreeCompose {
 # --- Generate docker-compose.isolated.yml ------------------------------------
 
 function New-IsolatedCompose {
-    $outFile = Join-Path $ProjectRoot 'docker-compose.isolated.yml'
+    $outFile = Join-Path $OutputDir 'docker-compose.isolated.yml'
     $sb = [System.Text.StringBuilder]::new()
 
     [void]$sb.AppendLine('# docker-compose.isolated.yml')
@@ -742,7 +716,7 @@ function New-IsolatedCompose {
 # --- Generate docker-compose.linux.yml ----------------------------------------
 
 function New-LinuxCompose {
-    $outFile = Join-Path $ProjectRoot 'docker-compose.linux.yml'
+    $outFile = Join-Path $OutputDir 'docker-compose.linux.yml'
     $sb = [System.Text.StringBuilder]::new()
 
     [void]$sb.AppendLine('# docker-compose.linux.yml')
@@ -769,6 +743,11 @@ function New-LinuxCompose {
     Write-LogInfo "Generated: $outFile ($NumAccounts services)"
 }
 
+# Validate all inputs before opening an output file.
+$null = Invoke-HostPolicy -ProjectRoot $ProjectRoot validate-input --env-file $EnvFile
+$null = New-Item -ItemType Directory -Path $OutputDir -Force
+$IsolatedTmpfsLines = @(Invoke-HostPolicy -ProjectRoot $ProjectRoot scratch --env-file $EnvFile)
+
 # --- Main ---------------------------------------------------------------------
 
 Write-LogInfo "Generating compose files for $NumAccounts account(s)..."
@@ -777,3 +756,10 @@ New-WorktreeCompose
 New-IsolatedCompose
 New-LinuxCompose
 Write-LogSuccess 'Done.'
+} finally {
+    if ($null -eq $savedConfigurationEnvFile) {
+        Remove-Item Env:CLAUDE_DOCKER_ENV_FILE -ErrorAction SilentlyContinue
+    } else {
+        $env:CLAUDE_DOCKER_ENV_FILE = $savedConfigurationEnvFile
+    }
+}

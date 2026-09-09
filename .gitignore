@@ -14,3 +14,8 @@ node_modules/
 tui/claude-docker-tui
 tui/claude-docker-tui.exe
 tui/claude-docker-tui-*
+
+# Protected lifecycle journals/backups and Python host-helper bytecode.
+.claude-docker-lifecycle/
+__pycache__/
+*.py[cod]

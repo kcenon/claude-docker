@@ -24,7 +24,8 @@
       "supportsUsage": true,
       "mountsAgentsSkills": false,
       "credentialFiles": ".credentials.json",
-      "oauthCredentialFile": ".credentials.json"
+      "oauthCredentialFile": ".credentials.json",
+      "skipDisablesSandbox": false
     },
     "codex": {
       "binary": "codex",
@@ -49,7 +50,8 @@
       "supportsUsage": false,
       "mountsAgentsSkills": true,
       "credentialFiles": "auth.json",
-      "oauthCredentialFile": "auth.json"
+      "oauthCredentialFile": "auth.json",
+      "skipDisablesSandbox": true
     },
     "gemini": {
       "binary": "gemini",
@@ -74,7 +76,8 @@
       "supportsUsage": false,
       "mountsAgentsSkills": false,
       "credentialFiles": "oauth_creds.json",
-      "oauthCredentialFile": "oauth_creds.json"
+      "oauthCredentialFile": "oauth_creds.json",
+      "skipDisablesSandbox": false
     }
   }
 }

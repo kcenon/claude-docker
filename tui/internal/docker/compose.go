@@ -56,6 +56,10 @@ var modeOverlay = map[string]string{
 // every isolated install, where the old branch picked the worktree overlay or
 // none at all.
 func BuildComposeArgs(projectRoot string, env *config.Env) ([]string, error) {
+	if err := config.CheckLifecycleLock(projectRoot); err != nil {
+		return nil, err
+	}
+
 	args := []string{"compose", "-f", filepath.Join(projectRoot, "docker-compose.yml")}
 	if runtime.GOOS == "linux" {
 		linuxOverlay := filepath.Join(projectRoot, "docker-compose.linux.yml")

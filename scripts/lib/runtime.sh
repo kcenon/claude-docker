@@ -142,7 +142,7 @@ runtime_list() {
 agent_runtime() {
     local runtime="${AGENT_RUNTIME:-}"
     if [[ -z "$runtime" && -n "${PROJECT_ROOT:-}" ]]; then
-        runtime=$(parse_env_value "${PROJECT_ROOT}/.env" "AGENT_RUNTIME")
+        runtime=$(parse_env_value "${CLAUDE_DOCKER_ENV_FILE:-${PROJECT_ROOT}/.env}" "AGENT_RUNTIME")
     fi
     runtime="${runtime:-claude}"
     # `${runtime,,}` is bash 4+. macOS ships bash 3.2 as /bin/bash and

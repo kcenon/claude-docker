@@ -244,7 +244,7 @@ echo "== scale range: 1..702 with double-letter state directories =="
 
 scale_dir=$(make_sandbox "scale-bash" "26")
 mkdir -p "$scale_dir/bin" "$scale_dir/home"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$scale_dir/bin/docker"
+cp "$PROJECT_ROOT/tests/lib/mock_compose.py" "$scale_dir/bin/docker"
 chmod +x "$scale_dir/bin/docker"
 scale_out=$(env -u NUM_ACCOUNTS -u AGENT_RUNTIME HOME="$scale_dir/home" \
     PATH="$scale_dir/bin:$PATH" bash "$scale_dir/scripts/claude-docker" scale 27 2>&1)

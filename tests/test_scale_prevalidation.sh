@@ -55,7 +55,15 @@ cp "$PROJECT_ROOT/VERSION" "$SANDBOX/"
 # docker is stubbed so nothing can reach a daemon; the pre-validation must
 # reject before anything would call it anyway.
 mkdir -p "$WORK/bin"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/bin/docker"
+cat > "$WORK/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in
+    *" config "*)
+        printf '%s\n' '{"name":"scale-fixture","services":{"claude-a":{"user":"1001:1001","environment":{"ISOLATION_MODE":"worktree","NODE_OPTIONS":"--max-old-space-size=3072"},"deploy":{"resources":{"limits":{"cpus":"2","memory":4294967296},"reservations":{"cpus":"1","memory":2147483648}}}}}}'
+        ;;
+esac
+exit 0
+STUB
 chmod +x "$WORK/bin/docker"
 
 # A worktree install with paths for two accounts only -- the exact shape the
@@ -72,6 +80,11 @@ PROJECT_DIR_B=$WORK/project-b
 EOF
 }
 mkdir -p "$WORK/home" "$WORK/project" "$WORK/project-a" "$WORK/project-b"
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+git -C "$WORK/project" init -q
+git -C "$WORK/project" -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -qm fixture
+git -C "$WORK/project" worktree add --detach "$WORK/project-a" HEAD >/dev/null 2>&1
+git -C "$WORK/project" worktree add --detach "$WORK/project-b" HEAD >/dev/null 2>&1
 write_env
 
 num_accounts() {

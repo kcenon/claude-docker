@@ -40,6 +40,21 @@ Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 
+if ($Command -in @('up','down','restart','update','build','scale','config','compose','gh-auth','ps')) {
+    if ($IsWindows -and -not $env:CLAUDE_DOCKER_LOCK_TOKEN) {
+        try {
+            Invoke-HostPolicy -ProjectRoot $ProjectRoot run-locked -- pwsh -NoProfile -File $PSCommandPath $Command @Arguments
+        } catch {
+            $nativeCode = $_.Exception.Data['ExitCode']
+            if ($nativeCode) { exit $nativeCode }
+            throw
+        }
+        exit 0
+    }
+} elseif ($Command -notin @('help','--help','-h','recover','build-tui')) {
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot guard
+}
+
 # --- Exit Code Propagation ----------------------------------------------------
 
 # What this script will exit with. The dispatch switch is the last statement in
@@ -182,7 +197,7 @@ function Invoke-Up {
     Show-IsolationMode
     Write-Host ''
     Write-Host 'Starting containers...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot up --detach @Arguments
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot up -- @Arguments
     if (-not (Test-ComposeSucceeded 'up')) { return }
     Write-Host 'Containers started.' -ForegroundColor Green
     Write-Host ''
@@ -207,6 +222,7 @@ function Invoke-Down {
 }
 
 function Invoke-Restart {
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight --host
     Write-Host 'Restarting containers...' -ForegroundColor Cyan
     Invoke-Compose -ProjectRoot $ProjectRoot restart @Arguments
     if (-not (Test-ComposeSucceeded 'restart')) { return }
@@ -297,6 +313,10 @@ function Invoke-Agent {
         $agentArgs += ($extraRunArgs -split '\s+')
     }
     if ($skipPerms) {
+        if ((Get-IsolationMode -ProjectRoot $ProjectRoot) -eq 'isolated' -and
+            (Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $Subcommand -Field 'skipDisablesSandbox') -eq 'true') {
+            throw "This runtime's permission bypass also disables its sandbox and is unavailable in isolated mode."
+        }
         $agentArgs += $skipFlag
     }
     Invoke-Compose -ProjectRoot $ProjectRoot exec $service @agentArgs
@@ -675,6 +695,7 @@ function Invoke-Build {
 }
 
 function Invoke-Update {
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight --host
     # The registry's `binary` field, not the runtime key: this value is exec'd
     # inside the container below (#356, row 3). cmd_update in the bash wrapper
     # calls agent_binary for the same reason.
@@ -729,103 +750,12 @@ function Invoke-Update {
 }
 
 function Invoke-Scale {
-    if ($Arguments.Count -eq 0) {
-        Write-LogError "Usage: claude-docker scale <N> (1-$(Get-MaxAccountCount))"
-        exit 1
-    }
-
-    # Validated through lib/index.ps1, re-exported by ClaudeDocker.psm1 (#356).
-    $rawCount = $Arguments[0]
-    $newCount = Get-NormalizedAccountCount -Value ([string]$rawCount)
-    if ($null -eq $newCount) {
-        Write-LogError "Account count must be between 1 and $(Get-MaxAccountCount) (got: $rawCount)"
-        exit 1
-    }
-
-    $currentCount = Get-NumAccounts -ProjectRoot $ProjectRoot
-    Write-Host "Scaling: $currentCount -> $newCount account(s)" -ForegroundColor White
-
-    # Update NUM_ACCOUNTS in .env
-    $envFile = Join-Path $ProjectRoot '.env'
-    if (-not (Test-Path $envFile)) {
-        Write-LogError '.env not found. Run install.ps1 first.'
-        exit 1
-    }
-    # Validate the new count against the isolation contract BEFORE touching
-    # .env. The generators are deliberately fail-closed so a failure "cannot
-    # leave a partially regenerated set behind" -- but the caller had already
-    # moved. On a worktree install holding only PROJECT_DIR_A/B, `scale 4`
-    # wrote NUM_ACCOUNTS=4, created account-c and account-d, and then died on
-    # "PROJECT_DIR_C is required when ISOLATION_MODE=worktree", leaving .env
-    # saying 4 and the compose files saying 2.
-    #
-    # Nothing downstream catches that split: `up` resolves the mode with the
-    # default account count of 1, so it passes and starts two containers,
-    # while Get-ServiceNames, the TUI and the help text all read NUM_ACCOUNTS
-    # and report four.
-    try {
-        $null = Get-SupportedIsolationMode -ProjectRoot $ProjectRoot -AccountCount $newCount
-    }
-    catch {
-        Write-LogError "Cannot scale to $newCount account(s): $($_.Exception.Message)"
-        Write-LogInfo "NUM_ACCOUNTS is unchanged at $currentCount."
-        exit 1
-    }
-
-    Set-EnvValue -Path $envFile -Key 'NUM_ACCOUNTS' -Value $newCount
-
-    # Create state directories for new accounts
-    if ($newCount -gt $currentCount) {
-        Write-Host 'Creating new state directories...' -ForegroundColor Cyan
-        for ($i = $currentCount + 1; $i -le $newCount; $i++) {
-            $letter = Get-AccountLetter -Index $i
-            $stateDir = Join-Path (Get-AgentStateRoot -ProjectRoot $ProjectRoot) "account-$letter"
-            if (-not (Test-Path $stateDir)) {
-                New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-                Write-Host "  + account-$letter" -ForegroundColor Green
-            }
-        }
-    }
-
-    # Warn about memory
-    $totalMem = $newCount * 4
-    if ($newCount -ge 4) {
-        Write-LogWarn "Total memory limit: ${totalMem}G ($newCount x 4G). Ensure sufficient host RAM."
-    }
-
-    # Regenerate compose files
-    Write-Host 'Regenerating compose files...' -ForegroundColor Cyan
-    & "$PSScriptRoot\generate-compose.ps1" -NumAccounts $newCount
-
-    # Restart containers if running
-    $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
-    $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
-    if ($running) {
-        Write-Host 'Restarting containers...' -ForegroundColor Cyan
-        Invoke-Compose -ProjectRoot $ProjectRoot down
-        $null = Test-ComposeSucceeded 'down'
-        Invoke-Compose -ProjectRoot $ProjectRoot up --detach
-        if (-not (Test-ComposeSucceeded 'up')) { return }
-    }
-
-    Write-Host "Scaled to $newCount account(s)." -ForegroundColor Green
-
-    # Show summary
-    Write-Host ''
-    Write-Host 'Active services:' -ForegroundColor White
-    foreach ($svc in (Get-ServiceNames -ProjectRoot $ProjectRoot)) {
-        Write-Host "  * $svc" -ForegroundColor Green
-    }
+    if ($Arguments.Count -eq 0) { throw 'Usage: claude-docker scale <N>' }
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot scale --count $Arguments[0] --language powershell
 }
 
 function Invoke-Config {
-    Show-IsolationMode
-    Write-Host ''
-    $baseArgs = Get-ComposeArgs -ProjectRoot $ProjectRoot
-    Write-Host "Compose args: docker compose $($baseArgs -join ' ')" -ForegroundColor DarkGray
-    Write-Host ''
-    Invoke-Compose -ProjectRoot $ProjectRoot config @Arguments
-    $null = Test-ComposeSucceeded 'config'
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight @Arguments
 }
 
 function Invoke-ComposePass {
@@ -948,10 +878,14 @@ function Show-Help {
     Write-Host '  build-tui             ' -ForegroundColor Green -NoNewline; Write-Host 'Rebuild TUI dashboard binary (requires Go 1.24+)'
     Write-Host ''
     Write-Host 'SCALING' -ForegroundColor White
-    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host "Set number of accounts (1-$(Get-MaxAccountCount)) and regenerate"
+    Write-Host '  scale <N>             ' -ForegroundColor Green -NoNewline; Write-Host "Set number of accounts (1-$(Get-MaxAccountCount)) transactionally"
+    Write-Host ''
+    Write-Host '  recover               ' -ForegroundColor Green -NoNewline; Write-Host 'Recover interrupted scale; retain account data'
+    Write-Host '  Setup preview: scripts\setup-isolated.ps1 -RepoDir <repo> -AccountCount <N> -DryRun'
+    Write-Host '  Python 3.9+ is required. Startup shows resolved CPU/memory/heap/PID/scratch budgets.'
     Write-Host ''
     Write-Host 'ADVANCED' -ForegroundColor White
-    Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show resolved compose configuration'
+    Write-Host '  config                ' -ForegroundColor Green -NoNewline; Write-Host 'Show redacted boundaries and resource budgets'
     Write-Host '  compose ...           ' -ForegroundColor Green -NoNewline; Write-Host 'Pass raw args to docker compose'
     Write-Host '  help                  ' -ForegroundColor Green -NoNewline; Write-Host 'Show this help'
     Write-Host ''
@@ -1050,6 +984,7 @@ switch ($Command) {
     'build-tui'  { Invoke-BuildTui }
     'update'     { Invoke-Update }
     'scale'      { Invoke-Scale }
+    'recover'    { Invoke-HostPolicy -ProjectRoot $ProjectRoot recover }
     'config'     { Invoke-Config }
     'compose'    { Invoke-ComposePass }
     { $_ -in 'help', '--help', '-h' } { Show-Help }
