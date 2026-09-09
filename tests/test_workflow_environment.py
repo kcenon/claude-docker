@@ -57,6 +57,13 @@ class EnvironmentTest(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowFailure, "^host_backend_profile_mismatch$"):
                 verify_environment(self.fixture(), {}, "linux-rootless")
 
+    def test_compose_deploy_pid_limits_are_compared_with_the_cgroup(self):
+        fixture = self.fixture()
+        for service in fixture.model["services"].values():
+            service["deploy"]["resources"]["limits"]["pids"] = service.pop("pids_limit")
+        with patch("workflow_environment.backend_profile", return_value="linux-engine"):
+            self.assertEqual(2, len(verify_environment(fixture, {})["effective_limits"]))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

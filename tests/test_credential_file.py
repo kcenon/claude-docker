@@ -11,6 +11,11 @@ from credential_file import read_private_file
 
 
 def make_private_fixture(path):
+    if os.name == "nt":
+        # New files can carry explicit SYSTEM/Administrators grants on hosted
+        # runners. Reset this test-owned DACL before removing inheritance;
+        # protect() intentionally preserves explicit caller grants elsewhere.
+        subprocess.run(["icacls", str(path), "/reset"], check=True, capture_output=True)
     policy.protect(path)
     if os.name == "nt":
         identity = subprocess.check_output(["whoami", "/user", "/fo", "csv", "/nh"], text=True)

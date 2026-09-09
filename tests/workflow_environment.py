@@ -39,7 +39,8 @@ def verify_environment(fixture, provenance, requested_profile=None, desktop_vers
         cpu = fixture.execute(index, "sh", "-c",
             "cat /sys/fs/cgroup/cpu.max 2>/dev/null || { cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us; cat /sys/fs/cgroup/cpu/cpu.cfs_period_us; }")
         quota, period = map(int, cpu.split())
-        if (memory != policy.size_bytes(limits["memory"]) or pids != service["pids_limit"]
+        expected_pids = service.get("pids_limit", limits.get("pids"))
+        if (memory != policy.size_bytes(limits["memory"]) or pids != int(expected_pids)
                 or quota <= 0 or period <= 0 or abs(quota / period - float(limits["cpus"])) > 0.00001):
             raise WorkflowFailure("resource_enforcement_mismatch")
         status = fixture.execute(index, "cat", "/proc/self/status")
