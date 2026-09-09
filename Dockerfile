@@ -89,7 +89,7 @@ RUN set -eux; \
 # if the upstream installer is unexpectedly modified. Refresh by
 # computing the hash of the latest installer and bumping the ARG
 # default below; CI will fail loudly when this drift occurs.
-ARG CLAUDE_INSTALLER_SHA256=cde4f1702d3b1695f92b73d26888364e17bca476e17f0fd676484c951d36c125
+ARG CLAUDE_INSTALLER_SHA256=3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944
 
 RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
     && echo "${CLAUDE_INSTALLER_SHA256}  /tmp/claude-install.sh" | sha256sum -c - \

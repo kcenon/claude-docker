@@ -23,6 +23,7 @@ make_sandbox() {
     cp "$PROJECT_ROOT"/docker-compose*.yml "$dir/"
     cp "$PROJECT_ROOT/VERSION" "$dir/"
     cp "$SCRIPT_DIR/env_fixtures/github-per-account.env" "$dir/.env"
+    cp "$SCRIPT_DIR/lib/mock_compose.py" "$dir/bin/mock_compose.py"
 
     cat > "$dir/bin/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
@@ -50,6 +51,12 @@ MOCK_GH
     cat > "$dir/bin/docker" <<'MOCK_DOCKER'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DOCKER_MOCK_LOG"
+# The real update command validates resolved Compose before refreshing auth.
+# Keep that path active with the shared daemon-free model, never native Docker.
+case " $* " in
+    *" config --format json "*|" info "*)
+        exec python3 "$(dirname "$0")/mock_compose.py" "$@" ;;
+esac
 if [[ "${1:-}" == "exec" ]]; then
     case "${2:-}" in
         cid-a) printf '%s\n' 'fixture-user-a' ;;
@@ -127,6 +134,11 @@ assert_all_case() {
 
 assert_update_case() {
     local language="$1" dir="$2"
+    if grep -q 'config --format json' "$dir/docker.log"; then
+        pass "$language update validates the resolved configuration"
+    else
+        fail "$language update validates the resolved configuration"
+    fi
     if grep -Fxq 'auth token --hostname github.com --user fixture-user-a' "$dir/gh.log" &&
        grep -Fxq 'auth token --hostname github.com --user fixture-user-b' "$dir/gh.log" &&
        ! grep -Fxq 'auth token' "$dir/gh.log"; then
