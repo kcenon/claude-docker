@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from workflow_support import expected_workflows, finish
@@ -77,6 +78,22 @@ class CoverageTest(unittest.TestCase):
             self.assertEqual(3, report["counts"]["failed"])
             self.assertEqual(56, report["counts"]["skipped"])
             self.assertTrue(all(row["status"] == "passed" for row in report["cases"] if row["name"] == "fixture_cleanup"))
+
+    def test_sandbox_refusal_scenarios_have_distinct_case_identities(self):
+        from test_sandbox_platform import main
+        fixture = SimpleNamespace(prepare=lambda: None, up=lambda: None, close=lambda: None)
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            path = Path(directory) / "report.json"
+            with patch("sys.argv", ["test_sandbox_platform.py", "--image", "placeholder", "--output", str(path)]), patch(
+                    "test_sandbox_platform.AuthenticatedFixture", return_value=fixture), patch(
+                    "test_sandbox_platform.provenance", return_value={}), patch(
+                    "test_sandbox_platform.verify", side_effect=lambda f, d: {"degraded_override": d}):
+                with self.assertRaises(SystemExit) as caught:
+                    main()
+            self.assertEqual(0, caught.exception.code)
+            report = json.loads(path.read_text())
+            self.assertEqual(3, report["counts"]["passed"])
+            self.assertEqual([], report["coverage_errors"])
 
 
 if __name__ == "__main__":

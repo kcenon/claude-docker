@@ -69,4 +69,8 @@ class TerminalTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # A blocked native console API must fail this placeholder-only process
+    # test within a fixed bound, with a Python stack identifying the call.
+    import faulthandler
+    faulthandler.dump_traceback_later(90, exit=True)
     unittest.main(verbosity=2)
