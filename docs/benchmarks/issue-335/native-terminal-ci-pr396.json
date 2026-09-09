@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "kind": "native terminal process-fixture CI summary; not a Docker Desktop or authenticated workflow report",
+  "pr_head": "51705e4944086009489605e8e551fbf5620d6e88",
+  "tested_merge_checkout": "b256a635dc8f6908b3b61db1ab825cc6ad6e82fb",
+  "git_tree_sha": "1310ef6a8b3b2ac1bb72a1e4751b01230fd2fce9",
+  "source_identity_scope": "Checkout commit and immutable Git tree; these jobs did not print a filesystem fingerprint or Python version. Live workflow reports carry their separately observed fingerprints and runtime versions.",
+  "workflow_run": "https://github.com/kcenon/claude-docker/actions/runs/34364371390",
+  "status": "passed_with_platform_skips",
+  "issue_completion": "incomplete",
+  "jobs": [
+    {
+      "name": "Native terminal and TUI (ubuntu-latest)",
+      "url": "https://github.com/kcenon/claude-docker/actions/runs/34364371390/job/102509175139",
+      "status": "success",
+      "started_at": "2026-09-09T14:33:24Z",
+      "completed_at": "2026-09-09T14:33:43Z",
+      "operating_system": "Ubuntu 24.04.4 LTS",
+      "runner_image": "ubuntu-24.04",
+      "runner_image_version": "20260831.293.1",
+      "runner_software_manifest": "https://github.com/actions/runner-images/blob/ubuntu24/20260831.293/images/ubuntu/Ubuntu2404-Readme.md",
+      "go": "go version go1.24.13 linux/amd64",
+      "tests": {
+        "credential_permissions": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 2
+        },
+        "terminal_processes": {
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        "compiled_dashboard": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 0,
+          "runtime_account_handoffs": 6,
+          "failure_controls": 2
+        }
+      },
+      "cleanup": "Terminal child and descendant process cleanup assertions passed; disposable process fixtures only"
+    },
+    {
+      "name": "Native terminal and TUI (macos-latest)",
+      "url": "https://github.com/kcenon/claude-docker/actions/runs/34364371390/job/102509175046",
+      "status": "success",
+      "started_at": "2026-09-09T14:33:36Z",
+      "completed_at": "2026-09-09T14:33:58Z",
+      "operating_system": "macOS 26.6.2 25G83",
+      "runner_image": "macos-26-arm64",
+      "runner_image_version": "20260831.0337.3",
+      "runner_software_manifest": "https://github.com/actions/runner-images/blob/macos-26-arm64/20260831.0337/images/macos/macos-26-arm64-Readme.md",
+      "go": "go version go1.24.13 darwin/arm64",
+      "tests": {
+        "credential_permissions": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 2
+        },
+        "terminal_processes": {
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        "compiled_dashboard": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 0,
+          "runtime_account_handoffs": 6,
+          "failure_controls": 2
+        }
+      },
+      "cleanup": "Terminal child and descendant process cleanup assertions passed; disposable process fixtures only"
+    },
+    {
+      "name": "Native terminal and TUI (windows-latest)",
+      "url": "https://github.com/kcenon/claude-docker/actions/runs/34364371390/job/102509175286",
+      "status": "success",
+      "started_at": "2026-09-09T14:33:33Z",
+      "completed_at": "2026-09-09T14:34:38Z",
+      "operating_system": "Microsoft Windows Server 2025 10.0.26100 Datacenter",
+      "runner_image": "windows-2025-vs2026",
+      "runner_image_version": "20260824.214.3",
+      "runner_software_manifest": "https://github.com/actions/runner-images/blob/win25-vs2026/20260824.214/images/windows/Windows2025-VS2026-Readme.md",
+      "go": "go version go1.24.13 windows/amd64",
+      "tests": {
+        "credential_permissions": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 2
+        },
+        "terminal_processes": {
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0
+        },
+        "compiled_dashboard": {
+          "passed": 3,
+          "failed": 0,
+          "skipped": 0,
+          "runtime_account_handoffs": 6,
+          "failure_controls": 2
+        }
+      },
+      "cleanup": "Terminal child and descendant process cleanup assertions passed; disposable process fixtures only"
+    }
+  ],
+  "counts": {
+    "passed": 39,
+    "failed": 0,
+    "skipped": 6,
+    "planned": 45,
+    "native_jobs_passed": 3
+  },
+  "live_executions": {
+    "provider_sessions": 0,
+    "external_git_pushes": 0,
+    "docker_desktop_workflows": 0
+  }
+}

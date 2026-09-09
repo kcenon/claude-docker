@@ -189,14 +189,25 @@ The placeholder terminal tests need no Docker daemon or provider keys:
 
 ```bash
 python3 tests/test_credential_file.py
-python3 tests/test_terminal_support.py
-python3 tests/test_tui_terminal.py
+python3 tests/run_terminal_suite.py test_terminal_support.py
+python3 tests/run_terminal_suite.py test_tui_terminal.py
 ```
 
 The last command builds the actual dashboard and a native disposable Docker
 process adapter. It checks six account/runtime handoffs plus wrong-account and
 failed-child controls. It establishes UI handoff behavior; real installed runtime
 and container compatibility are covered only by the live command above.
+The supervisor gives each placeholder suite a three-minute deadline and keeps
+native console handles separate from CI's output pipes. Its temporary diagnostics
+contain test names and failures only; live provider sessions never use this
+diagnostic wrapper.
+
+The [retained PR #396 Linux report](benchmarks/issue-335/runtime-workflows-linux-pr396.json)
+records 27 passing checks, zero failures and 35 explicit integration skips.
+Resource/security observations and all three fixture cleanups passed. The
+[validation guide](ISSUE-335-VALIDATION.md#terminal-and-completion-follow-up)
+identifies the tested merge checkout, runtime versions, separate refusal and
+daemon-recovery evidence, and outstanding platform/authentication requirements.
 
 ## Interrupted operations
 

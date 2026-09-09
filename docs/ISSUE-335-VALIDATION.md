@@ -130,7 +130,7 @@ establish Windows Docker Desktop container behavior.
 
 | Requirement | Implemented behavior and measured evidence | Outstanding prerequisite |
 |---|---|---|
-| Real workflows and authenticated compatibility | Registry-driven Bash/native PowerShell entry point; npm/default cache, workspace/Git/helper/state/temp writes; recreation markers; sanitized opt-in provider, Git push and Claude hook/statusline adapters; [24-pass offline report](benchmarks/issue-335/runtime-workflows-linux-x86_64.json) | Explicit test API/GitHub credentials, disposable remote and enabled models for all three runtimes; actual terminal/TUI evidence, including native Windows |
+| Real workflows and authenticated compatibility | Registry-driven Bash/native PowerShell entry point; npm/default cache, workspace/Git/helper/state/temp writes; recreation markers; sanitized opt-in provider, Git push and Claude hook/statusline adapters; [historical 24-pass offline report](benchmarks/issue-335/runtime-workflows-linux-x86_64.json); expanded evidence below | Explicit test API/GitHub credentials, disposable remote and enabled models for all three runtimes; authenticated wrapper/TUI execution on the documented Docker backends |
 | Full container matrix and reviewed budgets | Reliable schema/fingerprint, immutable image, real offline workload, aligned cgroup observations, deduplicated physical storage; [9 cells × 5 samples](benchmarks/issue-335/container-linux-x86_64-claude.json), [summaries](benchmarks/issue-335/container-linux-x86_64-claude-summary.json) | Proposed budget acceptance in PR #395; no review date or accepted regression yet |
 | Measured capacity documentation | Largest passing count 4 for the named Linux npm workload; configured ceilings/reservations compared with actual daemon capacity; startup/readiness/workload/PID/scratch/storage and dashboard proposals in [PERFORMANCE.md](PERFORMANCE.md) | Authenticated/larger-workload measurements before agent capacity claims; Desktop/rootless runs before extending platform scope |
 | Interrupted lifecycle recovery | Deterministic real wrapper/child process tests for staged/partial publication/application/compensation; handled POSIX signals, hard kills, live-owner/reader/concurrent recovery refusal, state/ACL assertions; [actual daemon restart report](benchmarks/issue-335/daemon-recovery-linux-x86_64.json) | Native Windows process results are linked in the PR checks; Desktop daemon recovery remains unmeasured; no universal power-loss durability claim |
@@ -142,7 +142,7 @@ establish Windows Docker Desktop container behavior.
 |---|---|---|
 | Linux Engine, Ubuntu 24.04.4, x86_64, kernel 6.17.0-1022-azure; Engine 28.0.4, Compose 2.38.2, overlay2/cgroup v2, UID/GID 1001, AppArmor/built-in seccomp | Full Claude/npm matrix; all-runtime offline workflows; boundaries and public transport; real daemon restart; actual requested-sandbox refusal | Authenticated sessions/pushes/hooks/statusline and an inner-sandbox-compatible kernel profile |
 | macOS arm64, Apple M4 Max, native Bash 3.2/Python 3.9 | Historical dashboard measurements and compatibility/policy checks; new subprocess suite: 9 passed, 1 Windows console case skipped; downloaded Linux report revalidated locally | No local Docker daemon available; Docker Desktop versions/backend, workflows, capacity and daemon restart unmeasured |
-| Native Windows PowerShell 7, GitHub Windows runner | #394 policy/ACL suites and follow-up offline npm host test; native process/console/DACL suite in a separate CI step (latest result linked in PR checks) | Linux-container Docker Desktop/WSL2 integration and interactive terminal/TUI session unexecuted |
+| Native Windows PowerShell 7, GitHub Windows runner | #394 policy/ACL suites and follow-up offline npm host test; process/console/DACL suite; [native ConPTY and compiled-TUI follow-up](benchmarks/issue-335/native-terminal-ci-pr396.json) | Linux-container Docker Desktop/WSL2 integration and authenticated interactive sessions unexecuted |
 | WSL2 Bash with Desktop integration | Supported launcher path and documented fixture entry points | No live workflow/capacity/recovery result from this backend |
 | Rootless Linux daemon | Explicit Docker connection selection and provenance supported by fixture | Actual resource enforcement, nested sandbox and workload/capacity runs unavailable; rootful result does not establish rootless behavior |
 
@@ -194,9 +194,9 @@ not used. Image inputs, resource defaults and the measured workload are unchange
 
 | Requirement | Reviewable implementation/evidence | Remaining prerequisite |
 |---|---|---|
-| Wrapper and actual TUI attach | POSIX PTY/Windows ConPTY adapters; both accounts and every runtime; fresh hook/statusline challenges; dashboard help response after runtime exit | Live installed-runtime tests with explicit credentials; native Windows execution |
-| Correct terminal failures and cleanup | Native child/descendant cleanup, output drain, timeout/early exit tests; actual compiled UI with wrong-account and failed-child controls | ConPTY CI execution and real container-side cleanup on each backend |
-| Credential identity and file privacy | Open-handle owner/mode/DACL checks; no caller ACL changes; GitHub identity must match; atomic absence lease on ref creation and SHA lease on deletion | Native Windows ACL results and purpose-provided accounts/remote |
+| Wrapper and actual TUI attach | POSIX PTY/Windows ConPTY adapters; native Linux/macOS/Windows process-fixture CI passed; both accounts and every runtime; fresh hook/statusline challenges; dashboard help response after runtime exit | Live installed-runtime tests with explicit credentials |
+| Correct terminal failures and cleanup | Native child/descendant cleanup, output drain, timeout/early exit, redirected-parent privacy and actual compiled UI controls passed on all three native CI hosts | Real container-side terminal cleanup on each Docker backend |
+| Credential identity and file privacy | Open-handle owner/mode/DACL checks; no caller ACL changes; native Windows ACL tests passed; GitHub identity must match; atomic absence lease on ref creation and SHA lease on deletion | Purpose-provided accounts/remote |
 | Compatible requested inner sandbox | Effective restrictive settings plus authenticated Bash file work and a distinct mount namespace; capability refusal remains separate | Compatible host/kernel/runtime and explicit Claude credentials |
 | Complete workflow reports | 62 expected rows for all runtimes, missing/duplicate/status/provenance/cleanup rejection; setup failures retain skipped prerequisites | Actual complete authenticated/platform reports |
 | Backend and resource provenance | Native host/daemon profile assertions; enforced cgroup CPU/memory/PID, scratch and outer security checks; explicit Desktop application version | Desktop, WSL2 and rootless Linux runs |
@@ -210,14 +210,29 @@ Defect regressions were demonstrated before each fix:
   against the original `sessionFinishedMsg` handler.
 - Remote-ref race: `WorkflowFailure not raised` when the original push replaced
   a concurrently created ref. The new local bare-remote test preserves that ref.
+- Compose resource observation: `KeyError: 'pids_limit'` against a resolved
+  service that stores PID limits under `deploy.resources.limits.pids`.
+- Sandbox-refusal report: exit code 1 instead of 0 when two successful refusal
+  scenarios reused a case name. Each now has a distinct name.
+- Native console startup ordering: `terminal_start_failed` when a startup
+  operation needs an output drainer before it can finish. The drainer now starts
+  before the native console/process calls.
+- Native Windows redirected handles: `OSError: [WinError 6] The handle is invalid`
+  in the terminal-dimensions child, plus placeholder output bypassing ConPTY,
+  in [the unfixed native run](https://github.com/kcenon/claude-docker/actions/runs/34362995644/job/102506350677).
+  Explicit NULL standard handles with `STARTF_USESTDHANDLES` prevent Windows
+  from duplicating the parent's redirected streams, as described in
+  [Microsoft's ConPTY discussion](https://github.com/microsoft/terminal/discussions/15814).
+  A separate redirected-parent regression checks bidirectional input and that
+  neither parent output stream receives terminal content.
 
-The native terminal CI matrix now includes Linux, macOS and Windows. Its
+The native terminal CI matrix passed on Linux, macOS and Windows. Its
 placeholder process adapter does not establish Docker Desktop compatibility.
 Local execution is macOS arm64 with Python 3.9.6, Bash 3.2, PowerShell 7.6.3 and
 Go 1.27.1. No local Docker daemon is available. Provider credentials, a disposable
-authenticated remote, native Windows/WSL2/rootless hosts and a maintainer budget
-decision have not been supplied. No authenticated calls, external pushes or new
-container measurements are claimed. Reproduction commands and exact report
+authenticated remote, Docker Desktop/WSL2/rootless hosts and a maintainer budget
+decision have not been supplied. No authenticated calls or external pushes are
+claimed. Reproduction commands and exact report
 scope are in [the workflow guide](ISSUE-335-WORKFLOWS.md).
 
 [Local verification summary](benchmarks/issue-335/local-terminal-verification-darwin-arm64.json):
@@ -229,3 +244,34 @@ Windows cross-builds passed. Cross-builds are not native Windows execution.
 The retained full container report remains valid at nine cells/45 samples; its
 budget review is pending. No image inputs changed, so no image tag or generated
 Compose changes are needed.
+
+[Native terminal CI evidence](benchmarks/issue-335/native-terminal-ci-pr396.json)
+records three successful jobs on merge checkout
+`b256a635dc8f6908b3b61db1ab825cc6ad6e82fb`, for PR head
+`51705e4944086009489605e8e551fbf5620d6e88`. Each host ran 15 checks: 13 passed
+and two permission tests for the other platform were skipped. All seven terminal
+process tests and all three compiled-dashboard tests passed, including six
+runtime/account handoffs and two failure controls per host. Windows used Server
+2025 build 10.0.26100 with Go 1.24.13 windows/amd64; macOS used 26.6.2 arm64;
+Linux used the Ubuntu 24.04 runner. The record includes immutable runner-image
+versions and the tested Git tree. No Docker Desktop or provider compatibility is
+inferred from those placeholder process tests.
+
+The separate [PR #396 Linux workflow job](https://github.com/kcenon/claude-docker/actions/runs/34361955529/job/102501032343)
+executed the following live checks on merge checkout
+`ef6860c9a68540c8f83ecfff7962cb894da74a80`, for PR head
+`02fb25d3db16804ec1fbb05890677807112580b6`. These reports preserve their own image
+IDs and source fingerprints; they are not measurements of a later commit or
+replacements for the historical budget-review samples.
+
+| Retained report | Passed / failed / skipped | Scope and cleanup |
+|---|---|---|
+| [Runtime workflows](benchmarks/issue-335/runtime-workflows-linux-pr396.json) | 27 / 0 / 35 | All three runtimes, two accounts, real Bash launcher/package/persistence work and enforced resource/security observations; all three fixtures cleaned up; authenticated and terminal rows remain incomplete |
+| [Sandbox capability gate](benchmarks/issue-335/sandbox-platform-linux-pr396.json) | 3 / 0 / 0 | Unavailable capability refused before execution, including the degraded-settings override; fixture cleaned up; no authenticated inner-sandbox execution |
+| [Daemon recovery](benchmarks/issue-335/daemon-recovery-linux-pr396.json) | 2 / 0 / 0 | Actual daemon interruption/recovery on an explicitly disposable Linux runner; fixture cleaned up |
+
+The workflow host used Linux `6.17.0-1022-azure` x86_64, Docker Engine 28.0.4,
+Compose 2.38.2 and cgroup v2. Each account's effective limits were 4 GiB memory,
+2 CPU and 1024 PIDs, with the expected private tmpfs sizes and outer security
+policy. Installed runtime versions were Claude Code 2.1.266, Codex CLI 0.153.4
+and Gemini CLI 0.59.0. These observations are scoped to that runner and image.
