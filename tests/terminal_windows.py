@@ -106,6 +106,11 @@ class WindowsTerminal:
             checked(update(attributes, 0, 0x00020016, self.console, c.sizeof(w.HANDLE), None, None))
             startup = StartupEx()
             startup.startup.cb = c.sizeof(startup)
+            # Even with inheritance disabled, Windows can duplicate a parent's
+            # redirected standard handles. Explicit NULL handles make the
+            # console connection supply all three instead of leaking output
+            # into the caller's log pipe/file (microsoft/terminal#15814).
+            startup.startup.flags = 0x100  # STARTF_USESTDHANDLES; handles stay NULL.
             startup.attributes = c.cast(attributes, c.c_void_p)
             self.job = create_job(None, None)
             checked(self.job)

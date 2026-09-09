@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -40,9 +41,14 @@ def main():
             print("Terminal suite exceeded its supervised deadline", flush=True)
         finally:
             output.seek(0)
-            # These two suites contain placeholder children only, never real
-            # provider sessions. Their private terminal buffers are not logged.
-            print(output.read(65536).decode("utf-8", errors="replace"), end="", flush=True)
+            # Publish only test outcomes, even if a broken adapter leaks its
+            # placeholder child output into the suite's standard handles.
+            for line in output.read(65536).decode("utf-8", errors="replace").splitlines():
+                if re.fullmatch(r"test_[a-z_]+ \([^\r\n]+\) \.\.\. (?:ok|FAIL|ERROR|skipped '[^']*')"
+                                r"|Ran [0-9]+ tests? in [0-9.]+s|OK(?: \(skipped=[0-9]+\))?"
+                                r"|FAILED \([a-z=0-9, ]+\)|(?:ERROR|FAIL): test_[a-z_]+ \([^\r\n]+\)"
+                                r"|workflow_support.WorkflowFailure: [a-z_]+", line):
+                    print(line, flush=True)
     raise SystemExit(code)
 
 

@@ -2,6 +2,7 @@
 """Native PTY/ConPTY process tests; no Docker or provider credentials."""
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -55,6 +56,27 @@ class TerminalTest(unittest.TestCase):
                 terminal.send(b"finish\r")
                 terminal.wait_exit()
             self.assertEqual(b"", terminal._output)
+
+    def test_redirected_parent_does_not_receive_terminal_output(self):
+        script = (
+            "import os,sys\nfrom terminal_support import Terminal\n"
+            "with Terminal([sys.executable,'-u','-c',"
+            "\"print('private-child-marker'); input()\"],os.getcwd(),dict(os.environ)) as terminal:\n"
+            " terminal.expect(b'private-child-marker',timeout=5)\n"
+            " terminal.send(b'\\r')\n terminal.wait_exit()\n"
+            "print('parent-complete')\n"
+        )
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+            result = subprocess.run([sys.executable, "-u", "-c", script],
+                                    cwd=Path(__file__).resolve().parent, stdin=subprocess.DEVNULL,
+                                    stdout=output, stderr=errors, timeout=30)
+            output.seek(0)
+            errors.seek(0)
+            # Boolean assertions never echo a leaked terminal buffer.
+            self.assertEqual(0, result.returncode, "redirected parent failed")
+            self.assertTrue(output.read().replace(b"\r\n", b"\n") == b"parent-complete\n",
+                            "terminal output escaped into parent stdout")
+            self.assertFalse(errors.read(), "terminal output escaped into parent stderr")
 
     def test_large_output_is_drained_without_deadlock_or_retained_transcript(self):
         with tempfile.TemporaryDirectory() as directory:
