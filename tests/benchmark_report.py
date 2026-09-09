@@ -71,6 +71,24 @@ def disk_summary(samples):
     return result
 
 
+def summary_matches(actual, expected):
+    """Allow only variance rounding across supported Python versions."""
+    if not isinstance(actual, dict) or actual.keys() != expected.keys():
+        return False
+    if "sample_variance" not in expected:
+        return all(summary_matches(actual[key], value) for key, value in expected.items())
+    for key, value in expected.items():
+        if key == "sample_variance":
+            observed = number(actual[key], key)
+            # statistics.variance changed its final rational-to-float rounding
+            # across Python releases. Raw measurements are never rounded.
+            if abs(observed - value) > 4 * math.ulp(value):
+                return False
+        elif actual[key] != value:
+            return False
+    return True
+
+
 def validate(report, full=False):
     require(isinstance(report, dict) and report.get("schema") == 2, "Expected benchmark schema 2.")
     require(report.get("status") == "complete", "The benchmark report is incomplete.")
@@ -121,7 +139,7 @@ def validate(report, full=False):
         require(len(samples) == requested, "Incorrect measured sample count.")
         require([s.get("sample") for s in samples] == list(range(1, requested + 1)), "Duplicate or missing sample IDs.")
         summary = summarize(samples)
-        require(cell.get("summary") == summary, "Stored timing summary does not match raw samples.")
+        require(summary_matches(cell.get("summary"), summary), "Stored timing summary does not match raw samples.")
         for sample in samples:
             require(sample["observed_peak_memory_bytes"] >= sample["idle_memory_bytes"], "Peak memory is below idle memory.")
             accounts = sample.get("account_results", [])
@@ -152,7 +170,7 @@ def validate(report, full=False):
                 covered += int(start <= began <= ended <= end)
             require(covered > 0, "No resource observation completed during the workload.")
             require(sample.get("oom_kill_delta") == 0, "A workload was OOM killed.")
-        require(cell.get("disk_summary") == disk_summary(samples), "Stored disk summary does not match raw samples.")
+        require(summary_matches(cell.get("disk_summary"), disk_summary(samples)), "Stored disk summary does not match raw samples.")
     return {"status": "valid", "scope": report["scope"], "executed_cells": len(cells),
             "measured_samples": len(cells) * requested, "budget_review": report.get("budget_review", "pending")}
 
@@ -161,9 +179,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
     parser.add_argument("--require-full", action="store_true")
+    parser.add_argument("--summary", action="store_true", help="Print validated per-cell timing and physical storage summaries")
     args = parser.parse_args()
     try:
-        result = validate(json.loads(args.report.read_text()), args.require_full)
+        report = json.loads(args.report.read_text())
+        result = validate(report, args.require_full)
+        if args.summary:
+            result.update(source_commit=report["source_commit"], image_id=report["image_id"],
+                          runtime=report["runtime"], workload=report["workload"],
+                          cells=[{key: cell[key] for key in ("mode", "accounts", "summary", "disk_summary")}
+                                 for cell in report["cells"]])
     except (ValueError, KeyError, TypeError, OSError) as error:
         parser.exit(1, "Invalid benchmark report: " + str(error) + "\n")
     print(json.dumps(result, indent=2))

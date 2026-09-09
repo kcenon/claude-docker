@@ -3,9 +3,11 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 from container_fixture import ROOT
@@ -14,6 +16,25 @@ from workflow_support import (AuthenticatedFixture, WorkflowFailure, finish,
 
 
 class WorkflowSupportTest(unittest.TestCase):
+    def test_dispatch_credentials_are_private_removed_and_not_in_child_environment(self):
+        workflow = (ROOT / ".github/workflows/isolation-authenticated.yml").read_text()
+        embedded = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split("          PY\n", 1)[0])
+        for code in (0, 17):
+            with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+                    "RUNNER_TEMP": directory, "ISSUE335_TEST_CREDENTIALS": "dispatch-test-canary"}):
+                path = Path(directory) / "issue335-credentials.json"
+                def invocation(argv):
+                    self.assertEqual("dispatch-test-canary", path.read_text())
+                    self.assertNotIn("ISSUE335_TEST_CREDENTIALS", os.environ)
+                    if os.name != "nt":
+                        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+                    self.assertIn("--require-complete", argv)
+                    return subprocess.CompletedProcess(argv, code)
+                with patch("subprocess.run", side_effect=invocation), self.assertRaises(SystemExit) as caught:
+                    exec(compile(embedded, "authenticated-workflow", "exec"), {})
+                self.assertEqual(code, caught.exception.code)
+                self.assertFalse(path.exists())
+
     def test_success_failure_and_timeout_never_publish_command_output(self):
         canary = "test-secret-canary-335"
         fixture = AuthenticatedFixture()

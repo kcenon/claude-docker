@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import test_lifecycle as existing
@@ -61,9 +62,11 @@ class LifecycleProcessTest(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
             try:
-                process.communicate(timeout=5)
+                process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+            for output in process.fixture_output:
+                output.close()
 
     def arm(self, phase):
         self.control.write_text(json.dumps({"phase": phase, "root": str(self.root), "home": str(self.fixture.fixture_home)}))
@@ -71,19 +74,29 @@ class LifecycleProcessTest(unittest.TestCase):
         self.control.with_suffix(".release").unlink(missing_ok=True)
 
     def start(self, *arguments):
+        # Windows pipes can fill before the parent reaches communicate().
+        # File-backed capture keeps barrier progress independent of output.
+        outputs = [tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") for _ in range(2)]
         process = subprocess.Popen(self.prefix + list(arguments), cwd=self.root, env=self.env,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   stdout=outputs[0], stderr=outputs[1], text=True,
                                    start_new_session=os.name != "nt",
                                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
+        process.fixture_output = outputs
         self.children.append(process)
         return process
 
+    def complete(self, process, timeout=30):
+        process.wait(timeout=timeout)
+        for output in process.fixture_output:
+            output.seek(0)
+        return tuple(output.read() for output in process.fixture_output)
+
     def wait_barrier(self, process):
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + getattr(self, "barrier_timeout", 30)
         marker = self.control.with_suffix(".barrier")
         while not marker.exists():
             if process.poll() is not None:
-                self.fail("Wrapper exited before fixture barrier: " + repr(process.communicate()))
+                self.fail("Wrapper exited before fixture barrier: " + repr(self.complete(process)))
             if time.monotonic() >= deadline:
                 self.fail("Wrapper did not reach fixture barrier")
             time.sleep(0.02)
@@ -91,7 +104,7 @@ class LifecycleProcessTest(unittest.TestCase):
 
     def invoke(self, *arguments, success=True):
         process = self.start(*arguments)
-        output, errors = process.communicate(timeout=30)
+        output, errors = self.complete(process)
         self.assertEqual(success, process.returncode == 0, errors)
         self.assertNotIn("placeholder-secret", output + errors)
         return output + errors
@@ -128,7 +141,7 @@ class LifecycleProcessTest(unittest.TestCase):
         else:
             self.terminate_owner(owner)
         self.control.with_suffix(".release").touch()
-        output, errors = process.communicate(timeout=30)
+        output, errors = self.complete(process)
         self.assertNotEqual(0, process.returncode)
         self.assertNotIn("Scaled to", output + errors)
         lock = self.root / ".claude-docker-lifecycle"
@@ -142,6 +155,15 @@ class LifecycleProcessTest(unittest.TestCase):
         self.interrupted("staged")
 
     def test_hard_termination_during_publication(self):
+        self.interrupted("publication")
+
+    def test_output_cannot_block_a_transaction_barrier(self):
+        path = self.root / "scripts/lib/lifecycle.py"
+        code = path.read_text()
+        old = "            print(json.dumps(manifest, indent=2), flush=True)"
+        self.assertIn(old, code)
+        path.write_text(code.replace(old, "            print('fixture diagnostic ' * 65536, flush=True)\n" + old, 1))
+        self.barrier_timeout = 10
         self.interrupted("publication")
 
     def test_hard_termination_during_application(self):
@@ -178,7 +200,7 @@ class LifecycleProcessTest(unittest.TestCase):
         self.wait_barrier(process)
         self.invoke("recover", success=False)
         self.control.with_suffix(".release").touch()
-        output, errors = process.communicate(timeout=30)
+        output, errors = self.complete(process)
         self.assertEqual(0, process.returncode, errors)
         self.assert_restored(True)
 

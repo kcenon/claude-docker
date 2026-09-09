@@ -2,6 +2,7 @@
 """Corrupt complete synthetic reports; never treat these as measurements."""
 import copy
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -42,6 +43,23 @@ def complete_report():
 
 
 class ReportTest(unittest.TestCase):
+    def test_variance_rounding_is_portable_across_python_versions(self):
+        report = complete_report()
+        cell = report["cells"][0]
+        # These readiness samples exposed a one-ULP statistics.variance
+        # difference between the Linux runner and local Python 3.9.
+        values = [1.4213858879999748, 1.4117288169999824, 1.4524703249999789,
+                  1.4408422559999963, 1.4479060300000128]
+        for sample, value in zip(cell["samples"], values):
+            sample["executable_ready_seconds"] = value
+        cell["summary"] = summarize(cell["samples"])
+        summary = cell["summary"]["executable_ready_seconds"]
+        summary["sample_variance"] = math.nextafter(summary["sample_variance"], math.inf)
+        self.assertEqual("valid", validate(report)["status"])
+        summary["sample_variance"] *= 1.01
+        with self.assertRaises(ValueError):
+            validate(report)
+
     def test_valid_smoke_and_full_scope_refusal(self):
         report = complete_report()
         self.assertEqual(5, validate(report)["measured_samples"])

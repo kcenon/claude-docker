@@ -30,9 +30,9 @@ fails on any executed failure; `--require-complete` also rejects skipped cases.
 |---|---|---|
 | Account workspace | Source edits, generated build/test files, local Git commits | Persistent bind |
 | Workspace `node_modules` | Locked local dependency and package-manager working tree | Persistent private volume |
-| Registry `containerConfigMount` | Runtime settings/session/auth state | Persistent account bind |
+| Registry `containerConfigMount` | Runtime settings/session/auth state and global Git configuration | Persistent account bind |
 | `/tmp` | Temporary files and runtime helper work | Rebuilt tmpfs |
-| `/home/node/.config` | Generated global Git and helper configuration | Rebuilt tmpfs |
+| `/home/node/.config` | Client configuration scratch | Rebuilt tmpfs |
 | `/home/node/.cache`, `.npm`, `.agents` | Runtime and default npm scratch | Rebuilt tmpfs |
 
 Persistence markers are checked before fresh writes after recreation. The package

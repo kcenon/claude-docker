@@ -33,7 +33,7 @@ jobs:
           import sys
           path = Path(os.environ['RUNNER_TEMP']) / 'issue335-credentials.json'
           try:
-              with path.open('x', opener=lambda p, f: os.open(p, f, 0o600)) as output:
+              with open(path, 'x', opener=lambda p, f: os.open(p, f, 0o600)) as output:
                   output.write(os.environ.pop('ISSUE335_TEST_CREDENTIALS', ''))
               result = subprocess.run([sys.executable, 'tests/test_runtime_workflows.py', '--image',
                   'claude-code-base:integration335', '--runtime', 'all', '--credentials-file', str(path),

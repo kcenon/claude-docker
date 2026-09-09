@@ -1,0 +1,1129 @@
+{
+  "status": "valid",
+  "scope": "full matrix",
+  "executed_cells": 9,
+  "measured_samples": 45,
+  "budget_review": "pending",
+  "source_commit": "2af2343207927713f17cc4ec33d21c1b1652580d",
+  "image_id": "sha256:06dadcd0b2d54a06363f23e426cf7e5688df577139b4cfdfe1727674e65cb20e",
+  "runtime": "claude",
+  "workload": "npm-local-build-test-v1",
+  "cells": [
+    {
+      "mode": "shared",
+      "accounts": 1,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.7274181679999998,
+          "sample_variance": 1.4042140041608135e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 0.8417389230000083,
+          "sample_variance": 4.088996244960488e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 24694784,
+          "sample_variance": 1192974142668.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 114008064,
+          "sample_variance": 28277368422400,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 1.29,
+          "sample_variance": 0.0005700000000000011,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.2645164479999949,
+          "sample_variance": 0.001074832705268702,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 32774320,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 32808960,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 1010,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 32067,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 151552,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 35,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 13225,
+            "sample_variance": 3693151.7,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 86016,
+            "sample_variance": 80530636.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 22,
+            "sample_variance": 4.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 925,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 20480,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 5,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "shared",
+      "accounts": 2,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.8522558230000072,
+          "sample_variance": 0.00010242630177261708,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.0824886960000129,
+          "sample_variance": 0.00012121210331744449,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 47550464,
+          "sample_variance": 1764607446220.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 237027328,
+          "sample_variance": 141488075833344,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 2.93,
+          "sample_variance": 0.0013299999999999842,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.6693402450000008,
+          "sample_variance": 0.001105666354683709,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 65542424,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 65581056,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 2011,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 32068,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 151552,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 35,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 26450,
+            "sample_variance": 14772606.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 172032,
+            "sample_variance": 322122547.2,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 44,
+            "sample_variance": 19.2,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 1850,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 40960,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 10,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "shared",
+      "accounts": 4,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.9823090959999945,
+          "sample_variance": 0.0001836299050654554,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.4408422559999963,
+          "sample_variance": 0.00030817823284849037,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 98050048,
+          "sample_variance": 676818059264,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 269832192,
+          "sample_variance": 1557742326120448,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 6.390000000000001,
+          "sample_variance": 0.0032999999999999835,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 2.938435279000032,
+          "sample_variance": 0.008000995181855191,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 131078632,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 131125248,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 4013,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 32067,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 151552,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 35,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 52900,
+            "sample_variance": 56851545.2,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 344064,
+            "sample_variance": 1288490188.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 88,
+            "sample_variance": 76.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 3700,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 81920,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 20,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "worktree",
+      "accounts": 1,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.7446482410000499,
+          "sample_variance": 2.031381347453306e-06,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 0.8600128510000218,
+          "sample_variance": 5.8349876062562785e-06,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 24494080,
+          "sample_variance": 47638904832,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 112259072,
+          "sample_variance": 4230420312883.2,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 1.3099999999999998,
+          "sample_variance": 0.00033000000000000016,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.3050108910000517,
+          "sample_variance": 0.00023935127125238468,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 32774364,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 32813056,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 1011,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 33306,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 176128,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 41,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 13315,
+            "sample_variance": 3757007.3,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 86016,
+            "sample_variance": 80530636.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 22,
+            "sample_variance": 4.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 967,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 24576,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 6,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "worktree",
+      "accounts": 2,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.8670181410000168,
+          "sample_variance": 5.514415188054651e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.0966352670000106,
+          "sample_variance": 0.0001045758507774283,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 49123328,
+          "sample_variance": 1049981930700.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 239046656,
+          "sample_variance": 1821490597068.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 2.9000000000000004,
+          "sample_variance": 0.0009299999999999998,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.6329176879999068,
+          "sample_variance": 0.0005021510876583031,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 65548728,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 65626112,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 2022,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 34543,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 200704,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 47,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 26630,
+            "sample_variance": 15028029.2,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 172032,
+            "sample_variance": 322122547.2,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 44,
+            "sample_variance": 19.2,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 1934,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 49152,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 12,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "worktree",
+      "accounts": 4,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.9658135009999569,
+          "sample_variance": 6.0997754035533996e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.4193719380000402,
+          "sample_variance": 0.0001020119845912698,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 97783808,
+          "sample_variance": 4618155196416,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 288284672,
+          "sample_variance": 1631666033183948.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 6.47,
+          "sample_variance": 0.0015799999999999992,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 3.0933235569999624,
+          "sample_variance": 0.007472985838038754,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 131097456,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 131252224,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 4044,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 37019,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 249856,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 59,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 53260,
+            "sample_variance": 60112116.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 344064,
+            "sample_variance": 1288490188.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 88,
+            "sample_variance": 76.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 3868,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 98304,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 24,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "isolated",
+      "accounts": 1,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.739632060999952,
+          "sample_variance": 2.0379985501852734e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 0.8528769549999424,
+          "sample_variance": 2.919218136985017e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 24465408,
+          "sample_variance": 1207570320588.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 113815552,
+          "sample_variance": 1618291667763.2,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 1.29,
+          "sample_variance": 0.0002200000000000004,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.2781531990000303,
+          "sample_variance": 0.00019188541150317242,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 32774324,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 32808960,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 1010,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 32706,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 159744,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 37,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 13405,
+            "sample_variance": 3821412.5,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 86016,
+            "sample_variance": 80530636.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 22,
+            "sample_variance": 4.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 655,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 20480,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 5,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "isolated",
+      "accounts": 2,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.8706081799999765,
+          "sample_variance": 0.00022669822981638362,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.1012957980000238,
+          "sample_variance": 0.0003906580764270071,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 49745920,
+          "sample_variance": 782376946892.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 239685632,
+          "sample_variance": 7351594857267.2,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 2.93,
+          "sample_variance": 0.0008300000000000041,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 1.6506379499999184,
+          "sample_variance": 0.00039627072114930797,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 65548648,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 65617920,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 2020,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 65412,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 319488,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 74,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 26810,
+            "sample_variance": 15285650,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 172032,
+            "sample_variance": 322122547.2,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 44,
+            "sample_variance": 19.2,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 1850,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 40960,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 10,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    },
+    {
+      "mode": "isolated",
+      "accounts": 4,
+      "summary": {
+        "startup_seconds": {
+          "median": 0.9743611369999599,
+          "sample_variance": 6.617645165078375e-05,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "executable_ready_seconds": {
+          "median": 1.4221548090000624,
+          "sample_variance": 0.00017976388546373946,
+          "samples": 5,
+          "unit": "seconds"
+        },
+        "idle_memory_bytes": {
+          "median": 98533376,
+          "sample_variance": 940284103884.8,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "observed_peak_memory_bytes": {
+          "median": 292651008,
+          "sample_variance": 2602511693250560,
+          "samples": 5,
+          "unit": "bytes"
+        },
+        "workload_cpu_seconds": {
+          "median": 6.41,
+          "sample_variance": 0.001630000000000015,
+          "samples": 5,
+          "unit": "CPU seconds"
+        },
+        "workload_wall_seconds": {
+          "median": 3.096714213000041,
+          "sample_variance": 0.0028114301407869613,
+          "samples": 5,
+          "unit": "seconds"
+        }
+      },
+      "disk_summary": {
+        "workspace": {
+          "apparent_bytes": {
+            "median": 131097296,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 131235840,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 4040,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "git": {
+          "apparent_bytes": {
+            "median": 130824,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 638976,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 148,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "dependency": {
+          "apparent_bytes": {
+            "median": 53620,
+            "sample_variance": 61142600,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 344064,
+            "sample_variance": 1288490188.8,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 88,
+            "sample_variance": 76.8,
+            "samples": 5,
+            "unit": "count"
+          }
+        },
+        "state": {
+          "apparent_bytes": {
+            "median": 3700,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "allocated_bytes": {
+            "median": 81920,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "bytes"
+          },
+          "files": {
+            "median": 20,
+            "sample_variance": 0,
+            "samples": 5,
+            "unit": "count"
+          }
+        }
+      }
+    }
+  ]
+}

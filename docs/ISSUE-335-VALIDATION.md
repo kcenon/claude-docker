@@ -1,14 +1,15 @@
 # Issue #335 implementation and validation
 
-Implementation started: 2026-09-08; final verification: 2026-09-09. Baseline: `develop` at
+Historical #394 implementation started: 2026-09-08; local verification: 2026-09-09. Baseline: `develop` at
 `4eb55c085be46bbd7c537ab30aab18a74b0936be`. The issue and comments were refreshed
 before implementation. Image version: `2026.09.08.1`.
 
-This records the local implementation checks completed before PR publication,
-**not evidence that issue #335 is ready to close**. Remote CI results must be
-assessed separately alongside the remaining validation listed below.
+Issue #335 remains open. The first table preserves historical local #394 checks;
+remote CI and follow-up implementation evidence are recorded below. The follow-up
+starts from merged #394, `develop` at `5c4a3475938455d1f0c27cd11a6eea72b9dacfbf`,
+and is reviewed in [PR #395](https://github.com/kcenon/claude-docker/pull/395).
 
-## Requirement to evidence
+## Historical #394 local evidence
 
 | Requirement | Implementation and executable evidence | Local result / remaining evidence |
 |---|---|---|
@@ -84,21 +85,85 @@ Docker CLI also lacked Buildx, so `docker build --check .` could not execute.
 The live harness refused at daemon discovery. These are unavailable checks,
 not successful skips or image/runtime validation.
 
-## Remaining validation
+## Merged and follow-up CI evidence
 
-- Run the updated Linux CI image job, including real boundaries for Claude,
-  Codex and Gemini, external connectivity, and the five-sample benchmark smoke.
-- Run native Windows lifecycle/ACL/process tests and Windows Docker Desktop
-  integration; exercise Linux Docker, Desktop and any claimed rootless/nested
-  sandbox configurations under their actual security profiles.
-- Run the full nine-cell container benchmark on representative hosts and
-  review CPU/memory/scratch settings, capacity expectations and proposed budgets.
-- With explicitly supplied test credentials, verify authenticated runtime
-  sessions and Git push against an owned disposable repository. Keyless startup,
-  public Git transport and placeholder environment scoping do not prove these.
-- Exercise abrupt host/process termination and daemon-loss recovery on target
-  platforms. POSIX signal compensation and protected journal replay are covered
-  locally; this is not a claim of power-loss durability across every filesystem.
+The final pre-merge #394 head `dd361a7` passed all 61 CI jobs in
+[run 34314414245](https://github.com/kcenon/claude-docker/actions/runs/34314414245),
+including native Windows policy/ACL cases, live Linux boundaries/runtime probes,
+external connectivity and the benchmark smoke. That is evidence for the tested
+PR head; it is not a claim that the squash commit was independently remeasured.
+The earlier local “not run” entries above preserve their original scope.
 
-See [ISOLATION.md](ISOLATION.md) for operation/migration and
-[PERFORMANCE.md](PERFORMANCE.md) for measurements and reproduction commands.
+The follow-up full matrix passed in
+[run 34348122253](https://github.com/kcenon/claude-docker/actions/runs/34348122253)
+at head `e1b2cfe`, checked-out merge `2af2343207927713f17cc4ec33d21c1b1652580d`.
+The same head's [main CI run 34348122233](https://github.com/kcenon/claude-docker/actions/runs/34348122233)
+passed. Exact image/source fingerprints, daemon capacity and versions are in the
+committed reports and [performance protocol](PERFORMANCE.md).
+
+Follow-up workflow and daemon tests executed in
+[run 34349748157](https://github.com/kcenon/claude-docker/actions/runs/34349748157),
+head `c0ee1d3`, checked-out merge `c59f851dc887db7c5ec87815626c299d6656ad22`.
+The Linux Bash workflow report has **24 passed, 0 failed, 16 skipped** cases:
+nine real npm/build/test executions (27 package assertions and 45,000 verified
+reads), nine writable-path checks, three fixture orchestration cases and three
+cleanup cases. The skipped cases are nine authenticated sessions, six
+credentialed pushes and one Claude terminal/statusline dispatch. They are not
+successful authentication evidence.
+
+The requested sandbox report has two refusal checks and cleanup passing. The
+actual probe cannot execute under this Linux kernel/container profile and is
+refused before command execution, with and without the degraded-settings override.
+The daemon report has one actual stop/start recovery scenario and cleanup passing:
+five managed files restored, one running and one stopped service restored,
+transaction-owned additions removed, unrelated writes retained and second recovery
+idempotent. This is independent of the process fixture's simulated Docker outage.
+
+### Requirement to evidence for the remaining work
+
+| Requirement | Implemented behavior and measured evidence | Outstanding prerequisite |
+|---|---|---|
+| Real workflows and authenticated compatibility | Registry-driven Bash/native PowerShell entry point; npm/default cache, workspace/Git/helper/state/temp writes; recreation markers; sanitized opt-in provider, Git push and Claude hook/statusline adapters; [24-pass offline report](benchmarks/issue-335/runtime-workflows-linux-x86_64.json) | Explicit test API/GitHub credentials, disposable remote and enabled models for all three runtimes; actual terminal/TUI evidence, including native Windows |
+| Full container matrix and reviewed budgets | Reliable schema/fingerprint, immutable image, real offline workload, aligned cgroup observations, deduplicated physical storage; [9 cells × 5 samples](benchmarks/issue-335/container-linux-x86_64-claude.json), [summaries](benchmarks/issue-335/container-linux-x86_64-claude-summary.json) | Proposed budget acceptance in PR #395; no review date or accepted regression yet |
+| Measured capacity documentation | Largest passing count 4 for the named Linux npm workload; configured ceilings/reservations compared with actual daemon capacity; startup/readiness/workload/PID/scratch/storage and dashboard proposals in [PERFORMANCE.md](PERFORMANCE.md) | Authenticated/larger-workload measurements before agent capacity claims; Desktop/rootless runs before extending platform scope |
+| Interrupted lifecycle recovery | Deterministic real wrapper/child process tests for staged/partial publication/application/compensation; handled POSIX signals, hard kills, live-owner/reader/concurrent recovery refusal, state/ACL assertions; [actual daemon restart report](benchmarks/issue-335/daemon-recovery-linux-x86_64.json) | Native Windows process results are linked in the PR checks; Desktop daemon recovery remains unmeasured; no universal power-loss durability claim |
+| Requested inner sandbox | [Actual Linux capability/refusal report](benchmarks/issue-335/sandbox-linux-x86_64.json), plus existing conflict/dependency/version regressions | Executed supported-kernel sandbox session and rootless/Desktop profiles; successful refusal does not prove sandboxed provider execution |
+
+### Platform matrix
+
+| Platform/backend | Executed evidence | Remaining |
+|---|---|---|
+| Linux Engine, Ubuntu 24.04.4, x86_64, kernel 6.17.0-1022-azure; Engine 28.0.4, Compose 2.38.2, overlay2/cgroup v2, UID/GID 1001, AppArmor/built-in seccomp | Full Claude/npm matrix; all-runtime offline workflows; boundaries and public transport; real daemon restart; actual requested-sandbox refusal | Authenticated sessions/pushes/hooks/statusline and an inner-sandbox-compatible kernel profile |
+| macOS arm64, Apple M4 Max, native Bash 3.2/Python 3.9 | Historical dashboard measurements and compatibility/policy checks; new subprocess suite: 9 passed, 1 Windows console case skipped; downloaded Linux report revalidated locally | No local Docker daemon available; Docker Desktop versions/backend, workflows, capacity and daemon restart unmeasured |
+| Native Windows PowerShell 7, GitHub Windows runner | #394 policy/ACL suites and follow-up offline npm host test; native process/console/DACL suite in a separate CI step (latest result linked in PR checks) | Linux-container Docker Desktop/WSL2 integration and interactive terminal/TUI session unexecuted |
+| WSL2 Bash with Desktop integration | Supported launcher path and documented fixture entry points | No live workflow/capacity/recovery result from this backend |
+| Rootless Linux daemon | Explicit Docker connection selection and provenance supported by fixture | Actual resource enforcement, nested sandbox and workload/capacity runs unavailable; rootful result does not establish rootless behavior |
+
+### Follow-up defect evidence and checks
+
+The original fingerprint and negative-measurement regressions failed before the
+benchmark changes (seven failed assertions across five tests) and then passed.
+CI then exposed Windows npm launcher resolution and a shared-mode default cache
+permission failure; the native Node/npm entry point and explicit private cache
+fixed both. ShellCheck initially failed downloading its floating `stable` binary
+before lint ran; pinning v0.11.0 passed. These are covered by the green runs above.
+
+The retained Linux report exposed one-ULP variance differences when revalidated
+with Python 3.9. The portable-rounding regression failed before the validator fix
+and passed afterward, while a 1% variance mutation still fails. Raw measurements
+were preserved unchanged. The first native Windows subprocess run reached three
+cases but four barriers timed out because its captured-output pipe filled before
+publication. A large-output regression reproduced that deadlock locally before
+file-backed capture fixed it. The private integration-file creation/cleanup test
+also caught an invalid pathlib `opener` argument before any credentialed run; the
+correct built-in file API passes success/failure cleanup and child-environment
+checks. The five fingerprint/statistics cases, six report
+corruption/rounding cases, package corruption control and six credential/redaction
+cases are executable independently. The subprocess suite has ten cases with
+platform-specific signal skips; native command exits remain separate CI steps.
+
+No live provider credentials were discovered or reused. The exact opt-in file
+schema, bounded commands, cleanup/ref handling, CI secret scope and reproduction
+commands are in [ISSUE-335-WORKFLOWS.md](ISSUE-335-WORKFLOWS.md). Missing credentials
+produce skipped cases, and `--require-complete` fails on those skips. PR #395 stays
+a draft and references `Refs #335` while mandatory evidence/review remains absent.

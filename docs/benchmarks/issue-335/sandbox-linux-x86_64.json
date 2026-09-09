@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "scope": "actual container gate, no authenticated session",
+  "cases": [
+    {
+      "runtime": "claude",
+      "name": "requested_sandbox",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "capability": "unavailable_refused_before_exec",
+        "degraded_override": false
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "requested_sandbox",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "capability": "unavailable_refused_before_exec",
+        "degraded_override": true
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "cleanup",
+      "account": null,
+      "status": "passed"
+    }
+  ],
+  "provenance": {
+    "source_commit": "c59f851dc887db7c5ec87815626c299d6656ad22",
+    "source_dirty": false,
+    "source_fingerprint_sha256": "61f2796cc622aa0ed5cc7f1ca148e996a26c7cbe7b1c140257d77b0f5bf597f8",
+    "image_id": "sha256:6b591216371272dcd1eeccadd096cefb8a00b80a16266ddfb244166dfb3fd32a",
+    "engine_version": "28.0.4",
+    "compose_version": "2.38.2",
+    "daemon": {
+      "OperatingSystem": "Ubuntu 24.04.4 LTS",
+      "Architecture": "x86_64",
+      "KernelVersion": "6.17.0-1022-azure",
+      "CgroupVersion": "2",
+      "Driver": "overlay2",
+      "SecurityOptions": [
+        "name=apparmor",
+        "name=seccomp,profile=builtin",
+        "name=cgroupns"
+      ],
+      "NCPU": 4,
+      "MemTotal": 16765370368
+    },
+    "container_uid": 1001,
+    "container_gid": 1001
+  },
+  "counts": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "executed": 3,
+    "planned": 3
+  },
+  "status": "complete"
+}
