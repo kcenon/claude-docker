@@ -89,6 +89,38 @@ def summary_matches(actual, expected):
     return True
 
 
+def workload_accounts(accounts, count):
+    require(isinstance(accounts, list) and len(accounts) == count
+            and [a.get("account") for a in accounts] == list(range(1, count + 1)),
+            "Workload account count/order is inconsistent.")
+    for account in accounts:
+        require(account.get("verified_reads") == 5000 and account.get("package_tests") == 3,
+                "The expected build/test workload did not execute.")
+        number(account.get("cpu_seconds"), "account CPU time")
+        number(account.get("wall_seconds"), "account wall time")
+
+
+def resource_observation(observation, count):
+    began = number(observation.get("started"), "observation start")
+    ended = number(observation.get("finished"), "observation finish")
+    require(ended >= began, "Observation time runs backwards.")
+    rows = observation.get("accounts", [])
+    require(len(rows) == count, "Resource sampler missed an account.")
+    for row in rows:
+        for key in ("memory_bytes", "pids", "oom_kills"):
+            number(row.get(key), key, integer=True)
+        for key in ("memory_peak_bytes", "pids_peak"):
+            if row.get(key) is not None:
+                number(row[key], key, integer=True)
+        require(row.get("cgroup_version") == 2, "This measured profile requires cgroup v2 OOM counters.")
+        require(isinstance(row.get("scratch"), dict), "Scratch observations are missing.")
+        for value in row["scratch"].values():
+            number(value, "scratch bytes", integer=True)
+    require(number(observation.get("memory_bytes"), "aggregate memory", integer=True)
+            == sum(row["memory_bytes"] for row in rows), "Memory aggregation is inconsistent.")
+    return began, ended
+
+
 def validate(report, full=False):
     require(isinstance(report, dict) and report.get("schema") == 2, "Expected benchmark schema 2.")
     require(report.get("status") == "complete", "The benchmark report is incomplete.")
@@ -134,7 +166,7 @@ def validate(report, full=False):
                 "Workload tool versions are missing.")
         number(cell.get("setup_seconds"), "setup_seconds")
         number(cell.get("initial_start_seconds"), "initial_start_seconds")
-        require(len(cell.get("initial_workload", [])) == count, "Initial workload account count is inconsistent.")
+        workload_accounts(cell.get("initial_workload"), count)
         samples = cell.get("samples", [])
         require(len(samples) == requested, "Incorrect measured sample count.")
         require([s.get("sample") for s in samples] == list(range(1, requested + 1)), "Duplicate or missing sample IDs.")
@@ -143,32 +175,29 @@ def validate(report, full=False):
         for sample in samples:
             require(sample["observed_peak_memory_bytes"] >= sample["idle_memory_bytes"], "Peak memory is below idle memory.")
             accounts = sample.get("account_results", [])
-            require(len(accounts) == count and [a.get("account") for a in accounts] == list(range(1, count + 1)),
-                    "Workload account count/order is inconsistent.")
-            for account in accounts:
-                require(account.get("verified_reads") == 5000 and account.get("package_tests") == 3,
-                        "The expected build/test workload did not execute.")
-                number(account.get("cpu_seconds"), "account CPU time")
-                number(account.get("wall_seconds"), "account wall time")
+            workload_accounts(accounts, count)
+            require(math.isclose(sample["workload_cpu_seconds"], sum(a["cpu_seconds"] for a in accounts),
+                                 rel_tol=1e-12, abs_tol=1e-12), "Aggregate CPU time differs from account results.")
             require(sample.get("physical_disk") == aggregate_disk(accounts), "Physical storage totals are inconsistent.")
             observations = sample.get("memory_observations", [])
             start = number(sample.get("workload_started"), "workload_started")
             end = number(sample.get("workload_finished"), "workload_finished")
             require(end > start and observations, "Workload sampling interval is missing.")
-            covered = 0
+            require(sample["workload_wall_seconds"] == end - start, "Workload wall time differs from its interval.")
+            idle, after = sample.get("idle_cgroup", {}), sample.get("after_cgroup", {})
+            resource_observation(idle, count)
+            resource_observation(after, count)
+            require(sample["idle_memory_bytes"] == idle["memory_bytes"], "Idle memory differs from its observation.")
+            covered = []
             for observation in observations:
-                began = number(observation.get("started"), "observation start")
-                ended = number(observation.get("finished"), "observation finish")
-                require(ended >= began, "Observation time runs backwards.")
-                rows = observation.get("accounts", [])
-                require(len(rows) == count, "Resource sampler missed an account.")
-                for row in rows:
-                    for key in ("memory_bytes", "pids", "oom_kills"):
-                        number(row.get(key), key, integer=True)
-                require(observation.get("memory_bytes") == sum(row["memory_bytes"] for row in rows),
-                        "Memory aggregation is inconsistent.")
-                covered += int(start <= began <= ended <= end)
-            require(covered > 0, "No resource observation completed during the workload.")
+                began, ended = resource_observation(observation, count)
+                if start <= began <= ended <= end:
+                    covered.append(observation["memory_bytes"])
+            require(covered, "No resource observation completed during the workload.")
+            require(sample["observed_peak_memory_bytes"] == max([idle["memory_bytes"]] + covered),
+                    "Observed peak differs from the workload observations.")
+            require(all(a["oom_kills"] == b["oom_kills"] for a, b in zip(idle["accounts"], after["accounts"])),
+                    "OOM counters changed during the workload.")
             require(sample.get("oom_kill_delta") == 0, "A workload was OOM killed.")
         require(summary_matches(cell.get("disk_summary"), disk_summary(samples)), "Stored disk summary does not match raw samples.")
     return {"status": "valid", "scope": report["scope"], "executed_cells": len(cells),

@@ -127,7 +127,9 @@ The sampler retains actual start/end times and requires a complete observation
 inside each workload interval. Short spikes can be missed: the table reports
 observed peaks. Per-account cgroup lifetime memory/PID peaks and OOM counters are
 also retained before/after work; cgroup lifetime counters are not reset at the
-start of just the workload. All OOM deltas are zero. These raw counters, including
+start of just the workload. All OOM deltas are zero. This benchmark profile requires
+cgroup v2: a missing OOM counter fails collection instead of becoming a zero.
+These raw counters, including
 filesystem cache and tmpfs, are the basis for headroom discussion. The Linux
 [Docker stats CLI subtracts cache](https://docs.docker.com/reference/cli/docker/container/stats/).
 

@@ -21,17 +21,23 @@ def complete_report():
                    "disk": {kind: {"source_id": kind + ":1", "apparent_bytes": 32, "allocated_bytes": 512, "files": 1}
                             for kind in ("workspace", "git", "dependency", "state")}}
         observation = {"started": 2, "finished": 3, "memory_bytes": 128,
-                       "accounts": [{"memory_bytes": 128, "pids": 2, "oom_kills": 0}]}
+                       "accounts": [{"memory_bytes": 128, "memory_peak_bytes": 128, "pids": 2,
+                                     "pids_peak": 2, "oom_kills": 0, "cgroup_version": 2, "scratch": {}}]}
+        idle = copy.deepcopy(observation)
+        idle.update(started=0, finished=1, memory_bytes=64)
+        idle["accounts"][0]["memory_bytes"] = 64
         samples.append({"sample": index, "startup_seconds": 1, "executable_ready_seconds": 2,
                         "idle_memory_bytes": 64, "observed_peak_memory_bytes": 128, "workload_cpu_seconds": 1,
                         "workload_wall_seconds": 3, "workload_started": 1, "workload_finished": 4,
                         "account_results": [account], "memory_observations": [observation],
-                        "physical_disk": aggregate_disk([account]), "oom_kill_delta": 0})
+                        "physical_disk": aggregate_disk([account]), "oom_kill_delta": 0,
+                        "idle_cgroup": idle, "after_cgroup": copy.deepcopy(observation),
+                        "idle_docker_cli": {"cache_adjusted_memory_bytes": 32, "cpu_percent": 0}})
     image = "sha256:" + "1" * 64
     cell = {"mode": "isolated", "accounts": 1, "runtime": "claude", "image_id": image, "status": "complete",
             "cleanup": "passed", "manifest": {"budget": {"fixture": True}}, "runtime_versions": ["fixture"],
             "tool_versions": [{"node": "fixture", "npm": "fixture"}], "setup_seconds": 1, "initial_start_seconds": 1,
-            "initial_workload": [{}], "samples": samples, "summary": summarize(samples), "disk_summary": disk_summary(samples)}
+            "initial_workload": [account], "samples": samples, "summary": summarize(samples), "disk_summary": disk_summary(samples)}
     return {"schema": 2, "status": "complete", "scope": "smoke", "planned_cells": [["isolated", 1]],
             "runtime": "claude", "workload": "npm-local-build-test-v1", "source_dirty": False,
             "source_commit": "0" * 40, "source_fingerprint_sha256": "0" * 64, "image_id": image,
@@ -43,6 +49,20 @@ def complete_report():
 
 
 class ReportTest(unittest.TestCase):
+    def test_aggregate_metrics_must_match_account_and_sampler_evidence(self):
+        for mutate in (
+                lambda s: s.update(workload_cpu_seconds=999),
+                lambda s: s.update(workload_wall_seconds=999),
+                lambda s: s.update(observed_peak_memory_bytes=999),
+                lambda s: s.update(idle_memory_bytes=32),
+                lambda s: s["after_cgroup"]["accounts"][0].update(oom_kills=1)):
+            report = complete_report()
+            cell = report["cells"][0]
+            mutate(cell["samples"][0])
+            cell["summary"] = summarize(cell["samples"])
+            with self.subTest(mutation=mutate), self.assertRaises(ValueError):
+                validate(report)
+
     def test_variance_rounding_is_portable_across_python_versions(self):
         report = complete_report()
         cell = report["cells"][0]

@@ -29,7 +29,7 @@ events = dict(line.split() for line in (base/'memory.events').read_text().splitl
 pids = root if v2 else root/'pids'
 print(json.dumps(dict(memory_bytes=read('memory.current' if v2 else 'memory.usage_in_bytes'),
  memory_peak_bytes=read('memory.peak' if v2 else 'memory.max_usage_in_bytes'),
- oom_kills=int(events.get('oom_kill',0)), cgroup_version=2 if v2 else 1,
+ oom_kills=int(events['oom_kill']) if 'oom_kill' in events else None, cgroup_version=2 if v2 else 1,
  pids=int((pids/'pids.current').read_text()), pids_peak=int((pids/'pids.peak').read_text()) if (pids/'pids.peak').exists() else None,
  scratch={str(p):__import__('shutil').disk_usage(p).used for p in map(pathlib.Path, ['/tmp','/home/node/.config','/home/node/.cache','/home/node/.npm','/home/node/.agents'])} if os.environ.get('ISOLATION_MODE') == 'isolated' else {})))
 '''
@@ -57,11 +57,13 @@ def now():
 def source_fingerprint():
     digest = hashlib.sha256()
     paths = [ROOT / "Dockerfile", ROOT / "VERSION"]
+    if (ROOT / ".dockerignore").is_file():
+        paths.append(ROOT / ".dockerignore")
     for name in ("scripts", "tui/internal", "tests"):
         paths.extend(path for path in (ROOT / name).rglob("*") if path.is_file()
                      and not {"__pycache__", "node_modules"} & set(path.parts)
-                     and (path.suffix in (".py", ".sh", ".ps1", ".psm1", ".go", ".cjs")
-                          or "isolation-workload" in path.parts or path.name == "runtimes.json"))
+                     and (path.suffix in (".py", ".sh", ".ps1", ".psm1", ".cmd", ".go", ".cjs")
+                          or "isolation-workload" in path.parts or path.name in ("runtimes.json", "claude-docker")))
     for path in sorted(set(paths)):
         if path.name.startswith(".env") or path.suffix in (".pyc", ".pyo"):
             continue
@@ -78,6 +80,8 @@ def stats(fixture):
                              range(fixture.count)))
     if len(rows) != fixture.count:
         raise AssertionError("Resource sampler did not return all accounts.")
+    if any(row.get("oom_kills") is None for row in rows):
+        raise AssertionError("Required OOM counter unavailable; this profile requires cgroup v2.")
     return {"started": began, "finished": time.monotonic(), "accounts": rows,
             "memory_bytes": sum(row["memory_bytes"] for row in rows)}
 

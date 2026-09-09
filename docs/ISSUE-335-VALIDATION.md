@@ -119,6 +119,13 @@ five managed files restored, one running and one stopped service restored,
 transaction-owned additions removed, unrelated writes retained and second recovery
 idempotent. This is independent of the process fixture's simulated Docker outage.
 
+The [native Windows follow-up run 34350733007](https://github.com/kcenon/claude-docker/actions/runs/34350733007)
+passed at head `c4d9e95`: eight process/console/recovery cases passed, with two
+POSIX signal cases explicitly skipped. The same ten-case suite passes nine cases
+on macOS/Linux and skips the Windows console case. Managed Windows owner/group,
+DACL and inheritance descriptors are compared after recovery. This does not
+establish Windows Docker Desktop container behavior.
+
 ### Requirement to evidence for the remaining work
 
 | Requirement | Implemented behavior and measured evidence | Outstanding prerequisite |
@@ -157,7 +164,13 @@ publication. A large-output regression reproduced that deadlock locally before
 file-backed capture fixed it. The private integration-file creation/cleanup test
 also caught an invalid pathlib `opener` argument before any credentialed run; the
 correct built-in file API passes success/failure cleanup and child-environment
-checks. The five fingerprint/statistics cases, six report
+checks. A final provenance audit added the extensionless Bash launcher, Windows
+CMD launcher and Docker build-ignore input to the fingerprint; all three mutations
+failed before that fix. Corrupt CPU/wall/memory/OOM aggregates with internally
+consistent summaries were also rejected after five new failing corruption checks
+exposed the missing raw-to-aggregate comparisons. Unavailable cgroup OOM counters
+now fail this cgroup-v2 profile instead of being reported as zero.
+The six fingerprint/statistics cases, seven report
 corruption/rounding cases, package corruption control and six credential/redaction
 cases are executable independently. The subprocess suite has ten cases with
 platform-specific signal skips; native command exits remain separate CI steps.

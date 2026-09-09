@@ -452,6 +452,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       # Separate native commands so PowerShell cannot replace a failed test's
       # exit code with a later successful command's result.
+      - name: Record native host and Python versions
+        run: python -c "import json,platform; print(json.dumps({'platform':platform.platform(),'python':platform.python_version(),'architecture':platform.machine()}))"
+      - name: Record native PowerShell version
+        if: runner.os == 'Windows'
+        run: pwsh --version
       - name: Transaction and boundary fault tests
         run: python tests/test_lifecycle.py
       - name: Native wrapper process interruption and recovery
