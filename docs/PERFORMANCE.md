@@ -211,12 +211,17 @@ The review tests construct pending, accepted and rejected fixtures independently
 of the published decision, and separately validate the actual committed record.
 Recording a real decision therefore does not invalidate the pending-state tests.
 Synthetic fixture decisions establish test behavior only. The review validator
-checks bindings and decision-field completeness; a reviewer must verify the
-linked maintainer decision itself.
+checks report bindings, decision-field completeness and the exact metric names,
+units and scopes for each profile. Batch metrics require separate 1/2/4-account
+limits; per-account and dashboard metrics require scalar limits. Changing a
+metric's name or unit cannot substitute a different budget while retaining the
+same metric count. Numeric proposals and accepted ceilings can change within
+that contract, and metric order does not affect validation. A reviewer must
+verify the linked maintainer decision itself.
 
 The terminal follow-up changed test coverage and attach-error display; the
-budget-decision follow-up changes tests and documentation. Neither changes the
-measured npm workload, container image, resource/security configuration, sampling
+budget follow-ups change review validation, tests and documentation. None changes
+the measured npm workload, container image, resource/security configuration, sampling
 implementation or `Manager.ListAccounts` benchmark. The retained measurements
 were revalidated, not relabelled as measurements of a later tree. Rerun the full
 matrix when those measurement inputs change, and keep other backend reports

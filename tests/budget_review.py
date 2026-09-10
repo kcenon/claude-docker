@@ -10,6 +10,27 @@ import re
 from benchmark_report import validate
 
 
+# Metric identity, units and dimensions define the review's scope independently
+# of the decision record. Numeric proposals and accepted ceilings remain editable.
+METRIC_CONTRACTS = {
+    "linux-npm-reference": {
+        "startup": ("seconds", "batch", True),
+        "executable_readiness": ("seconds", "batch", True),
+        "workload_wall": ("seconds", "concurrent batch", True),
+        "workload_cpu": ("CPU seconds", "sum over batch", True),
+        "idle_memory": ("MiB", "per account", False),
+        "lifetime_memory_peak": ("MiB", "per account", False),
+        "lifetime_pid_peak": ("processes", "per account", False),
+        "scratch_usage": ("MiB", "per account; diagnostic persistent-cache workload only", False),
+        "allocated_fixture_storage": ("MiB", "per account; physical storage deduplicated", False),
+    },
+    "macos-local-dashboard": {
+        "local_refresh_small": ("milliseconds", "per refresh; 256-byte input padding; Docker/auth excluded", False),
+        "local_refresh_large": ("milliseconds", "per refresh; 64-KiB input padding; Docker/auth excluded", False),
+    },
+}
+
+
 def validate_review(record, directory, require_accepted=False):
     def require(condition, reason):
         if not condition:
@@ -19,12 +40,13 @@ def validate_review(record, directory, require_accepted=False):
     status = record.get("status")
     require(status in ("pending", "accepted", "rejected"), "invalid review status")
     profiles = record["profiles"]
-    expected = {"linux-npm-reference": ("container-linux-x86_64-claude.json", 9),
-                "macos-local-dashboard": ("dashboard-darwin-arm64.json", 2)}
+    expected = {"linux-npm-reference": "container-linux-x86_64-claude.json",
+                "macos-local-dashboard": "dashboard-darwin-arm64.json"}
     require(len(profiles) == 2 and {p["name"] for p in profiles} == set(expected), "missing or duplicate profile")
     for profile in profiles:
         evidence = profile["evidence"]
-        filename, metrics = expected[profile["name"]]
+        filename = expected[profile["name"]]
+        metrics = METRIC_CONTRACTS[profile["name"]]
         require(evidence["report"] == filename, "unexpected evidence path")
         path = Path(directory) / filename
         require(hashlib.sha256(path.read_bytes()).hexdigest() == evidence["sha256"], "evidence hash mismatch")
@@ -38,18 +60,24 @@ def validate_review(record, directory, require_accepted=False):
             validate(report, full=True)
             require(profile["modes"] == ["shared", "worktree", "isolated"], "incomplete mode scope")
         require(profile["account_counts"] == [1, 2, 4], "incomplete account scope")
-        require(len(profile["metrics"]) == metrics and len({m["metric"] for m in profile["metrics"]}) == metrics,
-                "missing or duplicate metric")
+        require(len(profile["metrics"]) == len(metrics) and {m["metric"] for m in profile["metrics"]} == set(metrics),
+                "missing, duplicate or unknown metric")
         for metric in profile["metrics"]:
-            require(bool(metric["unit"]) and bool(metric["scope"]), "metric units and scope required")
+            unit, scope, per_count = metrics[metric["metric"]]
+            require(metric["unit"] == unit, "metric unit mismatch")
+            require(metric["scope"] == scope, "metric scope mismatch")
             for field in ("proposed_limits", "accepted_limits"):
                 value = metric.get(field)
                 if field == "accepted_limits" and status != "accepted":
                     require(value is None, "unaccepted review contains acceptance values")
                     continue
-                values = value.values() if isinstance(value, dict) else [value]
-                if isinstance(value, dict):
+                if per_count:
+                    require(isinstance(value, dict), "invalid metric limit shape: per-count mapping required")
                     require(set(value) == {"1", "2", "4"}, "incomplete per-count limits")
+                    values = value.values()
+                else:
+                    require(not isinstance(value, dict), "invalid metric limit shape: scalar required")
+                    values = [value]
                 require(all(type(v) in (int, float) and math.isfinite(v) and v > 0 for v in values), "invalid metric limit")
     if status == "pending":
         require(all(record.get(k) is None for k in ("reviewer", "review_date", "decision_url", "accepted_regressions")),

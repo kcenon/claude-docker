@@ -107,6 +107,53 @@ class BudgetReviewTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "invalid metric limit|incomplete per-count limits"):
                         validate_review(record, self.directory, require_accepted=True)
 
+    def test_metric_names_units_and_scopes_are_bound_to_the_profile(self):
+        changes = {"metric": "unmeasured_metric", "unit": "hours",
+                   "scope": "all production agent sessions"}
+        for status in ("pending", "accepted", "rejected"):
+            for profile_index, profile in enumerate(self.record["profiles"]):
+                for metric_index, metric in enumerate(profile["metrics"]):
+                    for field, value in changes.items():
+                        with self.subTest(status=status, profile=profile["name"],
+                                          metric=metric["metric"], field=field):
+                            record = self.decision_fixture(status)
+                            record["profiles"][profile_index]["metrics"][metric_index][field] = value
+                            with self.assertRaises(ValueError):
+                                validate_review(record, self.directory, require_accepted=status == "accepted")
+
+    def test_limit_shapes_match_the_metric_scope(self):
+        for status in ("pending", "accepted", "rejected"):
+            fields = ("proposed_limits", "accepted_limits") if status == "accepted" else ("proposed_limits",)
+            for profile_index, profile in enumerate(self.record["profiles"]):
+                for metric_index, metric in enumerate(profile["metrics"]):
+                    # Replacing a per-count budget by one scalar (or the reverse)
+                    # changes which workloads the reviewer is accepting.
+                    replacement = 2 if isinstance(metric["proposed_limits"], dict) else {"1": 2, "2": 2, "4": 2}
+                    for field in fields:
+                        with self.subTest(status=status, profile=profile["name"],
+                                          metric=metric["metric"], field=field):
+                            record = self.decision_fixture(status)
+                            record["profiles"][profile_index]["metrics"][metric_index][field] = replacement
+                            with self.assertRaisesRegex(ValueError, "invalid metric limit"):
+                                validate_review(record, self.directory, require_accepted=status == "accepted")
+
+    def test_reordered_metrics_and_reviewed_values_remain_valid(self):
+        for status in ("pending", "accepted", "rejected"):
+            with self.subTest(status=status):
+                record = self.decision_fixture(status)
+                record["profiles"].reverse()
+                for profile in record["profiles"]:
+                    profile["metrics"].reverse()
+                    for metric in profile["metrics"]:
+                        for field in ("proposed_limits", "accepted_limits"):
+                            value = metric[field]
+                            if isinstance(value, dict):
+                                metric[field] = {key: limit * 2 for key, limit in reversed(list(value.items()))}
+                            elif value is not None:
+                                metric[field] = value * 2
+                self.assertEqual(status, validate_review(record, self.directory,
+                                                        require_accepted=status == "accepted")["budget_review"])
+
     def test_unaccepted_decisions_cannot_have_accepted_limits(self):
         for status in ("pending", "rejected"):
             with self.subTest(status=status):
@@ -136,6 +183,33 @@ class BudgetReviewTest(unittest.TestCase):
                         self.assertEqual("invalid_or_unaccepted" if rejected else "valid", report["status"])
                         if not rejected:
                             self.assertEqual(status, report["budget_review"])
+
+    def test_cli_rejects_metric_contract_corruption(self):
+        mutations = [
+            lambda r: r["profiles"][0]["metrics"][0].update(metric="unmeasured_metric"),
+            lambda r: r["profiles"][0]["metrics"][0].update(unit="hours"),
+            lambda r: r["profiles"][0]["metrics"][0].update(scope="all production agent sessions"),
+            lambda r: r["profiles"][0]["metrics"][0].update(accepted_limits=2),
+            lambda r: r["profiles"][0]["metrics"][4].update(accepted_limits={"1": 64, "2": 64, "4": 64}),
+        ]
+        with tempfile.TemporaryDirectory(prefix="budget-review-fixture-") as directory:
+            root = Path(directory)
+            for profile in self.record["profiles"]:
+                filename = profile["evidence"]["report"]
+                shutil.copyfile(self.directory / filename, root / filename)
+            path = root / "review.json"
+            for index, mutate in enumerate(mutations):
+                record = self.decision_fixture("accepted")
+                mutate(record)
+                path.write_text(json.dumps(record))
+                for strict in (False, True):
+                    with self.subTest(mutation=index, require_accepted=strict):
+                        command = [sys.executable, str(ROOT / "tests/budget_review.py"), str(path)]
+                        if strict:
+                            command.append("--require-accepted")
+                        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                        self.assertEqual(1, result.returncode, result.stderr)
+                        self.assertEqual({"status": "invalid_or_unaccepted"}, json.loads(result.stdout))
 
 
 if __name__ == "__main__":
