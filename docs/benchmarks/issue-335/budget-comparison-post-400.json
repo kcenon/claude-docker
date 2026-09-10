@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "kind": "derived budget comparison; existing measurements only",
+  "compared_at": "2026-09-10T12:20:57.927369+00:00",
+  "review_status": "pending",
+  "review_sha256": "0643df94da105d2d61c559d2ee423c4e03e9f17d38fe9c3e10ebac2868a2d0a5",
+  "profiles": [
+    {
+      "name": "linux-npm-reference",
+      "evidence": {
+        "report": "container-linux-x86_64-claude.json",
+        "sha256": "7de3c5abdd2abd3b6903c9657424c22b2dff17e89fe938cc9e01b4b11afeeb9e",
+        "identity": {
+          "source_commit": "2af2343207927713f17cc4ec33d21c1b1652580d",
+          "source_dirty": false,
+          "source_fingerprint_sha256": "9b8977519d3e5c25e45b9ece70298283c0d25a49217b262c8716132355899937",
+          "image_id": "sha256:06dadcd0b2d54a06363f23e426cf7e5688df577139b4cfdfe1727674e65cb20e",
+          "runtime": "claude",
+          "workload": "npm-local-build-test-v1",
+          "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+          "architecture": "x86_64",
+          "daemon": {
+            "os": "Ubuntu 24.04.4 LTS",
+            "kernel": "6.17.0-1022-azure",
+            "architecture": "x86_64",
+            "driver": "overlay2",
+            "security_options": [
+              "name=apparmor",
+              "name=seccomp,profile=builtin",
+              "name=cgroupns"
+            ],
+            "cgroup_version": "2"
+          },
+          "docker_capacity": {
+            "cpus": 4,
+            "memory_bytes": 16766414848
+          },
+          "sampling": "5+ stop/up samples; npm uses an explicit private persistent dependency-volume cache in every mode; tmpfs cleared; initial setup/start/workload separate; initial and measured work concurrent across accounts; host page caches not flushed; cgroup sampling timestamps delimit observed peaks; disk collection excluded from workload time"
+        }
+      },
+      "metrics": [
+        {
+          "metric": "startup",
+          "unit": "seconds",
+          "scope": "batch",
+          "proposed_limits": {
+            "1": 2,
+            "2": 2,
+            "4": 2
+          },
+          "largest_observed": {
+            "1": 0.746528933000036,
+            "2": 0.9014642880000565,
+            "4": 0.9884125489999747
+          },
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "executable_readiness",
+          "unit": "seconds",
+          "scope": "batch",
+          "proposed_limits": {
+            "1": 3,
+            "2": 3,
+            "4": 3
+          },
+          "largest_observed": {
+            "1": 0.8630297150000388,
+            "2": 1.1331034090000003,
+            "4": 1.4524703249999789
+          },
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "workload_wall",
+          "unit": "seconds",
+          "scope": "concurrent batch",
+          "proposed_limits": {
+            "1": 2,
+            "2": 3,
+            "4": 5
+          },
+          "largest_observed": {
+            "1": 1.332528018000005,
+            "2": 1.7170629210000072,
+            "4": 3.2485143960000187
+          },
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "workload_cpu",
+          "unit": "CPU seconds",
+          "scope": "sum over batch",
+          "proposed_limits": {
+            "1": 3,
+            "2": 6,
+            "4": 12
+          },
+          "largest_observed": {
+            "1": 1.33,
+            "2": 2.9799999999999995,
+            "4": 6.529999999999999
+          },
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "idle_memory",
+          "unit": "MiB",
+          "scope": "per account",
+          "proposed_limits": 64,
+          "largest_observed": 25.6171875,
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "lifetime_memory_peak",
+          "unit": "MiB",
+          "scope": "per account",
+          "proposed_limits": 256,
+          "largest_observed": 118.40234375,
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "lifetime_pid_peak",
+          "unit": "processes",
+          "scope": "per account",
+          "proposed_limits": 64,
+          "largest_observed": 34,
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "scratch_usage",
+          "unit": "MiB",
+          "scope": "per account; diagnostic persistent-cache workload only",
+          "proposed_limits": 16,
+          "largest_observed": 0.0,
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "allocated_fixture_storage",
+          "unit": "MiB",
+          "scope": "per account; physical storage deduplicated",
+          "proposed_limits": 48,
+          "largest_observed": 31.56640625,
+          "within_proposed_limits": true
+        }
+      ]
+    },
+    {
+      "name": "macos-local-dashboard",
+      "evidence": {
+        "report": "dashboard-darwin-arm64.json",
+        "sha256": "0a0172f8304d880b7e2c7a05090bb57c4610b0ed33d317dfe4e6fc11cd180b53",
+        "identity": {
+          "date": "2026-09-08",
+          "platform": "darwin/arm64",
+          "cpu": "Apple M4 Max",
+          "go": "go1.27.1",
+          "baseline_head": "4eb55c085be46bbd7c537ab30aab18a74b0936be",
+          "working_tree": "issue-335 implementation; uncommitted",
+          "benchmark_sha256": "282904cd2e6c89680d00e87cfb7c85695abf0251b64d67bba279596b278410b9",
+          "command": "go test ./internal/account -run ^$ -bench BenchmarkListAccounts -benchtime=100ms -count=5 -benchmem",
+          "sampling": "Five benchmark estimates per case; Docker mocked as stopped; no credentials/provider requests. Other workstation activity was not excluded."
+        }
+      },
+      "metrics": [
+        {
+          "metric": "local_refresh_small",
+          "unit": "milliseconds",
+          "scope": "per refresh; 256-byte input padding; Docker/auth excluded",
+          "proposed_limits": 1,
+          "largest_observed": 0.081876,
+          "within_proposed_limits": true
+        },
+        {
+          "metric": "local_refresh_large",
+          "unit": "milliseconds",
+          "scope": "per refresh; 64-KiB input padding; Docker/auth excluded",
+          "proposed_limits": 2,
+          "largest_observed": 0.245297,
+          "within_proposed_limits": true
+        }
+      ]
+    }
+  ],
+  "method": {
+    "batch_timings": "Maximum raw sample over all three modes, separately for 1/2/4 accounts.",
+    "idle_memory": "Maximum individual account idle cgroup memory over all measured samples.",
+    "lifetime_peaks": "Maximum individual account lifetime counter over idle, workload and after-workload observations.",
+    "scratch_usage": "Maximum sum of observed scratch-path usage for an individual account; persistent-cache fixture only.",
+    "allocated_fixture_storage": "Maximum physically deduplicated batch allocated bytes divided by account count.",
+    "dashboard": "Largest recomputed five-sample case median for each input size; all 12 cases included.",
+    "mode_differences": "Descriptive difference of isolated versus shared cell medians; fixed sample order and background/cache effects preclude a significance claim."
+  },
+  "maintainer_decision": "Still required; this comparison records no accepted limits or regressions.",
+  "isolated_vs_shared_median_percent": {
+    "1": {
+      "startup": 1.6790745044949595,
+      "executable_readiness": 1.3232169376506286,
+      "workload_wall": 1.0784162611410686,
+      "workload_cpu": 0.0
+    },
+    "2": {
+      "startup": 2.1533859323328075,
+      "executable_readiness": 1.7373947709113713,
+      "workload_wall": -1.120340509138229,
+      "workload_cpu": 0.0
+    },
+    "4": {
+      "startup": -0.8091097835089878,
+      "executable_readiness": -1.2969807709424908,
+      "workload_wall": 5.386504005419934,
+      "workload_cpu": 0.3129890453833939
+    }
+  },
+  "all_observed_within_proposals": true
+}

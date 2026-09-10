@@ -363,3 +363,20 @@ measurement logic, resource defaults or the raw benchmark/review records. The
 broad source fingerprint includes test files and therefore changes; retained
 measurements keep their original fingerprint and are not relabelled as results
 from this follow-up. Issue #335 remains at 15/17 acceptance criteria.
+
+## Completion execution after #400
+
+[Local execution on the clean `07ea18f` source](benchmarks/issue-335/local-completion-verification-darwin-arm64.json)
+passed 64 tests with two native Windows DACL skips across ten macOS suites,
+including native PTY and compiled-dashboard controls. Eighteen real Compose
+models and nine fixture preparations passed. The retained nine-cell/45-sample
+benchmark and pending review record validated; strict acceptance correctly
+exited 1. No local Docker daemon was reachable, and no live container or
+authenticated execution is claimed.
+
+The [completion and budget decision packet](ISSUE-335-REVIEW.md) compares all
+eleven existing proposals with their bound measurements, records the remaining
+integration inputs and presents the unresolved sandbox compatibility decision.
+All observed metrics are within the proposals; maintainer acceptance remains
+pending. Runtime/image inputs, resource defaults and raw measurements are
+unchanged. Issue #335 remains at 15/17 acceptance criteria.
