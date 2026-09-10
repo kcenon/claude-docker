@@ -226,3 +226,10 @@ implementation or `Manager.ListAccounts` benchmark. The retained measurements
 were revalidated, not relabelled as measurements of a later tree. Rerun the full
 matrix when those measurement inputs change, and keep other backend reports
 separate.
+
+The [completion review packet](ISSUE-335-REVIEW.md#concrete-budget-proposal)
+compares every proposal with the preserved raw measurements and identifies the
+descriptive differences a reviewer should address. Its
+[machine-readable comparison](benchmarks/issue-335/budget-comparison-post-400.json)
+retains report hash bindings and calculation methods. It records analysis of
+the existing samples; budget acceptance remains pending.
