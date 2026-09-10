@@ -275,3 +275,42 @@ Compose 2.38.2 and cgroup v2. Each account's effective limits were 4 GiB memory,
 2 CPU and 1024 PIDs, with the expected private tmpfs sizes and outer security
 policy. Installed runtime versions were Claude Code 2.1.266, Codex CLI 0.153.4
 and Gemini CLI 0.59.0. These observations are scoped to that runner and image.
+
+## Budget decision test follow-up
+
+The follow-up based on `6a85de92cf8fc4d515edb74f7d798166abb16c6d` fixes a test
+failure that would occur after recording a valid accepted budget review.
+`BudgetReviewTest.setUp()` read the published record, and both original tests
+assumed its decision was pending. Substituting a valid accepted record in memory
+before the fix produced two failures: `'pending' != 'accepted'` and an expected
+validation exception not being raised. No published decision was changed for
+this reproduction.
+
+The suite now derives explicit pending, accepted and rejected fixtures from the
+bound evidence, clearing decision fields before choosing each test state. A
+separate test validates the real committed record in its recorded state. Tests
+cover missing decision fields, evidence/scope corruption, invalid limits and
+actual CLI exit codes with and without `--require-accepted`. The same ten-test
+suite also passes when its input record is replaced in memory with either an
+accepted or rejected fixture. Fixture identities and decision links are not
+maintainer approvals.
+
+[Local verification](benchmarks/issue-335/local-budget-review-verification-darwin-arm64.json)
+records macOS arm64 execution on September 10, 2026:
+
+| Check | Result and scope |
+|---|---|
+| Eight Python suites, including native terminal and compiled TUI | 47 passed, two native Windows ACL skips; 49 tests total |
+| Budget suite with synthetic accepted/rejected input records | Ten tests passed for each state; 20 additional test executions |
+| Resolved Compose boundaries | 18 models checked and nine disposable fixture preparations; zero live containers |
+| Retained full benchmark | Valid, nine cells and 45 samples; original measurement provenance preserved |
+| Published review | Valid pending record; `--require-accepted` correctly exits 1 |
+
+The local Docker CLI/Compose and Go tools were available, but no Docker daemon
+was reachable. Purpose-provided provider/GitHub inputs, the remaining native
+Docker hosts and an explicit maintainer budget decision were not supplied for
+this run. No new authenticated sessions, remote pushes, live Docker backend
+claims or budget acceptance are recorded. The issue remains at 15/17 criteria;
+the [workflow reproduction guide](ISSUE-335-WORKFLOWS.md) describes the remaining
+runs. Image inputs, runtime behavior, resource defaults and raw benchmark files
+are unchanged.

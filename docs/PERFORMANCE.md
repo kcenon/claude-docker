@@ -200,16 +200,24 @@ pass is not approval. The raw measurement files retain their original provenance
 and pending-review field even after a separate review record is accepted.
 
 ```bash
+python3 tests/test_budget_review.py
 python3 tests/benchmark_report.py docs/benchmarks/issue-335/container-linux-x86_64-claude.json --require-full
 python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json
 # Exits nonzero while the decision is pending or rejected.
 python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json --require-accepted
 ```
 
-The review validator checks bindings and decision-field completeness; a reviewer
-must verify the linked maintainer decision itself. This follow-up changes test
-coverage and attach-error display, without changing the measured npm workload,
-container image, resource/security configuration, sampling implementation or
-`Manager.ListAccounts` benchmark. The retained measurements were revalidated,
-not relabelled as measurements of the follow-up tree. Rerun the full matrix when
-those measurement inputs change, and keep other backend reports separate.
+The review tests construct pending, accepted and rejected fixtures independently
+of the published decision, and separately validate the actual committed record.
+Recording a real decision therefore does not invalidate the pending-state tests.
+Synthetic fixture decisions establish test behavior only. The review validator
+checks bindings and decision-field completeness; a reviewer must verify the
+linked maintainer decision itself.
+
+The terminal follow-up changed test coverage and attach-error display; the
+budget-decision follow-up changes tests and documentation. Neither changes the
+measured npm workload, container image, resource/security configuration, sampling
+implementation or `Manager.ListAccounts` benchmark. The retained measurements
+were revalidated, not relabelled as measurements of a later tree. Rerun the full
+matrix when those measurement inputs change, and keep other backend reports
+separate.
