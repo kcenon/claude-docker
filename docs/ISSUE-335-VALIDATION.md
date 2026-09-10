@@ -314,3 +314,52 @@ claims or budget acceptance are recorded. The issue remains at 15/17 criteria;
 the [workflow reproduction guide](ISSUE-335-WORKFLOWS.md) describes the remaining
 runs. Image inputs, runtime behavior, resource defaults and raw benchmark files
 are unchanged.
+
+## Budget metric contract follow-up
+
+The follow-up based on `48e9986e711ad5bc52cfa0dfbe033542bbfbe55e` fixes a gap in
+the review validator. It checked metric counts and nonempty unit/scope fields,
+but an otherwise valid accepted fixture still passed after replacing a required
+metric, changing seconds to hours, expanding its scope to production sessions,
+or replacing per-count limits with a scalar. Scalar metrics also accepted
+per-count dictionaries. Those substitutions changed the meaning of the reviewed
+budget without invalidating its report bindings.
+
+Four new test methods were run against the unfixed validator first. They
+reported **153 failing assertions**: 99 name/unit/scope mutations across all
+eleven metrics and three decision states, 44 limit-shape mutations, and ten
+CLI rejection assertions. The positive control for reordering metrics and
+changing valid numeric ceilings already passed. All decision records in these
+tests were synthetic; the published review remains pending.
+
+The validator now requires the profile's exact metric set, units and scopes,
+and requires per-count or scalar limits according to each metric's contract.
+Numeric review decisions and metric ordering remain flexible. All fourteen
+budget tests pass after the correction, including both CLI acceptance modes.
+The validator still cannot authenticate a linked maintainer decision.
+
+[Local verification](benchmarks/issue-335/local-metric-contract-verification-darwin-arm64.json)
+records the following macOS arm64 results on September 10, 2026:
+
+| Check | Result and scope |
+|---|---|
+| Ten Python suites, including budget/workflow controls, benchmark validators and native terminal/compiled TUI | 64 passed, two native Windows ACL skips; 66 tests total |
+| New regressions against the original validator | Four test methods, 153 failing assertions; valid reordering/value-change control passed |
+| Resolved Compose boundaries | 18 models and nine fixture preparations; zero live containers |
+| Retained full benchmark | Valid, nine cells and 45 samples; original measurement identities retained |
+| Published budget review | Valid pending record; strict acceptance correctly exits 1 |
+
+The workflow guide now explains how to inspect the sandbox probe's capability
+result and collect ordinary authenticated workflows on a backend that refuses
+the requested inner sandbox. Such a successful ordinary run still has two
+required sandbox skips and remains incomplete. This documents the existing
+runner's behavior; no new authenticated execution is claimed.
+
+No local Docker daemon was reachable. Purpose-provided credentials/models,
+the disposable remote, the required Docker hosts and an explicit budget decision
+were not supplied. Those integration and review requirements remain open. This
+change does not alter image inputs, container policy, the measured workload,
+measurement logic, resource defaults or the raw benchmark/review records. The
+broad source fingerprint includes test files and therefore changes; retained
+measurements keep their original fingerprint and are not relabelled as results
+from this follow-up. Issue #335 remains at 15/17 acceptance criteria.

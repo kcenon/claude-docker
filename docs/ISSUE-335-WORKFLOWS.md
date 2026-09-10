@@ -46,6 +46,12 @@ probe and command execution or the precise unsupported-kernel refusal before
 command execution, including with the degraded-settings override. It records
 which outcome occurred. This is separate from an authenticated runtime session.
 
+Inspect each sandbox case's `metadata.capability` before scheduling the
+authenticated sandbox scenario. Both `sandbox_probe_executed` and
+`unavailable_refused_before_exec` can produce a successful probe report: the
+latter establishes refusal only. Even the former still needs an authenticated
+Bash-tool session to establish actual inner-sandbox execution.
+
 ## Explicit authenticated integration
 
 Provide a private, caller-owned JSON file outside the repository. The harness
@@ -124,6 +130,23 @@ refusal evidence, including the degraded-settings override. The known Linux
 AppArmor/default-seccomp profile may therefore collect successful ordinary
 authenticated rows while its requested-sandbox rows fail. A compatible profile
 must supply the outstanding successful sandbox evidence without weaker security.
+
+On a backend that refuses the capability probe, collect the other authenticated
+workflows with `--terminal`, omitting `--requested-inner-sandbox` and
+`--require-complete`. For example, with designated test credentials on Linux:
+
+```bash
+python3 tests/test_runtime_workflows.py --image claude-code-base:issue335-validation --runtime all --profile linux-engine --language bash --credentials-file /private/test-credentials.json --terminal --output authenticated-with-sandbox-skips.json
+```
+
+Use the matching profile and native command syntax on other hosts. A successful
+ordinary run retains 60 passing rows and the two required Claude sandbox skips,
+with status `incomplete`. Verify those identities and all other outcomes; exit
+zero alone is insufficient. Keep the separate capability/refusal report and run
+the full strict command on a demonstrated compatible profile. Do not relabel
+skips or refusal as successful sandboxed work, or weaken the outer restrictions
+to obtain it. If no compatible profile is available, that evidence remains
+outstanding.
 
 Each provider command has a container-side timeout of 10–300 seconds plus a
 five-second termination grace. Claude also has a three-turn and configurable
