@@ -380,3 +380,25 @@ integration inputs and presents the unresolved sandbox compatibility decision.
 All observed metrics are within the proposals; maintainer acceptance remains
 pending. Runtime/image inputs, resource defaults and raw measurements are
 unchanged. Issue #335 remains at 15/17 acceptance criteria.
+
+## Post-merge execution on #401
+
+[The local execution report](benchmarks/issue-335/local-post401-verification-darwin-arm64.json)
+records checks run directly on clean merged commit
+`7eeeb90baaf6aa26264560a6c93a38f8793acbe8` on September 10, 2026, before this
+report was added to the repository. Its original source tree, timestamps,
+commands, tool versions and evidence hashes are preserved.
+
+Ten macOS suites passed 64 tests with two native Windows DACL skips. Native PTY
+and compiled-dashboard controls passed using process fixtures. Real Compose
+resolution checked 18 models and nine fixture preparations. The retained
+nine-cell/45-sample benchmark and pending budget record validated; the strict
+budget acceptance gate correctly exited 1.
+
+The caller-selected Docker daemon was unavailable. This execution started no
+live containers, provider sessions, remote pushes or inner-sandbox sessions.
+Authenticated workflows on the required native Docker backends, compatible
+requested-inner-sandbox execution and a maintainer budget decision remain
+outstanding. Issue #335 remains at 15/17 acceptance criteria. These checks
+revalidate the retained measurements; they do not collect a new benchmark or
+change the budget decision or support scope.
