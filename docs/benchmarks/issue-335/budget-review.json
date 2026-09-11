@@ -1,11 +1,16 @@
 {
   "schema": 1,
   "issue": "https://github.com/kcenon/claude-docker/issues/335",
-  "status": "pending",
-  "reviewer": null,
-  "review_date": null,
-  "decision_url": null,
-  "accepted_regressions": null,
+  "status": "accepted",
+  "reviewer": "kcenon",
+  "review_date": "2026-09-11",
+  "decision_url": "https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772",
+  "accepted_regressions": [
+    "Accept the observed performance and physical-storage differences among shared, worktree and isolated in the bound 45-sample Linux report, within the accepted absolute ceilings for this workload and reference host only.",
+    "Isolated versus shared median startup increased by 1.679075% at one account and 2.153386% at two accounts; executable readiness increased by 1.323217% and 1.737395%, respectively.",
+    "Isolated versus shared median workload wall time increased by 1.078416% at one account and 5.386504% at four accounts; workload CPU increased by 0.312989% at four accounts.",
+    "Two-account isolated median wall time decreased by 1.120341%; fixed sample order, cache effects and background activity preclude a statistical significance or future-performance guarantee claim."
+  ],
   "profiles": [
     {
       "name": "linux-npm-reference",
@@ -60,7 +65,11 @@
             "2": 2,
             "4": 2
           },
-          "accepted_limits": null
+          "accepted_limits": {
+            "1": 2,
+            "2": 2,
+            "4": 2
+          }
         },
         {
           "metric": "executable_readiness",
@@ -71,7 +80,11 @@
             "2": 3,
             "4": 3
           },
-          "accepted_limits": null
+          "accepted_limits": {
+            "1": 3,
+            "2": 3,
+            "4": 3
+          }
         },
         {
           "metric": "workload_wall",
@@ -82,7 +95,11 @@
             "2": 3,
             "4": 5
           },
-          "accepted_limits": null
+          "accepted_limits": {
+            "1": 2,
+            "2": 3,
+            "4": 5
+          }
         },
         {
           "metric": "workload_cpu",
@@ -93,42 +110,46 @@
             "2": 6,
             "4": 12
           },
-          "accepted_limits": null
+          "accepted_limits": {
+            "1": 3,
+            "2": 6,
+            "4": 12
+          }
         },
         {
           "metric": "idle_memory",
           "unit": "MiB",
           "scope": "per account",
           "proposed_limits": 64,
-          "accepted_limits": null
+          "accepted_limits": 64
         },
         {
           "metric": "lifetime_memory_peak",
           "unit": "MiB",
           "scope": "per account",
           "proposed_limits": 256,
-          "accepted_limits": null
+          "accepted_limits": 256
         },
         {
           "metric": "lifetime_pid_peak",
           "unit": "processes",
           "scope": "per account",
           "proposed_limits": 64,
-          "accepted_limits": null
+          "accepted_limits": 64
         },
         {
           "metric": "scratch_usage",
           "unit": "MiB",
           "scope": "per account; diagnostic persistent-cache workload only",
           "proposed_limits": 16,
-          "accepted_limits": null
+          "accepted_limits": 16
         },
         {
           "metric": "allocated_fixture_storage",
           "unit": "MiB",
           "scope": "per account; physical storage deduplicated",
           "proposed_limits": 48,
-          "accepted_limits": null
+          "accepted_limits": 48
         }
       ]
     },
@@ -160,14 +181,14 @@
           "unit": "milliseconds",
           "scope": "per refresh; 256-byte input padding; Docker/auth excluded",
           "proposed_limits": 1,
-          "accepted_limits": null
+          "accepted_limits": 1
         },
         {
           "metric": "local_refresh_large",
           "unit": "milliseconds",
           "scope": "per refresh; 64-KiB input padding; Docker/auth excluded",
           "proposed_limits": 2,
-          "accepted_limits": null
+          "accepted_limits": 2
         }
       ]
     }

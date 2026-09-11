@@ -279,4 +279,4 @@ and unexecuted platforms cannot satisfy issue #335 completion.
 
 See [the validation table](ISSUE-335-VALIDATION.md) for exact executed platforms
 and workflow links, and [performance evidence](PERFORMANCE.md) for measured
-capacity and proposed budgets.
+capacity and accepted reference fixture budgets.

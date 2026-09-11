@@ -1,10 +1,15 @@
 # Issue #335: completion evidence and budget decision
 
-The local completion checks on `develop` at `07ea18f55aae3caf20028b56065b1e69b11e4aa1`
-passed on September 10, 2026. Issue #335 remains incomplete: authenticated
-workflows on the claimed Docker backends and a maintainer budget decision still
-need evidence. This packet prepares that decision without changing the recorded
-review state or the supported security contract.
+The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772) by
+kcenon on 2026-09-11 accepts all eleven reference fixture ceilings and the observed mode differences
+within those ceilings. The exact accepted limits, scopes and regressions
+are recorded in [budget-review.json](benchmarks/issue-335/budget-review.json).
+
+Authenticated workflows on claimed backends and compatible requested inner
+sandbox execution still need evidence. The security/sandbox support contract
+is unchanged. Local checks below ran on September 10, 2026, on
+`07ea18f55aae3caf20028b56065b1e69b11e4aa1`; their original execution identity
+and historical pending-review observations remain unchanged.
 
 ## Available execution results
 
@@ -72,16 +77,16 @@ persistent-cache fixture's negligible scratch use cannot justify reducing
 product tmpfs limits. Full protocol and provenance remain in
 [PERFORMANCE.md](PERFORMANCE.md).
 
-The review recommendation is to consider the existing numeric ceilings within
-these narrow scopes and explicitly decide how to treat the observed mode
-differences. The published decision remains **pending**. A maintainer decision
-must supply the reviewer, actual date, supported GitHub decision URL, accepted
-limits for all eleven metrics and an explicit accepted-regressions list.
-The reviewer can accept the proposals or supply different numeric limits.
-An empty regression list needs an explicit decision to accept none.
+The [published decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772) accepts all
+eleven proposals in the table for these measured scopes. It accepts the
+observed differences among all three modes within their absolute ceilings,
+including the isolated wall/CPU increases above and median startup/readiness
+increases of 1.68%/1.32% at one account and 2.15%/1.74% at two accounts.
+This does not accept unmeasured future regressions or establish authenticated
+capacity. The historical comparison remains analysis of the original samples,
+not the approval record.
 
-After the real decision is verified, update only the corresponding fields in
-`budget-review.json` and run:
+Validate the accepted record and its preserved measurement bindings with:
 
 ```bash
 python3 tests/test_budget_review.py
@@ -99,7 +104,7 @@ passing comparison or validator does not authenticate a maintainer decision.
 | Linux Engine, macOS Desktop, native Windows Desktop, WSL2 and rootless hosts | Local daemon unavailable; other hosts not designated | Provide the actual hosts; retain a separate report per backend and the required Desktop application versions |
 | Ordinary authenticated workflows | Retained Linux report has 35 integration skips | Execute provider/GitHub, package/write/recreation and wrapper/TUI scenarios using the existing runner |
 | Requested inner sandbox | Retained Linux capability report establishes refusal only | Execute the probe under the actual profile, then authenticated Bash-tool work on a demonstrated compatible combination |
-| Budget decision | Pending | Record the maintainer's explicit decision against this packet |
+| Budget decision | Accepted for the two measured reference profiles | [Decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772); integration evidence remains outstanding |
 
 Use [ISSUE-335-WORKFLOWS.md](ISSUE-335-WORKFLOWS.md) for the credential schema,
 native profile arguments and executable commands. An all-runtime ordinary

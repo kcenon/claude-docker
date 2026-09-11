@@ -1,5 +1,24 @@
 # Issue #335 implementation and validation
 
+## Accepted budgets and remaining completion evidence — 2026-09-11
+
+The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772)
+accepts all eleven limits and the observed mode differences in
+[budget-review.json](benchmarks/issue-335/budget-review.json). The benchmark
+criterion covers the committed nine-cell/45-sample Linux npm reference matrix
+and separately scoped local macOS dashboard budgets. The accepted record
+passes `tests/budget_review.py --require-accepted` against the preserved reports.
+
+The same decision separates that criterion from authenticated runtime/Git/hook/
+statusline/package-manager/temporary writes, workflows on the claimed native
+backends and compatible requested inner sandbox execution. Those remain
+outstanding under the runtime/write criterion; the 62-row strict workflow
+contract and security policy remain in force. The issue stays open for that work.
+
+The evidence below preserves the original execution identities and outcomes.
+Its earlier pending-budget and 15/17 statuses describe those historical runs;
+the later decision does not change raw report bytes or establish new live runs.
+
 Historical #394 implementation started: 2026-09-08; local verification: 2026-09-09. Baseline: `develop` at
 `4eb55c085be46bbd7c537ab30aab18a74b0936be`. The issue and comments were refreshed
 before implementation. Image version: `2026.09.08.1`.

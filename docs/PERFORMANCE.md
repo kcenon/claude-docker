@@ -2,8 +2,9 @@
 
 The reference Linux container matrix has **nine completed cells and 45 measured
 samples** for the offline npm workload. Four concurrent accounts passed on that
-runner. These measurements and the dashboard results below have proposed budgets
-awaiting maintainer review; they do not establish authenticated agent capacity.
+runner. These measurements and the dashboard results below have accepted
+reference fixture budgets; see the [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772).
+They do not establish authenticated agent capacity.
 
 ## Current dashboard path
 
@@ -46,8 +47,8 @@ limitline input does increase parsing/allocation work, as expected. The
 `no_jsonl_pipeline_test.go` regression remains active. These measurements do not
 restore or reuse the deleted usage-cache benchmark.
 
-**Proposed local-work budgets, pending review:** at most 1 ms per refresh for
-1/2/4 accounts with a 256-byte padding fixture; at most 2 ms for the 64 KiB case
+**Accepted local-work budgets for this measured macOS fixture:** at most 1 ms
+per refresh for 1/2/4 accounts with a 256-byte padding fixture; at most 2 ms for the 64 KiB case
 on this workstation. These are generous starting ceilings above the measured
 medians, not CI timing gates or promises for other hardware. Docker/auth network
 latency is outside these budgets. Measure Linux/Windows before adopting them.
@@ -150,14 +151,14 @@ only variance rounding within four floating-point units is tolerated across
 Python releases. Nonfinite/negative/missing measurements, inconsistent counts,
 missing sampler coverage, OOM kills and cleanup failure remain failures.
 
-### Proposed budgets and capacity
+### Accepted budgets and capacity
 
-These are review proposals for this exact npm workload on the four-CPU Linux
+These are accepted ceilings for this exact npm workload on the four-CPU Linux
 reference host, for every tested mode. They are not new product defaults, enforced
 CI timing gates, or budgets for provider sessions. The allowance uses the largest
 observed value across all modes/counts and leaves scheduling/headroom margin.
 
-| Metric | Largest measured value | Proposed ceiling | Scope / allowance |
+| Metric | Largest measured value | Accepted ceiling | Scope / allowance |
 |---|---:|---:|---|
 | Startup | 0.989 s | 2 s | Each 1/2/4-account batch; about 2× margin |
 | Executable readiness | 1.453 s | 3 s | Batch including CLI version checks; about 2× margin |
@@ -168,7 +169,7 @@ observed value across all modes/counts and leaves scheduling/headroom margin.
 | PID lifetime peak | 34/account | 64/account | Allows 30 additional processes for fixture variation |
 | Isolated scratch observed use | 0 bytes | 16 MiB/account diagnostic ceiling | Persistent-cache profile exercises little scratch; no justification to reduce product tmpfs |
 | Total allocated fixture storage | 126.17 MiB at 4 accounts | 48 MiB/account | About 50% allowance above this fixed fixture |
-| Local dashboard refresh | 0.082 / 0.246 ms maximum median | 1 / 2 ms | Existing macOS small/large-input proposals; Docker/auth excluded |
+| Local dashboard refresh | 0.082 / 0.246 ms maximum median | 1 / 2 ms | Accepted macOS small/large-input ceilings; Docker/auth excluded |
 
 At four accounts the configured ceilings are eight CPUs and 16 GiB memory,
 with reservations of four CPUs and 8 GiB. Memory ceilings exceed the daemon's
@@ -185,19 +186,28 @@ repositories/dependencies and unrelated daemon workloads still need measurement.
 Mac/Windows Desktop and rootless results are required before extending this
 profile to those backends.
 
-Budget review remains pending after [PR #395](https://github.com/kcenon/claude-docker/pull/395) merged.
-No maintainer acceptance date or accepted regression has been recorded. Issue
-#335's budget/capacity criterion stays open until that review and the remaining
-workflow/platform evidence are available.
+The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772) by
+kcenon on 2026-09-11 accepts all eleven reference fixture ceilings and the observed mode differences
+within those ceilings. The exact accepted limits, scopes and regressions
+are recorded in [budget-review.json](benchmarks/issue-335/budget-review.json).
 
-The concrete [review record](benchmarks/issue-335/budget-review.json) binds each
-proposal to the retained report's SHA-256, source identity, workload and host.
-It includes all nine Linux metrics and both separately scoped macOS dashboard
-budgets, with explicit units and per-account/batch scope. Acceptance values,
-reviewer, date, decision link and accepted regressions are deliberately unset.
-Populate them only from an explicit maintainer decision; a merge or benchmark
-pass is not approval. The raw measurement files retain their original provenance
-and pending-review field even after a separate review record is accepted.
+The same [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772) clarifies that
+#335's benchmark criterion covers the committed shared/worktree/isolated
+1/2/4-account Linux npm matrix and separately scoped local macOS dashboard
+budgets. Their reviewed evidence satisfies that criterion. Authenticated
+writes, live claimed backends and compatible requested inner sandbox
+execution remain requirements of the separate unchecked runtime/write
+criterion. This does not extend budgets to unmeasured backends or change
+the 62-row strict workflow contract; #335 stays open for that work.
+
+The concrete [review record](benchmarks/issue-335/budget-review.json) binds
+each accepted limit to the retained report SHA-256, source identity, workload
+and host. It includes the nine Linux metrics and both local macOS dashboard
+metrics, explicit units/scopes, reviewer, actual date, decision permalink
+and accepted regressions. Future changes require an explicit decision on
+the evidence being accepted; a merge or benchmark pass is not approval.
+Raw reports preserve their original provenance and historical pending-review
+metadata; the separate record establishes the subsequent acceptance.
 
 ```bash
 python3 tests/test_budget_review.py
@@ -232,4 +242,5 @@ compares every proposal with the preserved raw measurements and identifies the
 descriptive differences a reviewer should address. Its
 [machine-readable comparison](benchmarks/issue-335/budget-comparison-post-400.json)
 retains report hash bindings and calculation methods. It records analysis of
-the existing samples; budget acceptance remains pending.
+the existing samples; the separate review record and linked maintainer decision
+establish their subsequent budget acceptance.
