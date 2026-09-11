@@ -598,5 +598,7 @@ the requested sandbox's actual namespace probe is unavailable. Both ordinary and
 degraded-settings cases refuse before the requested command executes. This is
 verified fail-closed behavior, not a claim that an authenticated inner sandbox
 session ran. No privileged or unconfined workaround is used. Full measured
-container results and proposed budgets are in [PERFORMANCE.md](PERFORMANCE.md);
-maintainer budget acceptance remains pending.
+container results and accepted reference fixture budgets are in
+[PERFORMANCE.md](PERFORMANCE.md). The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772)
+accepts the measured budgets; authenticated workflows on the claimed backends
+and compatible requested inner sandbox execution still require evidence.
