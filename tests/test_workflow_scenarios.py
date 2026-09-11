@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from test_runtime_workflows import push_workflow, requested_sandbox, verify_identity
-from workflow_support import WorkflowFailure
+from workflow_support import WorkflowFailure, remote_ref_errors
 from workflow_terminal import arm_markers, markers_match
 
 
@@ -98,9 +98,15 @@ class WorkflowScenarioTest(unittest.TestCase):
             fixture = SimpleNamespace(runtime="claude", project="test-owned", remote_refs=[], execute=execute,
                 probe=lambda index, *argv, **unused: git(*argv[1:], cwd=work, check=False))
             if same_commit is None:
-                push_workflow(fixture, 0, str(remote))
+                metadata = push_workflow(fixture, 0, str(remote))
                 self.assertNotEqual(0, git("--git-dir", str(remote), "show-ref", "--verify", reference, check=False).returncode)
                 self.assertEqual("absence_verified", fixture.remote_refs[0]["cleanup"])
+                report = {"schema": 2, "cases": [{"runtime": "claude", "account": 1,
+                    "name": "authenticated_push", "status": "passed", "metadata": metadata}],
+                    "remote_refs": fixture.remote_refs}
+                self.assertEqual([], remote_ref_errors(report))
+                report["remote_refs"] = []
+                self.assertEqual(["remote_ref_evidence_missing"], remote_ref_errors(report))
             else:
                 with self.assertRaises(WorkflowFailure):
                     push_workflow(fixture, 0, str(remote))

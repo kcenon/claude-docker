@@ -171,6 +171,48 @@ def expected_workflows(runtimes):
     return expected
 
 
+def remote_ref_errors(report):
+    references = report.get("remote_refs", [])
+    if not isinstance(references, list) or any(not isinstance(row, dict) for row in references):
+        return ["invalid_remote_ref_evidence"]
+    errors = []
+    if any(row.get("cleanup") != "absence_verified" for row in references):
+        errors.append("remote_cleanup_unverified")
+    if report.get("schema") != 2:
+        return errors
+    pushes = {(row.get("runtime"), row.get("account")): row for row in report["cases"]
+              if row.get("name") == "authenticated_push"}
+    by_account, names = {}, set()
+    for row in references:
+        runtime, account, reference, commit = (row.get(key) for key in ("runtime", "account", "ref", "commit"))
+        if (not isinstance(runtime, str) or type(account) is not int
+                or not isinstance(reference, str) or not reference
+                or not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit)):
+            errors.append("invalid_remote_ref_evidence")
+            continue
+        key = (runtime, account)
+        if key not in pushes or pushes[key].get("status") == "skipped":
+            errors.append("unexpected_remote_ref_evidence")
+        if key in by_account or reference in names:
+            errors.append("duplicate_remote_ref_evidence")
+        by_account[key] = row
+        names.add(reference)
+    # A success row needs its own observed cleanup, not merely an absence of
+    # failed cleanup rows. Bind the record to the exact pushed ref and SHA.
+    for key, row in pushes.items():
+        if row.get("status") != "passed":
+            continue
+        reference = by_account.get(key)
+        if reference is None:
+            errors.append("remote_ref_evidence_missing")
+            continue
+        metadata = row.get("metadata")
+        if (not isinstance(metadata, dict) or metadata.get("created_and_removed_ref") != reference["ref"]
+                or metadata.get("commit") != reference["commit"]):
+            errors.append("remote_ref_evidence_mismatch")
+    return list(dict.fromkeys(errors))
+
+
 def coverage_errors(report):
     cases = report["cases"]
     keys = [(row.get("runtime"), row.get("account"), row.get("name")) for row in cases]
@@ -181,8 +223,7 @@ def coverage_errors(report):
         errors.append("duplicate_cases")
     if any(row.get("status") not in ("passed", "failed", "skipped") for row in cases):
         errors.append("invalid_case_status")
-    if any(row.get("cleanup") != "absence_verified" for row in report.get("remote_refs", [])):
-        errors.append("remote_cleanup_unverified")
+    errors.extend(remote_ref_errors(report))
     if report.get("schema", 1) not in (1, 2):
         errors.append("unsupported_schema")
     if report.get("schema") == 2:

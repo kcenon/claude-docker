@@ -102,6 +102,10 @@ published. Creation uses an empty SHA lease so a racing ref is also refused.
 The created SHA is read back. Cleanup uses a SHA lease only to delete the
 ref created by this test, so an external update prevents deletion. No branch
 history is overwritten. A cleanup refusal/failure makes the report fail.
+Schema 2 reports also require one cleanup record for each successful push,
+matching its runtime, account, ref and commit SHA. Missing, duplicate or mismatched
+records prevent completion even when every workflow row says it passed. Skipped
+pushes need no remote record; a failed push may retain its cleanup observations.
 
 The first account repeats its session after recreation. Claude must dispatch its
 SessionStart hook. `--terminal` exercises both accounts through the actual shell
