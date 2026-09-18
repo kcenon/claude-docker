@@ -9,7 +9,10 @@
 #        docker pull node:<new-version>-slim \
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
 #   3. Update BOTH the tag and the @sha256: suffix in the FROM line below
-#   4. Rebuild: docker compose build --no-cache
+#      and synchronize version references in these comments and README.md
+#   4. Bump VERSION and regenerate Compose files from repository defaults
+#      (see README.md for the clean-worktree procedure)
+#   5. Rebuild: docker compose build --no-cache
 FROM node:20.18.1-slim@sha256:b2c8e0eb8a6aeeae33b2711f8f516003e27ee45804e270468d937b3214f2f0cc
 
 # Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
@@ -85,10 +88,9 @@ RUN set -eux; \
 #      intact without manual rewiring.
 #   3. On Linux overrides with a custom UID/GID, world-readable permissions
 #      on the versioned tree let any user exec it.
-# Pin claude.ai installer to a known SHA256 to fail the image build
-# if the upstream installer is unexpectedly modified. Refresh by
-# computing the hash of the latest installer and bumping the ARG
-# default below; CI will fail loudly when this drift occurs.
+# Check the installer content against a known SHA256 before executing it.
+# When updating the installer, review its content and update this checksum
+# separately from CLAUDE_CODE_VERSION, which selects the installed CLI version.
 ARG CLAUDE_INSTALLER_SHA256=3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944
 
 RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
@@ -169,7 +171,7 @@ COPY scripts/lib/ /usr/local/share/claude-docker/scripts/lib/
 COPY tui/internal/config/runtimes.json /usr/local/share/claude-docker/tui/internal/config/runtimes.json
 RUN chmod -R a+rX /usr/local/share/claude-docker
 
-# Run as non-root (node user UID 1000 is pre-created in node:20-slim)
+# Run as non-root (node user UID 1000 is pre-created in the base image)
 USER node
 
 # Entrypoint creates config symlinks, then runs the command

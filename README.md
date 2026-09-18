@@ -14,14 +14,14 @@ per VM) by sharing a single Docker image and bind-mounting the project source.
 - **Cross-platform** -- Linux, macOS, Windows (WSL2 or native PowerShell)
 - **Flexible authentication** -- Runtime-specific OAuth or API keys, plus shared or per-container GitHub identities
 - **Scalable to N instances** -- Use `scale` or `NUM_ACCOUNTS`; generators support up to 702 Excel-style suffixes
-- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; use a checksum-verified release binary or build from source with Go 1.24+
+- **TUI dashboard** -- A Bubble Tea-based terminal UI (`scripts/claude-docker tui`) for live multi-account monitoring; build from source with Go 1.24+
 
 ## Prerequisites
 
 - [Docker Engine](https://docs.docker.com/engine/install/) 24.0+ (Linux) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) (macOS / Windows)
 - [Docker Compose](https://docs.docker.com/compose/) v2.24.4+ -- the worktree overlay uses the `!override` merge tag, without which the shared project mount leaks into every worktree container (see [`docs/ISOLATION.md`](docs/ISOLATION.md))
-- [Node.js](https://nodejs.org/) 20+ (optional -- needed for `usage` subcommand token reports)
-- [Go](https://go.dev/dl/) 1.24+ (optional -- needed only to build the TUI from source)
+- [Node.js](https://nodejs.org/) 20+ on the host (optional -- needed for `usage` subcommand token reports)
+- [Go](https://go.dev/dl/) 1.24+ (required for `build-tui`; optional for other CLI commands)
 - Git
 - Python 3.9+ (standard library only; shared host validation and lifecycle transactions)
 
@@ -179,8 +179,8 @@ scripts/claude-docker help       # Show all available commands
 | | `exec <service> [command...]` | Open a shell or run a command in a container |
 | | `gh-auth [target]` | Import shared or per-account host `gh` credentials |
 | **Usage Tracking** | `usage [type] [flags]` | Token usage report |
-| **Dashboard** | `tui` (alias `dashboard`) | Launch multi-account TUI (build it first with `build-tui`) |
-| | `build-tui` | Build the TUI from source; requires Go 1.24+ |
+| **Dashboard** | `build-tui` | Build the TUI from source; requires Go 1.24+ |
+| | `tui` (alias `dashboard`) | Launch the dashboard built by `build-tui` |
 | **Scaling** | `scale <N>` / `recover` | Stage, validate and apply account changes; recover an interrupted transaction |
 | **Advanced** | `config` | Show resolved compose configuration |
 | | `compose ...` | Pass raw args to docker compose |
@@ -672,36 +672,36 @@ scripts/claude-docker usage daily --since 20260301 --json    # Date filter + JSO
 
 ### Multi-account dashboard (TUI)
 
-A Bubble Tea-based terminal dashboard surfaces per-account container state,
-authentication status, the actual GitHub login (including mismatch state),
-recent activity, and live token usage in one view. In per-account GitHub mode,
-the `g` action refreshes only the selected account and recreates only that
-service when it is running.
+A Bubble Tea-based terminal dashboard shows each service's container status,
+authentication status, GitHub login (including mismatches), and Claude's
+5-hour/7-day usage gauges and reset times when data is available. In per-account
+GitHub mode, the `g` action refreshes only the selected account and recreates
+only that service when it is running.
+
+Build with **Go 1.24+**, then launch from the repository root:
 
 ```bash
+scripts/claude-docker build-tui      # Build from source (requires Go 1.24+)
 scripts/claude-docker tui            # Launch dashboard
 scripts/claude-docker dashboard      # Alias of tui
-scripts/claude-docker build-tui      # Build from source (requires Go 1.24+)
 ```
 
-**The TUI is built from source, and Go 1.24+ is required for it.** `tui` looks
-for `tui/claude-docker-tui` and tells you to run `build-tui` if it is not
-there.
+On native Windows, use PowerShell 7+:
 
-There is no prebuilt-binary download. The wrappers used to offer one, pointed
-at this repository's `releases/latest` — and this repository has never
-published a release, so the offer could only fail after a network round trip.
-Removing it means a host without Go is told what it actually needs on the first
-try. `.github/workflows/release-tui.yml` is retained and is triggered by a `v*`
-tag; if releases are published later, a verified download path can be
-reintroduced against a real tag rather than against `latest`.
+```powershell
+.\scripts\claude-docker.ps1 build-tui
+.\scripts\claude-docker.ps1 tui
+```
 
-Token usage comes from the runtime's own usage API and the limitline cache
-beside each account's state. The dashboard does not read JSONL session files:
-it used to walk and parse them on every refresh to fill a field nothing
-rendered, and that walk was removed in #358. See
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for what was measured before it
-went.
+The wrappers launch the local `tui/claude-docker-tui` binary (`.exe` on Windows)
+and tell you to run `build-tui` when it is missing. They do not download a
+prebuilt binary.
+
+Claude usage comes from Anthropic's usage API and the limitline cache beside
+each account's state. Missing Claude usage data displays `--`, or `API limited`
+after rate limiting. Codex and Gemini usage columns display `--`. The dashboard
+does not read JSONL session files; see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
+for measured dashboard behavior.
 
 ### Rebuilding the Image
 
@@ -867,9 +867,17 @@ come from the resolved configuration. See [isolation and migration](docs/ISOLATI
 and [measured performance](docs/PERFORMANCE.md).
 
 Account names follow Excel-style letters: 1→`a`, 26→`z`, 27→`aa`, 52→`az`,
-53→`ba`, ..., 702→`zz`. The `scale` command and both compose generators accept
-`NUM_ACCOUNTS` values from 1 through 702, though host memory is usually the
-binding constraint well before then.
+53→`ba`, ..., 702→`zz`. Accepted ranges are:
+
+| Operation | Account count |
+|-----------|---------------|
+| `scripts/claude-docker scale <N>` | 1–702 |
+| `scripts/claude-docker.ps1 scale <N>` | 1–702 |
+| `scripts/generate-compose.sh` (`NUM_ACCOUNTS`) | 1–702 |
+| `scripts/generate-compose.ps1` (`NUM_ACCOUNTS`) | 1–702 |
+
+These are configuration limits; usable account counts depend on available
+host resources and the configured per-account budgets.
 
 On Windows (PowerShell):
 ```powershell
@@ -1123,28 +1131,36 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins the Node base image to a specific patch version **and
-content digest**, so movement of the upstream tag cannot silently change the
-base layers. This does not make the complete image byte-for-byte reproducible:
-APT packages and several npm-installed tools track their repositories at build
-time unless explicitly pinned.
+The `Dockerfile` pins **`node:20.18.1-slim` and its content digest**, so the
+base layers stay fixed when the upstream tag moves. A digest-qualified reference
+selects that content; it does not require the tag to keep pointing to it.
 
 Inside the image, **Claude Code is installed via Anthropic's official native
-installer** (`https://claude.ai/install.sh`), not via npm. The installer places
-`claude` at `/home/node/.local/bin/claude`, so `/doctor` no longer warns about
-"leftover npm global install". Optional build arguments are
-`CLAUDE_CODE_VERSION`, `CODEX_CLI_VERSION`, and `GEMINI_CLI_VERSION`; leave a
-value empty to follow that installer's current release. To bump the Node base:
+installer** (`https://claude.ai/install.sh`). The downloaded script is checked
+against `CLAUDE_INSTALLER_SHA256` before execution. It places `claude` at
+`/home/node/.local/bin/claude`. Optional build arguments `CLAUDE_CODE_VERSION`,
+`CODEX_CLI_VERSION`, and `GEMINI_CLI_VERSION` select individual CLI versions;
+empty values follow current releases. The installer checksum is a separate
+build argument from the Claude Code version.
 
-1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest patch in
-   the pinned 20.x line
+The complete image is **not byte-for-byte reproducible**: APT packages
+(including GitHub CLI), unversioned npm tools (`ccstatusline` and
+`claude-limitline`), and CLI versions left unset can change between builds.
+Selecting a CLI version does not pin those other dependencies.
+
+To bump the Node base:
+
+1. Check the current `FROM` tag, then check
+   <https://hub.docker.com/_/node/tags?name=slim> for a newer patch in that
+   major version (currently 20.x)
 2. Capture the digest on a trusted host (**required**, not optional):
    ```bash
    docker pull node:<new-version>-slim
    docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
    ```
 3. Update the `FROM` line in `Dockerfile` — **both** the tag and the
-   `@sha256:` suffix must be updated together
+   `@sha256:` suffix must be updated together. Synchronize the version
+   references in its comments and this README at the same time
 4. Update `VERSION` at the repo root to today's date
    (e.g. `2026.04.17`). Both `scripts/generate-compose.sh`/`.ps1` and
    `scripts/install.sh`/`.ps1` read this file, so regenerating compose
@@ -1239,7 +1255,7 @@ memory allocation to allow all containers to run at peak load.
 claude-docker/
 +-- .dockerignore                      Docker build context exclusions
 +-- Dockerfile                         Base image (Claude Code installed via Anthropic native installer)
-+-- VERSION                            Release tag consumed by docker-compose IMAGE_TAG
++-- VERSION                            Default image tag read by generators and installers
 +-- docker-compose.yml                 Generated: base config (Tier A)
 +-- docker-compose.linux.yml           Generated: Linux override
 +-- docker-compose.worktree.yml        Generated: worktree-mode override
@@ -1250,7 +1266,9 @@ claude-docker/
 +-- .env.example                       Environment template
 +-- .gitignore
 +-- .gitattributes                     LF line endings
-+-- .github/workflows/                 CI and cross-platform TUI release automation
++-- .github/                           Dependency updates and contribution guidance
+|   +-- workflows/                     CI and cross-platform TUI release automation
++-- CONTRIBUTING.md                    Contribution and verification requirements
 +-- LICENSE                            BSD 3-Clause
 +-- README.md                          This file
 +-- scripts/
@@ -1290,7 +1308,7 @@ claude-docker/
 |   +-- main.go
 |   +-- Makefile
 |   +-- go.mod / go.sum
-|   +-- internal/                      account, auth, config, docker, ui, usage subpackages
+|   +-- internal/                      account, auth, config, docker, ui subpackages
 |       +-- config/runtimes.json       Runtime registry: cross-language single source of truth
 +-- tests/                             Registry/parser/generator/auth/platform/entrypoint
     |                                  regression tests and fixtures
