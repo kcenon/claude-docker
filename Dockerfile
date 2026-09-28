@@ -1,10 +1,10 @@
-# Base: node:20.18.1-slim (Debian/glibc)
+# Base: node:26.10.0-slim (Debian/glibc)
 # Pinned to a specific patch version AND content digest so upstream tag
 # movement cannot silently change the base layers. The full image is not
 # byte-for-byte reproducible because later apt/npm installs may track current
 # repository contents. To bump:
 #   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest
-#      patch in the pinned 20.x line
+#      release in the pinned 26.x line
 #   2. Capture the digest on a trusted host (REQUIRED, not optional):
 #        docker pull node:<new-version>-slim \
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
@@ -13,7 +13,7 @@
 #   4. Bump VERSION and regenerate Compose files from repository defaults
 #      (see README.md for the clean-worktree procedure)
 #   5. Rebuild: docker compose build --no-cache
-FROM node:20.18.1-slim@sha256:b2c8e0eb8a6aeeae33b2711f8f516003e27ee45804e270468d937b3214f2f0cc
+FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
 
 # Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
 # aborts the build instead of masking the error behind a downstream success.
@@ -34,7 +34,7 @@ WORKDIR /workspace
 # because this is the interpreter only, no pip or venv.
 #
 # DL3008 waived: rolling Debian base tracks security updates via the
-# digest-pinned node:20.18.1-slim; per-package apt pins would be churn
+# digest-pinned node:26.10.0-slim; per-package apt pins would be churn
 # without a meaningful security benefit. Pinning policy tracked in #171.
 # hadolint ignore=DL3008
 RUN apt-get update \
@@ -115,12 +115,12 @@ ENV PATH="/home/node/.local/bin:${PATH}"
 # block bug fixes without a security benefit. CODEX_CLI_VERSION and
 # GEMINI_CLI_VERSION are available when reproducibility is preferred.
 # hadolint ignore=DL3016
-RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
+RUN if [ -n "${CODEX_CLI_VERSION:-}" ]; then \
         npm install -g "@openai/codex@${CODEX_CLI_VERSION}" ccstatusline claude-limitline; \
     else \
         npm install -g @openai/codex ccstatusline claude-limitline; \
     fi \
-    && if [[ -n "${GEMINI_CLI_VERSION:-}" ]]; then \
+    && if [ -n "${GEMINI_CLI_VERSION:-}" ]; then \
         npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
     else \
         npm install -g @google/gemini-cli; \
@@ -152,7 +152,13 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 # only, never on plain files) keeps the tree writable regardless of which
 # UID the compose file chooses. gh mounts its own subdir read-only at
 # runtime, so loosening the parent does not affect gh's token security.
+#
+# /home/node itself is set to 0755 for the same reason. Debian trixie (the
+# base of node:26) creates home directories 0700, which stops any UID other
+# than node from traversing into the account bind mounts beneath it; the
+# entrypoint then reports /home/node/.claude as not writable.
 RUN mkdir -p /home/node/.config/ccstatusline \
+    && chmod 0755 /home/node \
     && chmod -R a+rwX /home/node/.config
 
 # Copy entrypoint script (symlinks host config into account state dir).

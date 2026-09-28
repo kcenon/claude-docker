@@ -1131,7 +1131,7 @@ Requirements section below uses `limits` to size Docker Desktop memory;
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins **`node:20.18.1-slim` and its content digest**, so the
+The `Dockerfile` pins **`node:26.10.0-slim` and its content digest**, so the
 base layers stay fixed when the upstream tag moves. A digest-qualified reference
 selects that content; it does not require the tag to keep pointing to it.
 
@@ -1151,8 +1151,8 @@ Selecting a CLI version does not pin those other dependencies.
 To bump the Node base:
 
 1. Check the current `FROM` tag, then check
-   <https://hub.docker.com/_/node/tags?name=slim> for a newer patch in that
-   major version (currently 20.x)
+   <https://hub.docker.com/_/node/tags?name=slim> for a newer release in that
+   major version (currently 26.x)
 2. Capture the digest on a trusted host (**required**, not optional):
    ```bash
    docker pull node:<new-version>-slim
