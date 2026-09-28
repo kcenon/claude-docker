@@ -124,6 +124,11 @@ compares against. Do not hand-edit them.
 
 - **Branch from `develop`**, and open PRs against `develop`. `main` takes
   releases only.
+- **Dependabot** opens version updates against `develop` (`target-branch` in
+  `.github/dependabot.yml`). Security updates ignore that setting and always
+  open against `main`. After merging one there, open a `main` -> `develop`
+  sync PR the same day. Otherwise `develop` misses the fix, and the next
+  release has to reconcile the two branches by hand, as #408 did.
 - **Conventional Commit** subjects: `type(scope): description`, imperative,
   lowercase, no trailing period.
 - **English** for code, comments, commit messages, issues and PRs.
