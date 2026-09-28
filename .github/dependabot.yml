@@ -1,7 +1,19 @@
+# Version updates target develop, where every change lands before a release
+# promotes it to main. Without target-branch they went to main only, and 18
+# of them piled up there that develop never received (#398).
+#
+# Two GitHub behaviours constrain this file:
+#   - Dependabot reads it only from the default branch (main). An edit here
+#     takes effect once it reaches main, not when it lands on develop.
+#   - target-branch covers version updates only. Security updates always open
+#     against main, and the per-ecosystem options below (labels,
+#     commit-message) do not apply to them. After merging one, sync main into
+#     develop; see "Conventions" in CONTRIBUTING.md.
 version: 2
 updates:
   - package-ecosystem: "docker"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -17,6 +29,7 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -32,6 +45,7 @@ updates:
 
   - package-ecosystem: "gomod"
     directory: "/tui"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
