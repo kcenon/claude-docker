@@ -1,0 +1,358 @@
+{
+  "schema": 1,
+  "kind": "local host verification summary; not a live runtime report",
+  "recorded_at": "2026-09-09T13:53:48.262299+00:00",
+  "source_commit": "05cbfc0e1025c2e3ae506504a9d66576ee4fe804",
+  "source_dirty": true,
+  "source_fingerprint_sha256": "4610786576b9e7ea6b408212ef737a79d9d401496469ea272124f43857cf1a20",
+  "source_scope": "Implementation working tree based on the recorded commit. Unaffected compatibility checks preceded the final focused reruns. Raw container reports keep their original measured source.",
+  "host": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "architecture": "arm64",
+    "python": "3.9.6",
+    "go": "go1.27.1",
+    "bash": "3.2",
+    "powershell": "7.6.3"
+  },
+  "status": "passed_with_platform_skips",
+  "issue_completion": "incomplete",
+  "suites": {
+    "bash": [
+      {
+        "suite": "tests/test_ccstatusline_xdg_symlink.sh",
+        "exit_code": 0,
+        "seconds": 0.17
+      },
+      {
+        "suite": "tests/test_parse_env.sh",
+        "exit_code": 0,
+        "seconds": 0.11
+      },
+      {
+        "suite": "tests/test_parse_env_equivalence.sh",
+        "exit_code": 0,
+        "seconds": 30.8
+      },
+      {
+        "suite": "tests/test_runtime_registry_equivalence.sh",
+        "exit_code": 0,
+        "seconds": 32.35
+      },
+      {
+        "suite": "tests/test_compose_generator_equivalence.sh",
+        "exit_code": 0,
+        "seconds": 11.76
+      },
+      {
+        "suite": "tests/test_isolation_modes.sh",
+        "exit_code": 0,
+        "seconds": 8.4
+      },
+      {
+        "suite": "tests/test_container_memory.sh",
+        "exit_code": 0,
+        "seconds": 1.72
+      },
+      {
+        "suite": "tests/test_github_per_account_compose.sh",
+        "exit_code": 0,
+        "seconds": 19.56
+      },
+      {
+        "suite": "tests/test_github_account_selection.sh",
+        "exit_code": 0,
+        "seconds": 16.88
+      },
+      {
+        "suite": "tests/test_entrypoint_github_auth.sh",
+        "exit_code": 0,
+        "seconds": 0.74
+      },
+      {
+        "suite": "tests/test_installer_github_equivalence.sh",
+        "exit_code": 0,
+        "seconds": 1.12
+      },
+      {
+        "suite": "tests/test_num_accounts_precedence.sh",
+        "exit_code": 0,
+        "seconds": 19.58
+      },
+      {
+        "suite": "tests/test_agent_attach_argv.sh",
+        "exit_code": 0,
+        "seconds": 1.04
+      },
+      {
+        "suite": "tests/test_transform_syntax_check.sh",
+        "exit_code": 0,
+        "seconds": 0.07
+      },
+      {
+        "suite": "tests/test_cleanup_backups.sh",
+        "exit_code": 0,
+        "seconds": 0.19
+      },
+      {
+        "suite": "tests/test_windows_platform_guard.sh",
+        "exit_code": 0,
+        "seconds": 0.62
+      },
+      {
+        "suite": "tests/test_worktree_ownership.sh",
+        "exit_code": 0,
+        "seconds": 0.24
+      },
+      {
+        "suite": "tests/test_install_start_containers.sh",
+        "exit_code": 0,
+        "seconds": 1.28
+      },
+      {
+        "suite": "tests/test_install_tier_b.sh",
+        "exit_code": 0,
+        "seconds": 0.78
+      },
+      {
+        "suite": "tests/test_scale_prevalidation.sh",
+        "exit_code": 0,
+        "seconds": 0.85
+      },
+      {
+        "suite": "tests/test_isolation_regressions.sh",
+        "exit_code": 0,
+        "seconds": 0.48
+      },
+      {
+        "suite": "tests/test_sandbox_gate.sh",
+        "exit_code": 0,
+        "seconds": 0.88
+      },
+      {
+        "suite": "tests/test_setup_isolated.sh",
+        "exit_code": 0,
+        "seconds": 1.22
+      },
+      {
+        "suite": "tests/test_bash32_portability.sh",
+        "exit_code": 0,
+        "seconds": 0.13
+      },
+      {
+        "suite": "tests/test_workflow_contracts.sh",
+        "exit_code": 0,
+        "seconds": 0.11
+      },
+      {
+        "suite": "tests/test_bootstrap_helpers.sh",
+        "exit_code": 0,
+        "seconds": 0.9
+      },
+      {
+        "suite": "tests/test_env_backup_rotation.sh",
+        "exit_code": 0,
+        "seconds": 0.48
+      },
+      {
+        "suite": "tests/test_contributing_references.sh",
+        "exit_code": 0,
+        "seconds": 0.02
+      },
+      {
+        "suite": "tests/test_account_index_equivalence.sh",
+        "exit_code": 0,
+        "seconds": 0.95
+      },
+      {
+        "suite": "tests/test_runtime_buildarg_binary.sh",
+        "exit_code": 0,
+        "seconds": 2.1
+      },
+      {
+        "suite": "tests/test_env_value_semantics.sh",
+        "exit_code": 0,
+        "seconds": 2.41
+      },
+      {
+        "suite": "tests/test_docs_contracts.sh",
+        "exit_code": 0,
+        "seconds": 0.1
+      },
+      {
+        "suite": "scripts/test-entrypoint-settings.sh",
+        "exit_code": 0,
+        "seconds": 0.1
+      }
+    ],
+    "python": [
+      {
+        "suite": "tests/test_workflow_support.py",
+        "exit_code": 0,
+        "seconds": 0.06,
+        "tests": 8,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_credential_file.py",
+        "exit_code": 0,
+        "seconds": 0.07,
+        "tests": 5,
+        "skipped": 2
+      },
+      {
+        "suite": "tests/test_terminal_support.py",
+        "exit_code": 0,
+        "seconds": 1.13,
+        "tests": 5,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_tui_terminal.py",
+        "exit_code": 0,
+        "seconds": 5.52,
+        "tests": 3,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_workflow_coverage.py",
+        "exit_code": 0,
+        "seconds": 0.09,
+        "tests": 7,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_workflow_scenarios.py",
+        "exit_code": 0,
+        "seconds": 0.58,
+        "tests": 5,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_workflow_environment.py",
+        "exit_code": 0,
+        "seconds": 0.05,
+        "tests": 2,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_budget_review.py",
+        "exit_code": 0,
+        "seconds": 0.09,
+        "tests": 2,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_benchmark_report.py",
+        "exit_code": 0,
+        "seconds": 0.1,
+        "tests": 7,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_benchmark_harness.py",
+        "exit_code": 0,
+        "seconds": 0.09,
+        "tests": 6,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_lifecycle.py",
+        "exit_code": 0,
+        "seconds": 31.78,
+        "tests": 38,
+        "skipped": 6
+      },
+      {
+        "suite": "tests/test_lifecycle_process.py",
+        "exit_code": 0,
+        "seconds": 18.0,
+        "tests": 10,
+        "skipped": 1
+      },
+      {
+        "suite": "tests/test_resolved_boundaries.py",
+        "exit_code": 0,
+        "seconds": 6.66,
+        "skipped": 0
+      },
+      {
+        "suite": "tests/test_package_workload.py",
+        "exit_code": 0,
+        "seconds": 1.21,
+        "tests": 1,
+        "skipped": 0
+      }
+    ],
+    "powershell": [
+      {
+        "suite": "tests/test_parse_env.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_isolation_modes.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_container_memory.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_powershell_platform_guard.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_worktree_path_guard.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_cleanup_gate.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_powershell_version_floor.ps1",
+        "exit_code": 0
+      },
+      {
+        "suite": "tests/test_powershell_exit_codes.ps1",
+        "exit_code": 0
+      }
+    ]
+  },
+  "counts": {
+    "bash_suites_passed": 33,
+    "powershell_suites_passed": 8,
+    "python_suites_passed": 14,
+    "python_unit_tests_planned": 99,
+    "python_unit_tests_passed": 90,
+    "python_unit_tests_skipped": 9,
+    "failed": 0
+  },
+  "additional_checks": {
+    "go_test_race": "passed",
+    "go_vet": "passed",
+    "gofmt": "passed",
+    "dashboard_benchmark_smoke_cases": 12,
+    "windows_tui_and_fixture_cross_build": "passed; not native execution",
+    "shellcheck_script_files_passed": 56,
+    "actionlint_workflow_syntax": "passed with embedded shellcheck disabled; existing ci.yml SC2086 at line 288 outside changed code",
+    "retained_container_report": "valid: nine cells and 45 measured samples",
+    "budget_review_record": "valid: pending; require-accepted rejects it"
+  },
+  "terminal_cases": {
+    "runtime_account_handoffs": 6,
+    "adapter": "actual compiled TUI with disposable native Docker process adapter",
+    "process_cleanup_assertions": "passed",
+    "container_cleanup": "not applicable; no live containers executed"
+  },
+  "live_executions": {
+    "provider_sessions": 0,
+    "external_git_pushes": 0,
+    "container_measurements": 0
+  },
+  "pending": [
+    "Native Windows/ConPTY execution in PR CI",
+    "Purpose-provided API and GitHub credentials, enabled models and a disposable remote",
+    "Live Docker Desktop, WSL2, rootless Linux and compatible inner-sandbox profiles",
+    "Explicit maintainer budget decision"
+  ]
+}

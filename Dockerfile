@@ -1,17 +1,29 @@
-# Base: node:20.18.1-slim (Debian/glibc)
-# Pinned to a specific patch version AND content digest so rebuilds are
-# byte-for-byte reproducible and any upstream repush of the tag is caught
-# at build time as a digest mismatch. To bump:
-#   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest 20.x LTS
+# Base: node:26.10.0-slim (Debian/glibc)
+# Pinned to a specific patch version AND content digest so upstream tag
+# movement cannot silently change the base layers. The full image is not
+# byte-for-byte reproducible because later apt/npm installs may track current
+# repository contents. To bump:
+#   1. Check <https://hub.docker.com/_/node/tags?name=slim> for the latest
+#      release in the pinned 26.x line
 #   2. Capture the digest on a trusted host (REQUIRED, not optional):
 #        docker pull node:<new-version>-slim \
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
 #   3. Update BOTH the tag and the @sha256: suffix in the FROM line below
-#   4. Rebuild: docker compose build --no-cache
+#      and synchronize version references in these comments and README.md
+#   4. Bump VERSION and regenerate Compose files from repository defaults
+#      (see README.md for the clean-worktree procedure)
+#   5. Rebuild: docker compose build --no-cache
 FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
+
+# Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
+# aborts the build instead of masking the error behind a downstream success.
+# hadolint rule DL4006 requires this for any RUN that uses `|`.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Version pinning via build arg (omit for latest)
 ARG CLAUDE_CODE_VERSION
+ARG CODEX_CLI_VERSION
+ARG GEMINI_CLI_VERSION
 
 WORKDIR /workspace
 
@@ -20,6 +32,11 @@ WORKDIR /workspace
 # tests/hooks/test-*.sh) that validate JSON via `python3 -m json.tool`
 # fall back correctly when jq is unavailable; the image stays slim
 # because this is the interpreter only, no pip or venv.
+#
+# DL3008 waived: rolling Debian base tracks security updates via the
+# digest-pinned node:26.10.0-slim; per-package apt pins would be churn
+# without a meaningful security benefit. Pinning policy tracked in #171.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        git \
@@ -31,6 +48,9 @@ RUN apt-get update \
        sudo \
        procps \
        python3 \
+       bubblewrap \
+       socat \
+       tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh) — separate layer for cache efficiency
@@ -39,6 +59,9 @@ RUN apt-get update \
 # and `gpg --show-keys` logs the fingerprint for post-build audit. Reviewers
 # can cross-check the fingerprint against the value published by GitHub at
 # build time to detect an upstream keyring swap.
+#
+# DL3008 waived: same rolling-base rationale as the dev-tools layer above; see #171.
+# hadolint ignore=DL3008
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends gnupg; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/gh.gpg; \
@@ -65,8 +88,15 @@ RUN set -eux; \
 #      intact without manual rewiring.
 #   3. On Linux overrides with a custom UID/GID, world-readable permissions
 #      on the versioned tree let any user exec it.
-RUN HOME=/home/node curl -fsSL https://claude.ai/install.sh \
-      | HOME=/home/node bash -s -- ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+# Check the installer content against a known SHA256 before executing it.
+# When updating the installer, review its content and update this checksum
+# separately from CLAUDE_CODE_VERSION, which selects the installed CLI version.
+ARG CLAUDE_INSTALLER_SHA256=3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944
+
+RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+    && echo "${CLAUDE_INSTALLER_SHA256}  /tmp/claude-install.sh" | sha256sum -c - \
+    && HOME=/home/node bash /tmp/claude-install.sh ${CLAUDE_CODE_VERSION:+"$CLAUDE_CODE_VERSION"} \
+    && rm -f /tmp/claude-install.sh \
     && chown -R node:node /home/node/.local /home/node/.claude 2>/dev/null || true \
     && chmod -R a+rX /home/node/.local \
     && rm -rf /root/.claude
@@ -74,17 +104,56 @@ RUN HOME=/home/node curl -fsSL https://claude.ai/install.sh \
 # Add the native install location to PATH for all users
 ENV PATH="/home/node/.local/bin:${PATH}"
 
-# Install statusline tools globally (still npm packages)
-RUN npm install -g ccstatusline claude-limitline \
+# Install Codex CLI, Gemini CLI, and statusline tools globally (npm packages)
+#
+# Codex and Gemini share this npm layer: both runtimes install via npm
+# (installMethod "npm" in runtimes.json), so a single RUN keeps the image
+# layer count down. Each CLI keeps its own version-pin ARG.
+#
+# DL3016 waived: @openai/codex, @google/gemini-cli, ccstatusline, and
+# claude-limitline are latest-tracking helper packages; pinning them would
+# block bug fixes without a security benefit. CODEX_CLI_VERSION and
+# GEMINI_CLI_VERSION are available when reproducibility is preferred.
+# hadolint ignore=DL3016
+RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
+        npm install -g "@openai/codex@${CODEX_CLI_VERSION}" ccstatusline claude-limitline; \
+    else \
+        npm install -g @openai/codex ccstatusline claude-limitline; \
+    fi \
+    && if [[ -n "${GEMINI_CLI_VERSION:-}" ]]; then \
+        npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
+    else \
+        npm install -g @google/gemini-cli; \
+    fi \
     && npm cache clean --force
 
-# Memory heap limit
+# Memory heap limit — image default only.
+#
+# Every compose service overrides this with a value the generator derived from
+# that service's own memory cap and validated to leave headroom for native
+# allocations, subprocesses and page cache (scripts/lib/resources.sh). This
+# line is what a plain `docker run` of the image gets, where there is no
+# declared cap to derive from. Running it that way, set --max-old-space-size
+# to roughly three quarters of whatever --memory is passed; see "Resource
+# Requirements" in README.md.
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
-# Pre-create .config directories with node ownership
-# (prevents root-owned dir when Docker bind-mounts ~/.config/gh)
+# Pre-create ccstatusline XDG config dir world-writable.
+#
+# ccstatusline reads (and on first run writes defaults to) ~/.config/
+# ccstatusline/settings.json — path derived from os.homedir(), not XDG_
+# CONFIG_HOME. When docker-compose runs the container as the host UID/GID
+# (see user: "${UID:-1000}:${GID:-1000}" in docker-compose.yml, added by
+# commit a09f997), chown'ing this dir to node:node leaves the running
+# process unable to write, and ccstatusline silently falls back to its
+# hardcoded single-line default instead of the user's multi-line layout.
+#
+# Using chmod -R a+rwX (capital X grants execute on dirs/already-executables
+# only, never on plain files) keeps the tree writable regardless of which
+# UID the compose file chooses. gh mounts its own subdir read-only at
+# runtime, so loosening the parent does not affect gh's token security.
 RUN mkdir -p /home/node/.config/ccstatusline \
-    && chown -R node:node /home/node/.config
+    && chmod -R a+rwX /home/node/.config
 
 # Copy entrypoint script (symlinks host config into account state dir).
 # Explicit chmod ensures the executable bit is set regardless of the host
@@ -92,7 +161,17 @@ RUN mkdir -p /home/node/.config/ccstatusline \
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Run as non-root (node user UID 1000 is pre-created in node:20-slim)
+# Copy the shared bash libraries, the per-runtime bootstrap modules, and the
+# runtime registry into the image (issue #269). The entrypoint is now a thin
+# dispatcher that sources scripts/lib/bootstrap-<runtime>.sh; runtime.sh
+# resolves runtimes.json relative to PROJECT_ROOT, so the repo's
+# scripts/lib + tui/internal/config layout is preserved here verbatim and
+# the entrypoint sets PROJECT_ROOT=/usr/local/share/claude-docker.
+COPY scripts/lib/ /usr/local/share/claude-docker/scripts/lib/
+COPY tui/internal/config/runtimes.json /usr/local/share/claude-docker/tui/internal/config/runtimes.json
+RUN chmod -R a+rX /usr/local/share/claude-docker
+
+# Run as non-root (node user UID 1000 is pre-created in the base image)
 USER node
 
 # Entrypoint creates config symlinks, then runs the command

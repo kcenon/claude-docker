@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "kind": "local metric contract and available integration-control verification",
+  "recorded_at": "2026-09-10T02:23:30.837791+00:00",
+  "source_commit": "48e9986e711ad5bc52cfa0dfbe033542bbfbe55e",
+  "source_dirty": true,
+  "source_scope": "Uncommitted validator/test/documentation changes on source_commit; sha256 identifies reviewed files. Runtime and measurement code remain at the baseline. No live container or provider execution.",
+  "sha256": {
+    "tests/budget_review.py": "d9e4f408075b6799931b9ff81e4b8a413fa6fb2513cd8e2131889056ae5b801f",
+    "tests/test_budget_review.py": "d238647064e35fa2bdd2a153c38b795c3c4298143d84cb606a389e2851915312",
+    "docs/PERFORMANCE.md": "c9c9dfb9601c4162fc58c330fb0ba7f1bb18461be2a5ba27e5e135d9cabf82d0",
+    "docs/ISSUE-335-WORKFLOWS.md": "5ddea4f913e0da60c9d94862e6e9e47883dd6d3fe5c772b7fe427d59bbb20bcc",
+    "docs/ISSUE-335-VALIDATION.md": "629de5f13d755fb5aeb44c2c6834de50cf001505e7bbd91c4331581092891330",
+    "docs/benchmarks/issue-335/budget-review.json": "0643df94da105d2d61c559d2ee423c4e03e9f17d38fe9c3e10ebac2868a2d0a5",
+    "docs/benchmarks/issue-335/container-linux-x86_64-claude.json": "7de3c5abdd2abd3b6903c9657424c22b2dff17e89fe938cc9e01b4b11afeeb9e",
+    "docs/benchmarks/issue-335/dashboard-darwin-arm64.json": "0a0172f8304d880b7e2c7a05090bb57c4610b0ed33d317dfe4e6fc11cd180b53"
+  },
+  "host": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "architecture": "arm64",
+    "python": "3.9.6"
+  },
+  "toolchain": {
+    "go": "go1.27.1 darwin/arm64",
+    "powershell": "7.6.3",
+    "docker_cli": "Docker version 29.8.0, build 88096ef",
+    "compose": "5.5.1",
+    "docker_daemon_available": false,
+    "task_local_tool_root": "/tmp/claude-docker-335-tools"
+  },
+  "status": "available_local_checks_passed",
+  "suites": [
+    {
+      "name": "budget-review",
+      "command": [
+        "python3",
+        "tests/test_budget_review.py"
+      ],
+      "exit_code": 0,
+      "total": 14,
+      "passed": 14,
+      "skipped": 0,
+      "elapsed_seconds": 2.113
+    },
+    {
+      "name": "benchmark-harness",
+      "command": [
+        "python3",
+        "tests/test_benchmark_harness.py"
+      ],
+      "exit_code": 0,
+      "total": 6,
+      "skipped": 0,
+      "passed": 6,
+      "elapsed_seconds": 0.091
+    },
+    {
+      "name": "benchmark-report",
+      "command": [
+        "python3",
+        "tests/test_benchmark_report.py"
+      ],
+      "exit_code": 0,
+      "total": 7,
+      "skipped": 0,
+      "passed": 7,
+      "elapsed_seconds": 0.107
+    },
+    {
+      "name": "credential-file",
+      "command": [
+        "python3",
+        "tests/test_credential_file.py"
+      ],
+      "exit_code": 0,
+      "total": 5,
+      "skipped": 2,
+      "passed": 3,
+      "elapsed_seconds": 0.04
+    },
+    {
+      "name": "terminal-support",
+      "command": [
+        "python3",
+        "tests/run_terminal_suite.py",
+        "test_terminal_support.py"
+      ],
+      "exit_code": 0,
+      "total": 7,
+      "skipped": 0,
+      "passed": 7,
+      "elapsed_seconds": 1.436
+    },
+    {
+      "name": "tui-terminal",
+      "command": [
+        "python3",
+        "tests/run_terminal_suite.py",
+        "test_tui_terminal.py"
+      ],
+      "exit_code": 0,
+      "total": 3,
+      "skipped": 0,
+      "passed": 3,
+      "elapsed_seconds": 5.623
+    },
+    {
+      "name": "workflow-coverage",
+      "command": [
+        "python3",
+        "tests/test_workflow_coverage.py"
+      ],
+      "exit_code": 0,
+      "total": 8,
+      "skipped": 0,
+      "passed": 8,
+      "elapsed_seconds": 0.112
+    },
+    {
+      "name": "workflow-environment",
+      "command": [
+        "python3",
+        "tests/test_workflow_environment.py"
+      ],
+      "exit_code": 0,
+      "total": 3,
+      "skipped": 0,
+      "passed": 3,
+      "elapsed_seconds": 0.059
+    },
+    {
+      "name": "workflow-scenarios",
+      "command": [
+        "python3",
+        "tests/test_workflow_scenarios.py"
+      ],
+      "exit_code": 0,
+      "total": 5,
+      "skipped": 0,
+      "passed": 5,
+      "elapsed_seconds": 0.722
+    },
+    {
+      "name": "workflow-support",
+      "command": [
+        "python3",
+        "tests/test_workflow_support.py"
+      ],
+      "exit_code": 0,
+      "total": 8,
+      "skipped": 0,
+      "passed": 8,
+      "elapsed_seconds": 0.071
+    }
+  ],
+  "counts": {
+    "suites": 10,
+    "total": 66,
+    "passed": 64,
+    "skipped": 2,
+    "failed": 0
+  },
+  "skips": [
+    {
+      "suite": "credential-file",
+      "count": 2,
+      "reason": "Native Windows DACL tests do not execute on macOS."
+    }
+  ],
+  "regression": {
+    "before": {
+      "baseline": "48e9986e711ad5bc52cfa0dfbe033542bbfbe55e",
+      "command": [
+        "python3",
+        "tests/test_budget_review.py",
+        "BudgetReviewTest.test_metric_names_units_and_scopes_are_bound_to_the_profile",
+        "BudgetReviewTest.test_limit_shapes_match_the_metric_scope",
+        "BudgetReviewTest.test_reordered_metrics_and_reviewed_values_remain_valid",
+        "BudgetReviewTest.test_cli_rejects_metric_contract_corruption"
+      ],
+      "exit_code": 1,
+      "summary": [
+        "Ran 4 tests in 1.488s",
+        "FAILED (failures=153)"
+      ],
+      "assertions": [
+        "AssertionError: 1 != 0 : ",
+        "AssertionError: ValueError not raised"
+      ]
+    },
+    "after": {
+      "budget_suite_tests": 14,
+      "passed": 14,
+      "failed": 0
+    },
+    "negative_assertions": {
+      "metric_name_unit_scope": 99,
+      "limit_shape": 44,
+      "cli_exit_codes": 10
+    },
+    "positive_control": "Profile/metric/count-key ordering and valid numeric budget changes are accepted.",
+    "publication": "Synthetic records remained in memory or disposable fixture files. No published budget decision was changed."
+  },
+  "compose": {
+    "command": [
+      "python3",
+      "tests/test_resolved_boundaries.py"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0,
+    "result": [
+      "real resolved models: executed=18",
+      "live-harness fixture preparation: executed=9; live containers=0"
+    ]
+  },
+  "retained_benchmark": {
+    "command": [
+      "python3",
+      "tests/benchmark_report.py",
+      "docs/benchmarks/issue-335/container-linux-x86_64-claude.json",
+      "--require-full"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0,
+    "result": {
+      "status": "valid",
+      "scope": "full matrix",
+      "executed_cells": 9,
+      "measured_samples": 45,
+      "budget_review": "pending"
+    }
+  },
+  "published_review": {
+    "command": [
+      "python3",
+      "tests/budget_review.py",
+      "docs/benchmarks/issue-335/budget-review.json"
+    ],
+    "exit_code": 0,
+    "expected_exit_code": 0,
+    "result": {
+      "status": "valid",
+      "budget_review": "pending",
+      "profiles": 2,
+      "decision_authenticity": "requires checking the linked maintainer decision"
+    }
+  },
+  "strict_acceptance": {
+    "command": [
+      "python3",
+      "tests/budget_review.py",
+      "docs/benchmarks/issue-335/budget-review.json",
+      "--require-accepted"
+    ],
+    "exit_code": 1,
+    "expected_exit_code": 1,
+    "result": {
+      "status": "invalid_or_unaccepted"
+    }
+  },
+  "measurement_scope": "Retained measurements were validated, not rerun or relabelled. The broad source fingerprint includes changed review test code, but the workload, image, configuration and measurement implementation are unchanged.",
+  "not_run": [
+    {
+      "scope": "Authenticated provider sessions, GitHub identities and remote pushes",
+      "reason": "Purpose-provided credential file, enabled models and disposable remote were not supplied; no local Docker daemon was reachable."
+    },
+    {
+      "scope": "Live Linux Engine, macOS/Windows Docker Desktop, WSL2, rootless and compatible inner sandbox",
+      "reason": "Required hosts/backends were not provided. Local terminal/TUI checks use controlled process fixtures."
+    },
+    {
+      "scope": "Maintainer performance-budget acceptance",
+      "reason": "Latest issue and published record remain pending; no explicit maintainer decision link was supplied."
+    }
+  ],
+  "issue_completion": {
+    "checked": 15,
+    "total": 17,
+    "status": "open",
+    "source": "https://github.com/kcenon/claude-docker/issues/335#issuecomment-5611482250"
+  }
+}

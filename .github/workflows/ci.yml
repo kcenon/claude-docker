@@ -9,53 +9,103 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# No job here writes anything back to the repository, so the token does not
+# need to. Without this block GITHUB_TOKEN takes the repository default, which
+# can be read-write.
+permissions:
+  contents: read
+
 jobs:
+  # Scans the whole repository, not just ./scripts. The 16 .sh files under
+  # tests/ plus tests/lib/compose_assert.sh were linted by nothing, and those
+  # files hold the assertion helpers -- an SC2086 or SC2181 defect there
+  # presents as "the test passes" (#354, item 11).
+  #
+  # It cost three findings, all SC2034, and one of them was evidence of a
+  # separate defect: SCRIPT_DIR computed and never used in
+  # test_transform_syntax_check.sh, the fingerprint of a test that once
+  # intended to read the source it was checking.
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: ludeeus/action-shellcheck@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         env:
           # SC1091: sourced files are resolved at runtime, not checkable in lint
           SHELLCHECK_OPTS: -e SC1091
         with:
-          scandir: "./scripts"
-          # MVP baseline: only actual errors fail CI. Pre-existing warnings
-          # are tracked for cleanup in a follow-up issue before tightening
-          # this threshold back to `warning`.
-          severity: error
+          scandir: "."
+          severity: warning
+          version: v0.11.0
 
   hadolint:
     name: Hadolint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: hadolint/hadolint-action@v3.5.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: Dockerfile
-          # MVP baseline: only errors fail CI. Pre-existing DL3008 /
-          # DL3016 / DL4006 warnings on apt-get / npm version pinning
-          # are legitimate trade-offs for this image; revisit when
-          # pinning policy changes.
-          failure-threshold: error
+          failure-threshold: warning
 
   psanalyzer:
     name: PSScriptAnalyzer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
       - name: Run analyzer
         shell: pwsh
         run: |
-          # MVP baseline: Error severity only. Our CLI scripts intentionally
-          # use Write-Host for colored terminal output (PSAvoidUsingWriteHost
-          # is a Warning) and that pattern is load-bearing — revisiting
-          # requires a broader refactor to a formatter function.
-          $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error
+          # PSSA rules waived for this repository, each for a specific reason:
+          #
+          # - PSAvoidUsingWriteHost: user-facing CLI scripts (claude-docker.ps1,
+          #   install.ps1, remove.ps1, cleanup.ps1) rely on Write-Host for
+          #   colored terminal output. Refactoring to a logging helper is a
+          #   large behavior change outside the scope of restoring the gate.
+          # - PSUseSingularNouns: several function names (e.g. Install-Worktrees,
+          #   Remove-Accounts) are intentionally plural because they operate on
+          #   the whole set. Renaming is a breaking change for anyone sourcing
+          #   the module.
+          # - PSUseShouldProcessForStateChangingFunctions: these are top-level
+          #   CLI entry points, not library cmdlets; users invoke them
+          #   imperatively and -WhatIf / -Confirm would add friction without
+          #   a pipeline caller that passes them through.
+          # - PSUseBOMForUnicodeEncodedFile: files are ASCII-safe / UTF-8
+          #   without BOM, matching the rest of the repo and modern tooling.
+          # - PSAvoidGlobalVars: index.ps1 uses $Global: to register the module
+          #   at load time; that is the documented PowerShell pattern.
+          # - PSReviewUnusedParameter: parameters exist for pass-through to
+          #   wrapped cmdlets; removing them would break the contract.
+          # - PSUseDeclaredVarsMoreThanAssignments: some assignments seed
+          #   module-scope state consumed by callers outside the static
+          #   analysis window.
+          # - PSUseUsingScopeModifierInNewRunspaces: only test-concurrent-git.ps1
+          #   spawns runspaces for concurrency stress, and the captured
+          #   variables are intentional via closure.
+          # - PSAvoidUsingEmptyCatchBlock: best-effort cleanup blocks
+          #   deliberately swallow non-fatal errors to keep the CLI usable
+          #   when optional steps fail.
+          # tests/ is analyzed too, for the same reason shellcheck now scans
+          # it: the five .ps1 files there hold assertion helpers, and a defect
+          # in one of those presents as "the test passes" (#354, item 11).
+          #
+          # One invocation per directory: -Path is [string], not [string[]],
+          # so `-Path scripts, tests` fails to bind with "Cannot convert
+          # System.Object[] to the type System.String".
+          $results = @()
+          foreach ($dir in @('scripts', 'tests')) {
+            $results += Invoke-ScriptAnalyzer -Path $dir -Recurse -Severity Warning `
+              -ExcludeRule PSAvoidUsingWriteHost, PSUseSingularNouns, `
+                PSUseShouldProcessForStateChangingFunctions, `
+                PSUseBOMForUnicodeEncodedFile, PSAvoidGlobalVars, `
+                PSReviewUnusedParameter, PSUseDeclaredVarsMoreThanAssignments, `
+                PSUseUsingScopeModifierInNewRunspaces, `
+                PSAvoidUsingEmptyCatchBlock
+          }
           if ($results) {
             $results | Format-Table -AutoSize
             exit 1
@@ -65,15 +115,72 @@ jobs:
     name: Go tests (TUI)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
-          # Pin via go.mod's `go` directive so setup-go and
-          # the module remain in lockstep across toolchain bumps.
-          go-version-file: tui/go.mod
+          # Must match or exceed tui/go.mod's `go` directive (currently 1.24).
+          go-version: "1.24"
+      # -race, not a plain `go test`. The TUI shares one *config.Env across the
+      # bubbletea event loop and every Cmd goroutine, and an unsynchronized map
+      # write there is `fatal error: concurrent map read and map write` -- a
+      # runtime fatal that skips bubbletea's terminal restore. Without the
+      # detector, tests/internal/config/env_race_test.go passes or fails on a
+      # scheduling accident (issue #351).
       - name: Run Go unit tests
         working-directory: ./tui
-        run: go test ./...
+        run: go test -race ./...
+      # go vet catches the class of mistake the compiler allows and the tests
+      # do not reach: lost struct tags, unreachable code, printf arity. It was
+      # not run at all before #351.
+      - name: Run go vet
+        working-directory: ./tui
+        run: go vet ./...
+      # `go test ./...` compiles benchmark functions but never executes them,
+      # so a benchmark harness that panics at runtime stays green forever.
+      # -benchtime=1x runs each benchmark exactly once: enough to catch that,
+      # too few iterations for the timing to be a flaky gate. Results are not
+      # asserted on here; the numbers of record live in docs/PERFORMANCE.md.
+      #
+      # The count comparison is what keeps the step honest now that the tree
+      # includes a dashboard benchmark: `-bench .` with nothing to run prints `ok` for
+      # every package and exits 0, which is indistinguishable from a real pass.
+      # The dashboard additionally requires all twelve data/account combinations,
+      # while a benchmark that is added and then never executed -- because it
+      # sits behind a build tag, or in a package the pattern misses -- fails
+      # instead of passing quietly.
+      #
+      # `>=` rather than `=`: one `func Benchmark...` with sub-benchmarks
+      # prints a result line per sub-benchmark, so executed legitimately
+      # exceeds defined.
+      - name: Smoke-run Go benchmarks
+        working-directory: ./tui
+        run: |
+          defined=$(grep -rh --include='*_test.go' '^func Benchmark' . | wc -l)
+          go test ./... -run '^$' -bench . -benchtime=1x | tee /tmp/claude-docker-bench-smoke.txt
+          executed=$(grep -c '^Benchmark' /tmp/claude-docker-bench-smoke.txt || true)
+          dashboard_cases=$(grep -c '^BenchmarkListAccounts/' /tmp/claude-docker-bench-smoke.txt || true)
+          test "$dashboard_cases" -eq 12
+          echo "benchmarks defined: $defined, executed: $executed"
+          if [ "$executed" -lt "$defined" ]; then
+            echo "::error::$defined benchmark(s) defined but only $executed executed"
+            exit 1
+          fi
+      # Formatting is checked here rather than in a separate job because the Go
+      # toolchain is already provisioned. The job name stays "Go tests (TUI)"
+      # so any branch-protection rule referencing it keeps matching; the step
+      # name is what identifies a formatting failure.
+      - name: Check gofmt
+        working-directory: ./tui
+        # `gofmt -l` lists offending files but still exits 0, so the emptiness
+        # of its output is the assertion. Asserting on its exit status instead
+        # would leave the gate permanently green (issue #305).
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt violations found. Fix with: gofmt -w <file>"
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
 
   compose-validate:
     name: Compose validate (${{ matrix.fixture }})
@@ -81,12 +188,493 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fixture: [minimal, tier-b, n5, n30, with-special-chars]
+        fixture: [minimal, tier-b, n5, n30, with-special-chars, codex, gemini, github-per-account]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Stage fixture
         run: cp tests/env_fixtures/${{ matrix.fixture }}.env .env
       - name: Generate compose
         run: bash scripts/generate-compose.sh
       - name: Validate compose
         run: docker compose config > /dev/null
+
+  # `compose-validate` above only ever inspects compose files it has just
+  # generated from a fixture, so it cannot observe drift in the copies that are
+  # actually committed. This job closes that gap: it regenerates in place and
+  # asserts the working tree is unchanged.
+  #
+  # The committed compose files represent the generator's built-in defaults
+  # with no `.env` present:
+  #   NUM_ACCOUNTS=2       (scripts/generate-compose.sh default)
+  #   AGENT_RUNTIME=claude (scripts/lib/runtime.sh default)
+  #   ISOLATION_MODE=shared (scripts/lib/isolation.sh default)
+  #   IMAGE_TAG            read from the repo-root VERSION file
+  # A VERSION bump therefore requires regenerating the compose files in the
+  # same change, because the committed files embed the tag as a default.
+  #
+  # The file list in "Assert no drift" is the tracked generated set. Every mode
+  # generates all four, so the mode does not change what belongs here -- but a
+  # stage that adds another generated stack must add it to that list too, or
+  # the new file gets no drift coverage while the job stays green. That is not
+  # hypothetical: docker-compose.isolated.yml was added in stage 3 of #335 and
+  # would have been invisible here until it was listed.
+  compose-freshness:
+    name: Compose files are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Regenerate from generator defaults
+        # `.env` is gitignored and absent on a fresh checkout; removing it
+        # anyway pins the job to the documented defaults rather than to
+        # whatever a future change might leave in the working tree.
+        run: |
+          rm -f .env
+          bash scripts/generate-compose.sh
+      - name: Assert no drift
+        run: |
+          if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml docker-compose.isolated.yml; then
+            echo "::error::Committed compose files differ from generator output. Regenerate with: rm -f .env && bash scripts/generate-compose.sh"
+            exit 1
+          fi
+
+  # compose-freshness above enforces the forward direction: VERSION changed, so
+  # the generated compose files must be regenerated. This is the reverse one,
+  # and its absence is what let the image tag go stale for 73 commits.
+  #
+  # docker-compose.yml declares both `build:` and `image:`, so `docker compose
+  # up` reuses whatever local image already carries that tag instead of
+  # rebuilding -- and neither wrapper passes --build. The tag's default comes
+  # from VERSION. So a Dockerfile change that leaves VERSION alone is invisible
+  # to every existing installation: they keep the old image indefinitely.
+  #
+  # Not hypothetical. Between the last VERSION bump and this job, 15 commits
+  # touched Dockerfile or the entrypoint, one of them adding a whole runtime.
+  # An installation from that release which pulled and ran `up` had no codex
+  # and no gemini, and nothing told it so.
+  image-tag-freshness:
+    name: Image content changes bump VERSION
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Both endpoints of the diff have to be present; the default shallow
+          # checkout carries neither reliably.
+          fetch-depth: 0
+      - name: Compare image inputs against VERSION
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+
+          # The inputs that decide what lands inside the image: every path the
+          # Dockerfile COPYs, plus the Dockerfile itself. Keep this in step with
+          # the COPY lines -- `grep -n '^COPY' Dockerfile` is the authority.
+          #
+          # scripts/lib/ and runtimes.json were missing from the first version
+          # of this pattern, which only matched Dockerfile and the entrypoint.
+          # #357 is what surfaced it: that change rewrote three
+          # scripts/lib/bootstrap-*.sh modules, and the job only caught it
+          # because scripts/entrypoint.sh happened to change in the same PR.
+          image_inputs="$(printf '%s\n' "$changed" \
+            | grep -E '^(Dockerfile|scripts/entrypoint|scripts/lib/|tui/internal/config/runtimes\.json)' || true)"
+          if [ -z "$image_inputs" ]; then
+            echo "No image inputs changed; VERSION may stay as it is."
+            exit 0
+          fi
+
+          echo "Image inputs changed:"
+          printf '  %s\n' $image_inputs
+
+          if printf '%s\n' "$changed" | grep -qx 'VERSION'; then
+            echo "VERSION was bumped in the same change."
+            exit 0
+          fi
+
+          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (rm -f .env && bash scripts/generate-compose.sh)."
+          exit 1
+
+  bash-tests:
+    name: Bash Tests (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - tests/test_ccstatusline_xdg_symlink.sh
+          - tests/test_parse_env.sh
+          - tests/test_parse_env_equivalence.sh
+          - tests/test_runtime_registry_equivalence.sh
+          - tests/test_compose_generator_equivalence.sh
+          - tests/test_isolation_modes.sh
+          - tests/test_container_memory.sh
+          - tests/test_github_per_account_compose.sh
+          - tests/test_github_account_selection.sh
+          - tests/test_entrypoint_github_auth.sh
+          - tests/test_installer_github_equivalence.sh
+          - tests/test_num_accounts_precedence.sh
+          - tests/test_agent_attach_argv.sh
+          - tests/test_transform_syntax_check.sh
+          - tests/test_cleanup_backups.sh
+          - tests/test_windows_platform_guard.sh
+          - tests/test_worktree_ownership.sh
+          - tests/test_install_start_containers.sh
+          - tests/test_install_tier_b.sh
+          - tests/test_scale_prevalidation.sh
+          - tests/test_isolation_regressions.sh
+          - tests/test_sandbox_gate.sh
+          - tests/test_setup_isolated.sh
+          - tests/test_bash32_portability.sh
+          - tests/test_workflow_contracts.sh
+          # Linux-only on purpose: this covers container bootstrap code, the
+          # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
+          - tests/test_bootstrap_helpers.sh
+          # Both installers name .env backups the same way, so the name-sort
+          # rotation keeps the newest three rather than the newest three from
+          # whichever installer used the longer format (#356).
+          - tests/test_env_backup_rotation.sh
+          # CONTRIBUTING.md names the equivalence tests and the four
+          # implementation layers, which makes it one more copy that drifts on
+          # a rename. Referential integrity only (#356).
+          - tests/test_contributing_references.sh
+          # Runs both account-index implementations and diffs the answers,
+          # rather than grepping either for a literal (#356).
+          - tests/test_account_index_equivalence.sh
+          # Per-runtime values (buildArg, binary, servicePrefix) come from the
+          # registry in all three languages, not from a hand-typed constant
+          # that happens to match for the runtimes registered today (#356).
+          - tests/test_runtime_buildarg_binary.sh
+          # Three .env keys where the two languages disagreed on what a value
+          # *means*: base-10 parsing, casing, and whether whitespace counts as
+          # unset (#356).
+          - tests/test_env_value_semantics.sh
+          # Enumeration checks only: every tracked compose file is listed where
+          # README enumerates them, every ${VAR} the base compose reads is in
+          # .env.example. Prose correctness is not machine-checkable; these are
+          # the lists that went stale when isolated mode landed (#360).
+          - tests/test_docs_contracts.sh
+          - scripts/test-entrypoint-settings.sh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run ${{ matrix.test }}
+        run: bash "${{ matrix.test }}"
+
+  # macOS is a supported platform (README.md) and ships bash 3.2 as /bin/bash.
+  # That is where a bash 4+ construct stops being a style question and becomes
+  # `bad substitution` and an exited shell -- which is exactly what
+  # agent_runtime did, taking `up`, `attach` and `ps` with it (#350).
+  #
+  # One sequential job rather than a `macos-latest` axis on the matrix above:
+  # macOS runners bill at roughly ten times a Linux runner, so a second axis
+  # would cost one macOS runner per matrix entry, while this costs one. The
+  # purpose is to observe bash 3.2 at all, and one job does that.
+  #
+  # /bin/bash is invoked explicitly. The runner image carries a Homebrew bash 5
+  # earlier in PATH, so `bash "$t"` would test the wrong interpreter and this
+  # job would prove nothing.
+  #
+  # The list is a subset, and what is left out is named rather than left to be
+  # inferred:
+  #   - the four *_equivalence.sh tests cross-check the bash readers against
+  #     pwsh; their bash halves already run on Linux above.
+  #   - backup/credential/worktree ownership tests remain in the Linux matrix;
+  #     their fixture timestamp/stat/path handling is also portable to macOS.
+  #   - the remaining entries are container- or Windows-oriented.
+  bash-tests-macos:
+    name: Bash Tests (macOS, bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Show the interpreter under test
+        run: /bin/bash --version | head -1
+      - name: Run the portable subset under /bin/bash
+        run: |
+          set -uo pipefail
+          failed=0
+          for t in \
+            tests/test_bash32_portability.sh \
+            tests/test_parse_env.sh \
+            tests/test_agent_attach_argv.sh \
+            tests/test_num_accounts_precedence.sh \
+            tests/test_transform_syntax_check.sh \
+            tests/test_worktree_ownership.sh \
+            tests/test_isolation_modes.sh
+          do
+            echo "::group::$t"
+            if /bin/bash "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error::$t failed under bash 3.2"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+  # Resolved-model tests cover merge/policy semantics. This job exercises the
+  # kernel boundary with disposable account pairs, one shared image, all three
+  # runtime executables, network positive controls and an offline phase.
+  isolated-up-smoke:
+    name: "Isolated mode: real containers"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Build the test image
+        run: docker build --tag claude-code-base:ci335 .
+      - name: Exercise account boundaries and all runtime executables
+        run: bash tests/test_container_isolation.sh --image claude-code-base:ci335 --runtime all
+      - name: Exercise external DNS, TLS and public Git transport
+        run: bash tests/test_container_isolation.sh --image claude-code-base:ci335 --runtime claude --external
+      - name: Measure one benchmark cell with five samples
+        run: python3 tests/benchmark_isolation.py --image claude-code-base:ci335 --smoke --output /tmp/isolation-benchmark-smoke.json
+      - name: Validate measured smoke evidence
+        run: python3 tests/benchmark_report.py /tmp/isolation-benchmark-smoke.json
+      - name: Retain benchmark report including incomplete runs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: isolation-benchmark-smoke
+          path: /tmp/isolation-benchmark-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+
+  host-policy-tests:
+    name: Host policy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Separate native commands so PowerShell cannot replace a failed test's
+      # exit code with a later successful command's result.
+      - name: Record native host and Python versions
+        run: python -c "import json,platform; print(json.dumps({'platform':platform.platform(),'python':platform.python_version(),'architecture':platform.machine()}))"
+      - name: Record native PowerShell version
+        if: runner.os == 'Windows'
+        run: pwsh --version
+      - name: Transaction and boundary fault tests
+        run: python tests/test_lifecycle.py
+      - name: Native wrapper process interruption and recovery
+        run: python tests/test_lifecycle_process.py
+      - name: Benchmark statistics tests
+        run: python tests/test_benchmark_harness.py
+      - name: Benchmark report corruption tests
+        run: python tests/test_benchmark_report.py
+      - name: Offline package workflow and corruption control
+        run: python tests/test_package_workload.py
+      - name: Explicit integration credentials and redaction
+        run: python tests/test_workflow_support.py
+      - name: Workflow coverage, dispatch and sandbox refusal controls
+        run: python tests/test_workflow_coverage.py
+      - name: Credentialed workflow controls with local test inputs
+        run: python tests/test_workflow_scenarios.py
+      - name: Native backend identity and effective resource limits
+        run: python tests/test_workflow_environment.py
+      - name: Budget evidence binding and pending decision checks
+        run: python tests/test_budget_review.py
+      - name: Resolve every runtime and overlay combination
+        if: runner.os == 'Linux'
+        run: python3 tests/test_resolved_boundaries.py
+      - name: Validate the benchmark plan without running workloads
+        run: python tests/benchmark_isolation.py --plan
+
+  terminal-tests:
+    name: Native terminal and TUI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.24'
+          cache-dependency-path: tui/go.sum
+      - name: Private credential file permissions and native ACLs
+        run: python tests/test_credential_file.py
+      - name: PTY and native ConPTY drain, timeout and process cleanup
+        if: ${{ !cancelled() }}
+        run: python tests/run_terminal_suite.py test_terminal_support.py
+      - name: Actual dashboard account selection, attach and return
+        if: ${{ !cancelled() }}
+        run: python tests/run_terminal_suite.py test_tui_terminal.py
+
+  pwsh-tests:
+    name: PowerShell Tests (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - tests/test_parse_env.ps1
+          - tests/test_isolation_modes.ps1
+          - tests/test_container_memory.ps1
+          - tests/test_powershell_platform_guard.ps1
+          - tests/test_worktree_path_guard.ps1
+          - tests/test_cleanup_gate.ps1
+          - tests/test_powershell_version_floor.ps1
+          - tests/test_powershell_exit_codes.ps1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run ${{ matrix.test }}
+        shell: pwsh
+        run: pwsh -NoProfile -File "${{ matrix.test }}"
+
+  pwsh-windows-tests:
+    name: PowerShell Windows Tests (GitHub account selection)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Run GitHub account selection test
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_github_account_selection.ps1
+
+  # Live keyless smoke test for Epic #267 AC3 #1 and the keyless half of AC3 #2:
+  # AGENT_RUNTIME=gemini + `claude-docker up` brings the gemini container to a
+  # running state, and the service/binary pair that `claude-docker gemini`
+  # resolves to actually runs inside it. This goes one step beyond
+  # `compose-validate (gemini)` (static `docker compose config`) by building the
+  # image, starting the container, asserting it is running, exercising the
+  # attach target, and tearing it down. The gemini service command is
+  # ["sleep", "infinity"], and neither the boot path nor `gemini --version`
+  # references GEMINI_API_KEY, so this runs with no secret.
+  #
+  # A final, key-gated phase then covers the authenticated half of AC3 #2 when
+  # a GEMINI_API_KEY secret exists (#301). It runs strictly *after* every
+  # keyless assertion above, and only then introduces the key — so the AC3 #1
+  # checks keep being made in an environment that has no credential at all,
+  # which is the whole point of them. Without the secret (forks, Dependabot,
+  # or before the owner configures one) that phase emits a notice and passes.
+  #
+  # Folded into this job rather than split into a second one so the heavy image
+  # build happens once; a separate job would need a buildx layer cache to avoid
+  # paying for it twice, which the `claude-docker up` build path does not
+  # currently wire up.
+  #
+  # What stays manual after this job is the TUI screen check — accounts listed
+  # and attached from the dashboard (#289). *Which* service and argv an attach
+  # resolves to is pinned daemon-free by tests/test_agent_attach_argv.sh, and
+  # the TUI's equivalent is covered by the Go tests in tui/internal/docker and
+  # tui/internal/config (AC3 #3).
+  #
+  # Kept as a single, NUM_ACCOUNTS=1 dedicated job (not folded into the
+  # compose-validate matrix) so the heavy image build runs once for one runtime
+  # rather than per fixture.
+  gemini-up-smoke:
+    name: "Gemini up/down smoke (AC3 #1 + #2)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Stage gemini fixture (single account)
+        run: |
+          cp tests/env_fixtures/gemini.env .env
+          # Narrow to one account so the image build + boot runs once for
+          # gemini-a only. The caller env overrides the fixture's value.
+          echo "NUM_ACCOUNTS=1" >> .env
+      - name: Prepare host bind-mount directories
+        run: |
+          # The fixture sets HOME=/tmp/claude-test; create the per-account
+          # state dir, the read-only host config mount, the gh config mount,
+          # and the project dir so the keyless bind mounts resolve.
+          mkdir -p /tmp/claude-test/.gemini-state/account-a \
+                   /tmp/claude-test/.gemini-host \
+                   /tmp/claude-test/.config/gh \
+                   /tmp/claude-test/project
+      - name: Generate compose
+        run: NUM_ACCOUNTS=1 bash scripts/generate-compose.sh
+      - name: Build image and bring up gemini-a (keyless)
+        run: bash scripts/claude-docker up
+      - name: Assert gemini-a is running
+        run: |
+          set -euo pipefail
+          cid="$(bash scripts/claude-docker compose ps -q gemini-a)"
+          if [[ -z "$cid" ]]; then
+            echo "::error::gemini-a container was not created"
+            bash scripts/claude-docker ps || true
+            exit 1
+          fi
+          running="$(docker inspect -f '{{.State.Running}}' "$cid")"
+          restarting="$(docker inspect -f '{{.State.Restarting}}' "$cid")"
+          echo "gemini-a: Running=$running Restarting=$restarting"
+          if [[ "$running" != "true" || "$restarting" != "false" ]]; then
+            echo "::error::gemini-a is not in a stable running state"
+            docker inspect -f '{{json .State}}' "$cid"
+            bash scripts/claude-docker compose logs gemini-a || true
+            exit 1
+          fi
+      - name: "Attach target runs inside the container (AC3 #2, keyless)"
+        run: |
+          set -euo pipefail
+          # `claude-docker gemini` resolves to `docker compose exec gemini-a
+          # gemini` — pinned without a daemon by tests/test_agent_attach_argv.sh.
+          # Here that same service/binary pair is executed for real: -T because
+          # the runner has no TTY, and `--version` because it is the one gemini
+          # invocation that needs no credential. A wrong service name, a binary
+          # missing from the image, or a PATH the runtime is not on all fail here
+          # rather than in a user's first attach.
+          version="$(bash scripts/claude-docker compose exec -T gemini-a gemini --version)"
+          echo "gemini --version -> $version"
+          if [[ -z "${version//[[:space:]]/}" ]]; then
+            echo "::error::gemini --version produced no output in gemini-a"
+            exit 1
+          fi
+      - name: "Authenticated round-trip when a key is available (AC3 #2)"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          # The `secrets` context is not available in a job-level `if:`, so the
+          # guard lives here: take the secret through env and no-op when empty.
+          # Fork and Dependabot PRs are never given secrets, so they take this
+          # path and pass rather than failing contributors who cannot supply a
+          # key. The same applies before the owner configures one at all.
+          if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+            echo "::notice::GEMINI_API_KEY not configured; skipping the authenticated gemini check"
+            exit 0
+          fi
+
+          # Everything above ran with no credential in the environment -- that
+          # is what makes the AC3 #1 assertions meaningful. The key enters only
+          # now, through the per-account variable the compose generator reads
+          # (it injects GEMINI_API_KEY into the service only for accounts whose
+          # key is non-empty), so the container must be recreated to see it.
+          echo "GEMINI_API_KEY_A=${GEMINI_API_KEY}" >> .env
+          NUM_ACCOUNTS=1 bash scripts/generate-compose.sh
+          bash scripts/claude-docker up
+
+          # Gemini CLI switches to headless mode under -p (and in any non-TTY
+          # environment such as this runner). --output-format json makes the
+          # result parseable, so the assertion is on response shape rather than
+          # on model wording, which would be brittle.
+          rc=0
+          out="$(bash scripts/claude-docker compose exec -T gemini-a \
+                   gemini -p 'Reply with the single word OK.' \
+                   --output-format json)" || rc=$?
+          if [[ "$rc" -ne 0 ]]; then
+            # Documented headless exit codes: 1 general/API failure,
+            # 42 input validation, 53 turn limit.
+            echo "::error::authenticated gemini call exited with status $rc"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+
+          # A successful headless run carries no .error and a non-empty
+          # .response string.
+          if ! printf '%s' "$out" \
+               | jq -e '.error == null and (.response | type) == "string" and (.response | length) > 0' \
+                 >/dev/null; then
+            echo "::error::gemini returned no usable response"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          echo "authenticated gemini round-trip OK: $(printf '%s' "$out" | jq -r '.response' | head -c 80)"
+      - name: Tear down
+        if: always()
+        run: bash scripts/claude-docker down -v --remove-orphans

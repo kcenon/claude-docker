@@ -50,7 +50,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.dashboard.SetSize(msg.Width, msg.Height-4) // reserve space for header
-		return a, nil
+		var cmd tea.Cmd
+		a.dashboard, cmd = a.dashboard.Update(msg)
+		return a, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -75,7 +77,7 @@ func (a App) View() string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#06B6D4")).
 		Render(fmt.Sprintf(" claude-docker %s", a.version))
 	summary := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).
-		Render(fmt.Sprintf("  %d accounts", count))
+		Render(fmt.Sprintf("  %s  %d accounts", a.env.AgentRuntime(), count))
 	b.WriteString(title + summary + "\n\n")
 
 	// Dashboard

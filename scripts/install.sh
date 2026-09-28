@@ -12,7 +12,7 @@ set -euo pipefail
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         echo "Error: install.sh is not supported on native Windows shells." >&2
-        echo "Use: powershell -ExecutionPolicy Bypass -File scripts\\install.ps1" >&2
+        echo "Use: pwsh -ExecutionPolicy Bypass -File scripts\\install.ps1" >&2
         exit 1 ;;
 esac
 
@@ -26,11 +26,13 @@ fi
 
 # Canonical .env key list (must be written by all platform installers):
 #   HOME, PROJECT_DIR, CONTAINER_PROJECT_DIR, CLAUDE_CONFIG_SOURCE (optional),
-#   CLAUDE_CODE_VERSION (optional), CLAUDE_API_KEY_A/B (Path B only),
+#   <runtime buildArg> (optional; CLAUDE_CODE_VERSION, CODEX_CLI_VERSION or
+#     GEMINI_CLI_VERSION, whichever the selected runtime names),
+#   CLAUDE_API_KEY_A/B (Path B only),
 #   PROJECT_DIR_A/B + CONTAINER_PROJECT_DIR_A/B (Tier B only),
 #   GIT_USER_NAME, GIT_USER_EMAIL (optional),
-#   GH_TOKEN (optional — auto-detected from gh CLI),
-#   GH_CONFIG_DIR (optional — platform-specific gh config path for volume mount)
+#   GH_AUTH_MODE + GH_USER_<LETTER>/GH_TOKEN_<LETTER> (per-account only),
+#   GH_TOKEN + GH_CONFIG_DIR (optional shared-mode host gh configuration)
 #
 # Linux-only keys (bash installer adds):
 #   UID, GID (consumed by docker-compose.linux.yml)
@@ -56,9 +58,15 @@ PLATFORM=""
 AUTH_PATH=""
 TIER=""
 SOURCE_DIR=""
-CLAUDE_VERSION=""
-API_KEY_A=""
-API_KEY_B=""
+RUNTIME_VERSION=""
+RUNTIME_BUILD_ARG=""
+RUNTIME_DISPLAY_NAME=""
+# Selected agent runtime (claude, codex, gemini, ...). Defaults to claude so a
+# non-interactive or default install behaves exactly as before (see #273).
+RUNTIME="claude"
+GH_AUTH_MODE="shared"
+GH_USERS=()
+GH_TOKENS=()
 
 # --- Utility Functions --------------------------------------------------------
 
@@ -68,13 +76,19 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()    { CURRENT_STEP=$((CURRENT_STEP + 1)); echo -e "\n${BOLD}[$CURRENT_STEP/$TOTAL_STEPS] $1${NC}"; }
 
-# Shared: download_tui_release() — fetches prebuilt TUI binary with SHA256 check.
-# shellcheck source=lib/tui-release.sh
-. "$SCRIPT_DIR/lib/tui-release.sh"
 # shellcheck source=lib/parse_env.sh
 . "$SCRIPT_DIR/lib/parse_env.sh"
+# shellcheck source=lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 # shellcheck source=lib/index.sh
 . "$SCRIPT_DIR/lib/index.sh"
+# build-compose-cmd.sh calls into the isolation contract, so isolation.sh must
+# be sourced first. Omitting it made every build_compose_cmd call here abort
+# with "require_supported_isolation_mode: command not found".
+# shellcheck source=lib/isolation.sh
+. "$SCRIPT_DIR/lib/isolation.sh"
+# shellcheck source=lib/build-compose-cmd.sh
+. "$SCRIPT_DIR/lib/build-compose-cmd.sh"
 
 prompt_select() {
     local question="$1"
@@ -139,8 +153,41 @@ check_command() {
     command -v "$1" &>/dev/null
 }
 
+# env_backup_timestamp
+# The suffix both installers put on a .env backup: "utc" + UTC yyyymmddHHMMSS.
+#
+# One format on both sides (#356, row 8). This wrote `date +%s` -- a 10-digit
+# epoch -- while install.ps1 wrote a 14-digit yyyyMMddHHmmss, and both rotate
+# by name sort. A 14-digit "2026..." always sorts above any 10-digit epoch, so
+# alternating the two installers on one project root kept the three newest
+# *PowerShell* backups rather than the three newest backups.
+#
+# UTC, not local: local time is not monotonic across a DST fall-back, and the
+# rotation depends on name order matching chronological order.
+#
+# The "utc" prefix is what makes the migration safe, and it took a second pass
+# to get right. Unifying on yyyymmddHHMMSS fixed the epoch legacy -- 10 digits
+# always sort below 14 -- but left the other legacy untouched: install.ps1 used
+# to stamp LOCAL time in the same 14-digit shape, so its old backups are
+# indistinguishable from new ones under a name sort. East of UTC they are worse
+# than indistinguishable, because a local stamp runs ahead of a UTC stamp taken
+# at the same instant; on a UTC+9 host every legacy PowerShell backup from the
+# last nine hours outranked a brand-new one, and rotation deleted the file the
+# installer had just written.
+#
+# A leading letter sorts above every digit, so any stamp in this format
+# outranks any stamp in either legacy format, whatever the timezone. The
+# migration is then self-correcting in the intended direction: legacy backups
+# fall to the bottom and rotate out first. Nothing reads the suffix back --
+# cleanup and remove match on the `.env.backup.*` glob and select by file age
+# -- so the prefix costs nothing downstream.
+env_backup_timestamp() {
+    printf 'utc%s\n' "$(date -u +%Y%m%d%H%M%S)"
+}
+
 # Keep at most $keep newest ".env.backup.*" siblings of $env_file.
-# Sort is lexicographic by epoch suffix — monotonic for the foreseeable future.
+# Sort is lexicographic by the timestamp suffix, which env_backup_timestamp
+# keeps monotonic.
 rotate_env_backups() {
     local env_file="$1"
     local keep="${2:-3}"
@@ -153,6 +200,36 @@ rotate_env_backups() {
         | while IFS= read -r stale; do
             rm -f -- "$stale"
         done
+}
+
+# prompt_account_count
+# Ask how many accounts to configure, validate the answer through the shared
+# rule, and set NUM_ACCOUNTS. Returns non-zero and reports the range when the
+# answer is not usable.
+#
+# The upper bound is "zz" from Excel-style letter enumeration; the validator
+# catches typos like 2600 without capping legitimate multi-tenant setups at the
+# historic 26-account ceiling. Both the bound and the check come from
+# lib/index.sh, which this file already sources -- re-spelling either one here
+# is what let the prompt and the generator disagree in the first place (#356).
+#
+# It is a function rather than four inline lines because the only way to reach
+# the validation used to be running the whole interactive installer. No test
+# could get to it, so nothing in CI would notice an edit that went back to
+# typing the bound at this call site, which is precisely the regression #356
+# asks to be guarded against. tests/test_num_accounts_precedence.sh drives it
+# with prompt_input stubbed.
+#
+# NUM_ACCOUNTS is set rather than printed: log_error writes to stdout, so a
+# caller using command substitution would capture the error text as the value.
+prompt_account_count() {
+    local raw
+    raw=$(prompt_input "Number of accounts to configure (1-$(max_account_count))" "2")
+    if ! NUM_ACCOUNTS=$(normalize_account_count "$raw"); then
+        log_error "Number of accounts must be an integer between 1 and $(max_account_count) (got: $raw)."
+        return 1
+    fi
+    return 0
 }
 
 # Measure filesystem I/O latency with a single write+read+delete cycle.
@@ -365,7 +442,17 @@ install_prerequisite() {
                         log_warn "Added $USER to docker group. You may need to log out and back in."
                         ;;
                     node)
-                        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+                        # NodeSource keyring + signed apt source (replaces 'curl | sudo bash').
+                        # NodeSource GPG fingerprint: 9FD3B784BC1C6FC31A8A0A1C1655A0AB68576280
+                        # Verify periodically against https://github.com/nodesource/distributions
+                        local keyring="/etc/apt/keyrings/nodesource.gpg"
+                        sudo install -m 0755 -d /etc/apt/keyrings
+                        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                            | sudo gpg --dearmor -o "$keyring"
+                        sudo chmod a+r "$keyring"
+                        echo "deb [signed-by=$keyring] https://deb.nodesource.com/node_20.x nodistro main" \
+                            | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+                        sudo apt-get update -qq
                         sudo apt-get install -y -qq nodejs
                         ;;
                     git) sudo apt-get install -y -qq git ;;
@@ -423,6 +510,10 @@ install_prerequisite() {
 run_prerequisite_checks() {
     log_step "Checking prerequisites"
 
+    if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
+        log_error "Python 3.9+ is required. Install it with your package manager (brew install python / apt install python3)."
+        return 1
+    fi
     local missing=()
 
     check_docker || missing+=("docker")
@@ -467,6 +558,27 @@ run_prerequisite_checks() {
 
 collect_configuration() {
     echo -e "\n${BOLD}${CYAN}=== Configuration ===${NC}\n"
+
+    # Agent runtime. Options are read from the runtime registry; claude is
+    # listed first so pressing 1 (or accepting the default) keeps today's
+    # behavior. A single registered runtime skips the prompt entirely.
+    local runtimes=()
+    local r
+    while IFS= read -r r; do
+        [[ -z "$r" ]] && continue
+        if [[ "$r" == "claude" ]]; then
+            runtimes=("$r" "${runtimes[@]}")
+        else
+            runtimes+=("$r")
+        fi
+    done < <(runtime_list)
+
+    if [[ ${#runtimes[@]} -gt 1 ]]; then
+        RUNTIME=$(prompt_select "Which agent runtime will you use?" "${runtimes[@]}")
+    elif [[ ${#runtimes[@]} -eq 1 ]]; then
+        RUNTIME="${runtimes[0]}"
+    fi
+    log_info "Agent runtime: $RUNTIME"
 
     # Auth Path
     local auth_choice
@@ -514,35 +626,73 @@ collect_configuration() {
 
     log_info "Project directory: $SOURCE_DIR"
 
-    # Claude Code version
-    CLAUDE_VERSION=$(prompt_input "Claude Code version (enter specific version or 'latest')" "latest")
-    if [[ "$CLAUDE_VERSION" == "latest" ]]; then
-        CLAUDE_VERSION=""
-        log_info "Claude Code version: latest"
+    # Runtime CLI version. The prompt is unconditional, so it also runs for a
+    # codex or gemini install -- and the value used to be written as
+    # CLAUDE_CODE_VERSION regardless (#356, row 4). That dropped the chosen
+    # runtime's own pin and fed the number to the Claude installer inside the
+    # image instead. The variable name comes from the registry now, the same
+    # way generate-compose.sh resolves it.
+    RUNTIME_BUILD_ARG=$(runtime_field "$RUNTIME" buildArg)
+    RUNTIME_DISPLAY_NAME=$(runtime_field "$RUNTIME" displayName)
+    RUNTIME_VERSION=$(prompt_input "$RUNTIME_DISPLAY_NAME version (enter specific version or 'latest')" "latest")
+    if [[ "$RUNTIME_VERSION" == "latest" ]]; then
+        RUNTIME_VERSION=""
+        log_info "$RUNTIME_DISPLAY_NAME version: latest"
     else
-        log_info "Claude Code version: $CLAUDE_VERSION"
+        log_info "$RUNTIME_DISPLAY_NAME version: $RUNTIME_VERSION"
     fi
 
-    # Number of accounts. Upper bound is "zz" (702) from Excel-style letter
-    # enumeration; the validator catches typos like 2600 without capping
-    # legitimate multi-tenant setups at the historic 26-account ceiling.
-    NUM_ACCOUNTS=$(prompt_input "Number of accounts to configure (1-702)" "2")
-    if ! [[ "$NUM_ACCOUNTS" =~ ^[0-9]+$ ]] || [[ "$NUM_ACCOUNTS" -lt 1 || "$NUM_ACCOUNTS" -gt 702 ]]; then
-        log_error "Number of accounts must be between 1 and 702."
-        exit 1
-    fi
+    # Number of accounts. The prompt and its validation live in a function so a
+    # test can drive this path; see prompt_account_count.
+    prompt_account_count || exit 1
     log_info "Accounts: $NUM_ACCOUNTS"
 
-    # API keys (Path B)
+    # GitHub authentication mode. Shared preserves the existing active-account
+    # import and read-only host config mount. Per-account mode requires every
+    # selected host login up front so compose generation can remain fail-closed.
+    local gh_choice
+    gh_choice=$(prompt_select \
+        "How should containers authenticate to GitHub?" \
+        "Shared account — use the host's active gh account in every container" \
+        "Per-account — map a different stored gh login to each container")
+    if [[ "$gh_choice" == Per-account* ]]; then
+        GH_AUTH_MODE="per-account"
+        if ! command -v gh >/dev/null 2>&1; then
+            log_error "Per-account GitHub setup requires the host gh CLI."
+            exit 1
+        fi
+        echo -e "\n${CYAN}Enter host GitHub logins already stored by gh:${NC}"
+        for i in $(seq 1 "$NUM_ACCOUNTS"); do
+            local upper login token
+            upper=$(index_to_upper "$i")
+            login=$(prompt_input "GitHub login for Account $upper")
+            if ! token=$(gh auth token --hostname github.com --user "$login" 2>/dev/null) || [[ -z "$token" ]]; then
+                log_error "Could not read a stored github.com token for '$login'."
+                log_info "Authenticate it first with: gh auth login --hostname github.com"
+                exit 1
+            fi
+            GH_USERS+=("$login")
+            GH_TOKENS+=("$token")
+        done
+        log_success "Per-account GitHub mappings collected ($NUM_ACCOUNTS accounts)"
+    else
+        GH_AUTH_MODE="shared"
+        log_info "GitHub authentication: shared account"
+    fi
+
+    # API keys (Path B). The .env variable prefix is resolved from the runtime
+    # registry (CLAUDE_API_KEY_ / CODEX_API_KEY_ / GEMINI_API_KEY_ / ...).
     API_KEYS=()
     if [[ "$AUTH_PATH" == "B" ]]; then
-        echo -e "\n${CYAN}Enter Console API keys (from console.anthropic.com):${NC}"
+        local api_key_prefix
+        api_key_prefix=$(runtime_field "$RUNTIME" "apiKeyVarPrefix")
+        echo -e "\n${CYAN}Enter Console API keys (written as ${api_key_prefix}<LETTER>):${NC}"
         for i in $(seq 1 "$NUM_ACCOUNTS"); do
             local letter
             letter=$(index_to_letter "$i")
             local upper
-            upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
-            API_KEYS+=("$(prompt_secret "API key for Account $upper (sk-ant-...)")")
+            upper=$(index_to_upper "$i")
+            API_KEYS+=("$(prompt_secret "API key for Account $upper")")
         done
 
         # Validate at least the first key is non-empty
@@ -567,7 +717,8 @@ generate_env() {
             log_warn "Keeping existing .env. Some settings may not match your choices."
             return 0
         fi
-        local backup="${env_file}.backup.$(date +%s)"
+        local backup
+        backup="${env_file}.backup.$(env_backup_timestamp)"
         cp "$env_file" "$backup"
         chmod 600 "$backup"
         rotate_env_backups "$env_file" 3
@@ -591,29 +742,54 @@ generate_env() {
         fi
         echo "IMAGE_TAG=${default_tag:-$(date '+%Y.%m.%d')}"
         echo ""
+
+        # AGENT_RUNTIME is written only for non-default runtimes; omitting it
+        # for claude keeps a default install byte-compatible with prior runs.
+        if [[ "$RUNTIME" != "claude" ]]; then
+            echo "# ==== Agent Runtime ===="
+            echo "AGENT_RUNTIME=$RUNTIME"
+            echo ""
+        fi
+
         echo "# ==== Claude Config Source (optional) ===="
         echo "# Set to a path inside the container to source config directly from a repo."
         echo "# Example: /project/claude-config/global"
         echo "#CLAUDE_CONFIG_SOURCE="
         echo ""
 
-        if [[ -n "$CLAUDE_VERSION" ]]; then
-            echo "# ==== Claude Code Version ===="
-            echo "CLAUDE_CODE_VERSION=$CLAUDE_VERSION"
+        if [[ -n "$RUNTIME_VERSION" ]]; then
+            echo "# ==== ${RUNTIME_DISPLAY_NAME} Version ===="
+            echo "${RUNTIME_BUILD_ARG}=$RUNTIME_VERSION"
             echo ""
         fi
 
         if [[ "$AUTH_PATH" == "B" ]]; then
+            # API-key variable prefix is resolved from the runtime registry.
+            local api_key_prefix
+            api_key_prefix=$(runtime_field "$RUNTIME" "apiKeyVarPrefix")
             echo "# ==== Path B: Console API Keys ===="
             for i in $(seq 1 "$NUM_ACCOUNTS"); do
                 local letter
                 letter=$(index_to_letter "$i")
                 local upper
-                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
-                echo "CLAUDE_API_KEY_${upper}=${API_KEYS[$((i-1))]}"
+                upper=$(index_to_upper "$i")
+                echo "${api_key_prefix}${upper}=${API_KEYS[$((i-1))]}"
             done
             echo ""
         fi
+
+        # Record the chosen tier as an explicit isolation mode. Resolution
+        # would infer worktree from PROJECT_DIR_A anyway, but writing the key
+        # means a user reading .env later sees the trust boundary stated
+        # instead of having to derive it from which other variables are set.
+        echo "# ==== Workspace isolation ===="
+        echo "# shared | worktree | isolated -- see docs/ISOLATION.md"
+        if [[ "$TIER" == "B" ]]; then
+            echo "ISOLATION_MODE=worktree"
+        else
+            echo "ISOLATION_MODE=shared"
+        fi
+        echo ""
 
         if [[ "$TIER" == "B" ]]; then
             echo "# ==== Tier B: Git Worktree Paths ===="
@@ -622,7 +798,7 @@ generate_env() {
                 local letter
                 letter=$(index_to_letter "$i")
                 local upper
-                upper=$(printf '%s' "$letter" | tr '[:lower:]' '[:upper:]')
+                upper=$(index_to_upper "$i")
                 echo "PROJECT_DIR_${upper}="
                 echo "CONTAINER_PROJECT_DIR_${upper}=/project-${letter}"
             done
@@ -640,21 +816,49 @@ generate_env() {
             echo ""
         fi
 
-        # GitHub CLI token (auto-detect from host)
-        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-            local gh_token
-            gh_token=$(gh auth token 2>/dev/null || true)
-            if [[ -n "$gh_token" ]]; then
-                echo "# ==== GitHub CLI ===="
-                echo "GH_TOKEN=$gh_token"
-                echo ""
-            fi
+        # Host timezone (auto-detect IANA name so container date/time matches host)
+        # Resolution order: explicit $TZ > /etc/localtime symlink > /etc/timezone file.
+        # Silent fallback to unset — compose generator defaults TZ to UTC.
+        local host_tz="${TZ:-}"
+        if [[ -z "$host_tz" ]] && [[ -L /etc/localtime ]]; then
+            host_tz=$(readlink /etc/localtime 2>/dev/null | sed -E 's|.*/zoneinfo/||')
+        fi
+        if [[ -z "$host_tz" ]] && [[ -f /etc/timezone ]]; then
+            host_tz=$(tr -d '[:space:]' < /etc/timezone 2>/dev/null || true)
+        fi
+        if [[ -n "$host_tz" ]]; then
+            echo "# ==== Timezone ===="
+            echo "TZ=$host_tz"
+            echo ""
         fi
 
-        # GitHub CLI config directory (for volume mount)
-        if [[ -d "$HOME/.config/gh" ]]; then
-            echo "GH_CONFIG_DIR=$HOME/.config/gh"
+        if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+            echo "# ==== GitHub CLI (per account) ===="
+            echo "GH_AUTH_MODE=per-account"
+            for i in $(seq 1 "$NUM_ACCOUNTS"); do
+                local upper
+                upper=$(index_to_upper "$i")
+                echo "GH_USER_${upper}=${GH_USERS[$((i-1))]}"
+                echo "GH_TOKEN_${upper}=${GH_TOKENS[$((i-1))]}"
+            done
             echo ""
+        else
+            # Shared GitHub CLI token (auto-detect from the active host account)
+            if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+                local gh_token
+                gh_token=$(gh auth token 2>/dev/null || true)
+                if [[ -n "$gh_token" ]]; then
+                    echo "# ==== GitHub CLI ===="
+                    echo "GH_TOKEN=$gh_token"
+                    echo ""
+                fi
+            fi
+
+            # Shared GitHub CLI config directory (for read-only volume mount)
+            if [[ -d "$HOME/.config/gh" ]]; then
+                echo "GH_CONFIG_DIR=$HOME/.config/gh"
+                echo ""
+            fi
         fi
 
         if [[ "$PLATFORM" == "linux" ]]; then
@@ -668,8 +872,30 @@ generate_env() {
 
     chmod 600 "$env_file"
     log_success ".env generated at $env_file (permissions: 600)"
+}
 
-    # Generate compose files from .env
+# --- Compose Generation --------------------------------------------------------
+
+# generate_compose_files runs the compose generator against the finished .env.
+#
+# This used to be the last thing generate_env did, which put it before
+# setup_worktrees in main(). For Tier B that meant handing the generator a .env
+# declaring ISOLATION_MODE=worktree with empty PROJECT_DIR_* placeholders, and
+# require_supported_isolation_mode refuses that by design (it does not
+# distinguish empty from unset). Under `set -euo pipefail` the refusal ended
+# the install. The ordering was structural, not a race: main() runs the two
+# steps five apart, so there was no value that could have been present.
+#
+# The generator is not wrong -- tests/test_isolation_modes.sh pins that exact
+# refusal as a contract. The installer was violating it, so the installer
+# moved.
+#
+# build_image still runs before this, on the committed docker-compose.yml. That
+# is deliberate and safe: the image does not depend on the account count, the
+# runtime or the isolation mode -- every service builds the one
+# claude-code-base image, and the only build argument is the runtime's
+# version pin, whose name the registry supplies (buildArg).
+generate_compose_files() {
     log_info "Generating compose files for $NUM_ACCOUNTS account(s)..."
     "$SCRIPT_DIR/generate-compose.sh"
 }
@@ -679,11 +905,20 @@ generate_env() {
 create_state_dirs() {
     log_step "Creating state directories"
 
-    local dirs=("$HOME/.claude")
+    # Host config directory and per-account state directory are both resolved
+    # from the runtime registry (see #273). The host config dir is the
+    # basename of containerHome (e.g. /home/node/.claude -> .claude); the
+    # state-dir name is the registry's stateDir field verbatim.
+    local container_home state_dir config_dir
+    container_home=$(runtime_field "$RUNTIME" "containerHome")
+    config_dir="${container_home##*/}"
+    state_dir=$(runtime_field "$RUNTIME" "stateDir")
+
+    local dirs=("$HOME/$config_dir")
     for i in $(seq 1 "$NUM_ACCOUNTS"); do
         local letter
         letter=$(index_to_letter "$i")
-        dirs+=("$HOME/.claude-state/account-${letter}")
+        dirs+=("$HOME/$state_dir/account-${letter}")
     done
 
     for dir in "${dirs[@]}"; do
@@ -698,9 +933,12 @@ create_state_dirs() {
         fi
     done
 
-    # Harden any existing credential files (Path A OAuth stores .credentials.json)
+    # Harden any existing credential files (Path A OAuth stores them under the
+    # account state dir; the filename is the registry's credentialFiles field).
+    local cred_file
+    cred_file=$(runtime_field "$RUNTIME" "credentialFiles")
     local cred_files
-    cred_files=$(find "$HOME/.claude-state" -name "*.credentials.json" -o -name ".credentials.json" 2>/dev/null || true)
+    cred_files=$(find "$HOME/$state_dir" -name "*${cred_file}" -o -name "$cred_file" 2>/dev/null || true)
     if [[ -n "$cred_files" ]]; then
         while IFS= read -r cfile; do
             chmod 600 "$cfile"
@@ -717,8 +955,8 @@ build_image() {
     cd "$PROJECT_ROOT"
 
     local build_args=""
-    if [[ -n "$CLAUDE_VERSION" ]]; then
-        build_args="--build-arg CLAUDE_CODE_VERSION=$CLAUDE_VERSION"
+    if [[ -n "$RUNTIME_VERSION" ]]; then
+        build_args="--build-arg ${RUNTIME_BUILD_ARG}=$RUNTIME_VERSION"
     fi
 
     log_info "Building claude-code-base:latest (this may take a few minutes)..."
@@ -745,17 +983,10 @@ build_tui() {
 
     if ! check_go; then
         log_warn "Go toolchain not available."
-        if prompt_confirm "Download prebuilt TUI binary from GitHub Releases?" "y"; then
-            if download_tui_release "$tui_dir/claude-docker-tui"; then
-                local size
-                size=$(du -h "$tui_dir/claude-docker-tui" | cut -f1)
-                log_success "TUI dashboard installed: tui/claude-docker-tui ($size)"
-                log_info "Launch with: scripts/claude-docker tui"
-                return 0
-            fi
-            log_warn "Prebuilt download failed."
-        fi
-        log_info "Install Go 1.21+ and re-run 'scripts/claude-docker build-tui' later."
+        # The prebuilt-binary offer that used to be here fetched
+        # releases/latest, and this repository publishes no releases -- so it
+        # could only fail, after asking the user to wait for it.
+        log_info "The TUI is built from source; install Go 1.24+ and re-run 'scripts/claude-docker build-tui' later."
         if prompt_confirm "Install Go automatically now?" "y"; then
             install_prerequisite go || {
                 log_warn "Failed to install Go. Skipping TUI build."
@@ -836,10 +1067,25 @@ setup_worktrees() {
             log_info "Switching to Tier A (shared bind mount)"
             TIER="A"
 
-            # Remove worktree placeholders from .env
+            # Remove worktree placeholders from .env and move the declared
+            # mode back to shared. Leaving ISOLATION_MODE=worktree behind
+            # would make the next run refuse to start, since the paths that
+            # mode requires have just been deleted.
             local env_file="$PROJECT_ROOT/.env"
             if [[ -f "$env_file" ]]; then
-                perl -i -ne 'print unless /^# ==== Tier B:/ || /^# \(populated after/ || /^PROJECT_DIR_A=/ || /^PROJECT_DIR_B=/ || /^CONTAINER_PROJECT_DIR_A=/ || /^CONTAINER_PROJECT_DIR_B=/' "$env_file"
+                # Built over the same range generate_env wrote, not the
+                # literals A and B: a 4-account install used to leave
+                # PROJECT_DIR_C= and PROJECT_DIR_D= behind. Every fragment
+                # comes from index_to_letter, so nothing user-supplied reaches
+                # the pattern.
+                local drop='^# ==== Tier B:|^# \(populated after'
+                local j upper_j
+                for j in $(seq 1 "$NUM_ACCOUNTS"); do
+                    upper_j=$(index_to_upper "$j")
+                    drop="${drop}|^PROJECT_DIR_${upper_j}=|^CONTAINER_PROJECT_DIR_${upper_j}="
+                done
+                perl -i -ne "print unless /$drop/" "$env_file"
+                set_env_value "$env_file" "ISOLATION_MODE" "shared"
             fi
 
             log_success "Switched to Tier A"
@@ -864,46 +1110,49 @@ setup_worktrees() {
         log_info "Project directory updated: $new_dir"
     done
 
-    local branch_a
-    local branch_b
-    branch_a=$(prompt_input "Branch name for Container A" "worktree-a")
-    branch_b=$(prompt_input "Branch name for Container B" "worktree-b")
+    # Driven by NUM_ACCOUNTS, matching the placeholders generate_env writes.
+    # This used to prompt for exactly two branches and write back exactly
+    # PROJECT_DIR_A and PROJECT_DIR_B, so a Tier B install with more than two
+    # accounts left the rest empty. Both callees already accept N --
+    # setup-worktrees.sh takes "$@" -- only the caller was fixed at two.
+    local branches=() letters=()
+    local i letter upper
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        letter=$(index_to_letter "$i")
+        upper=$(index_to_upper "$i")
+        letters+=("$letter")
+        branches+=("$(prompt_input "Branch name for Container ${upper}" "worktree-${letter}")")
+    done
 
     log_info "Creating worktrees..."
-    "$SCRIPT_DIR/setup-worktrees.sh" "$SOURCE_DIR" "$branch_a" "$branch_b"
+    # One invocation with the whole array: setup-worktrees.sh derives each
+    # worktree's letter from the branch's position, so splitting the call
+    # would restart the numbering at "a".
+    "$SCRIPT_DIR/setup-worktrees.sh" "$SOURCE_DIR" "${branches[@]}"
 
-    local worktree_a="${SOURCE_DIR%/}-a"
-    local worktree_b="${SOURCE_DIR%/}-b"
-
-    # Update .env with worktree paths
     local env_file="$PROJECT_ROOT/.env"
-    set_env_value "$env_file" "PROJECT_DIR_A" "$worktree_a"
-    set_env_value "$env_file" "PROJECT_DIR_B" "$worktree_b"
-
     log_success "Worktrees created:"
-    log_info "  A: $worktree_a (branch: $branch_a)"
-    log_info "  B: $worktree_b (branch: $branch_b)"
+    for i in "${!letters[@]}"; do
+        letter="${letters[$i]}"
+        upper=$(index_to_upper "$((i + 1))")
+        local worktree="${SOURCE_DIR%/}-${letter}"
+        set_env_value "$env_file" "PROJECT_DIR_${upper}" "$worktree"
+        log_info "  ${upper}: $worktree (branch: ${branches[$i]})"
+    done
 }
 
 # --- Compose Command Builder --------------------------------------------------
 
 # Populate the global COMPOSE_CMD array with `docker compose -f ...` so
 # callers invoke it as `"${COMPOSE_CMD[@]}" up -d` instead of building and
-# eval'ing a string. Matches the pattern already used by
-# scripts/claude-docker (see build_compose_cmd there). Array form preserves
-# quoting of paths containing spaces, which was the source of issue #155.
+# eval'ing a string. Array form preserves quoting of paths containing spaces,
+# which was the source of issue #155.
+#
+# build_compose_cmd() itself lives in lib/build-compose-cmd.sh (sourced near
+# the top of this script). It drives overlay selection from `uname -s` plus
+# the file-existence of the overlay files plus .env state for PROJECT_DIR_A,
+# matching the canonical logic in scripts/claude-docker.
 COMPOSE_CMD=()
-build_compose_cmd() {
-    COMPOSE_CMD=(docker compose -f "${PROJECT_ROOT}/docker-compose.yml")
-
-    if [[ "$PLATFORM" == "linux" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.linux.yml")
-    fi
-
-    if [[ "$TIER" == "B" ]]; then
-        COMPOSE_CMD+=(-f "${PROJECT_ROOT}/docker-compose.worktree.yml")
-    fi
-}
 
 # --- Container Startup --------------------------------------------------------
 
@@ -912,16 +1161,17 @@ start_containers() {
 
     cd "$PROJECT_ROOT"
 
+    # build_compose_cmd exports UID/GID itself when it selects the Linux
+    # overlay, using the readonly-safe `: "${UID:=$(id -u)}"` form. The block
+    # that used to be here duplicated that job with a plain `UID=$(id -u)`,
+    # which bash refuses because UID is a readonly special variable -- and
+    # under `set -euo pipefail` that ended the install one line before
+    # `docker compose up -d`, on native Linux only. install_dependencies has
+    # always relied on build_compose_cmd alone; this call site now matches it.
     build_compose_cmd
 
-    if [[ "$PLATFORM" == "linux" ]]; then
-        export UID GID
-        UID=$(id -u)
-        GID=$(id -g)
-    fi
-
     log_info "Compose command: ${COMPOSE_CMD[*]} up -d"
-    "${COMPOSE_CMD[@]}" up -d 2>&1
+    bash "$SCRIPT_DIR/claude-docker" up 2>&1 || return $?
 
     log_success "Containers started"
 }
@@ -943,12 +1193,16 @@ install_dependencies() {
 
     build_compose_cmd
 
+    # Service names use the runtime's registry servicePrefix (claude-a,
+    # codex-a, gemini-a, ...) so npm install targets the right containers.
+    local service_prefix
+    service_prefix=$(runtime_field "$RUNTIME" "servicePrefix")
     local services=()
     local n="${NUM_ACCOUNTS:-2}"
     for i in $(seq 1 "$n"); do
         local letter
         letter=$(index_to_letter "$i")
-        services+=("claude-${letter}")
+        services+=("${service_prefix}-${letter}")
     done
 
     for svc in "${services[@]}"; do
@@ -969,7 +1223,13 @@ run_verification() {
     cd "$PROJECT_ROOT"
 
     build_compose_cmd
-    local primary_svc="claude-a"
+
+    # The primary service name and the runtime binary are resolved from the
+    # registry (claude-a/claude, codex-a/codex, gemini-a/gemini — see #273).
+    local service_prefix runtime_binary primary_svc
+    service_prefix=$(runtime_field "$RUNTIME" "servicePrefix")
+    runtime_binary=$(runtime_field "$RUNTIME" "binary")
+    primary_svc="${service_prefix}-a"
 
     # Check container is running
     if "${COMPOSE_CMD[@]}" ps --format '{{.Name}}' 2>/dev/null | grep -q "$primary_svc"; then
@@ -980,19 +1240,44 @@ run_verification() {
         return 1
     fi
 
-    # Check Claude Code is available
-    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude --version 2>/dev/null; then
-        log_success "Claude Code is available"
+    # Check the runtime CLI is available
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" "$runtime_binary" --version 2>/dev/null; then
+        log_success "$runtime_binary is available"
     else
-        log_warn "Could not verify Claude Code (container may still be starting)"
+        log_warn "Could not verify $runtime_binary (container may still be starting)"
     fi
 
     # Check auth status
-    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" claude auth status 2>/dev/null; then
+    if "${COMPOSE_CMD[@]}" exec -T "$primary_svc" "$runtime_binary" auth status 2>/dev/null; then
         log_success "Authentication verified"
     else
         log_warn "Authentication not verified (may need browser login or API key check)"
     fi
+
+    # Verify the GitHub login independently in every running service. Login
+    # mismatches are warnings so normal startup remains non-blocking.
+    local i letter upper svc actual expected
+    for i in $(seq 1 "$NUM_ACCOUNTS"); do
+        letter=$(index_to_letter "$i")
+        upper=$(index_to_upper "$i")
+        svc="${service_prefix}-${letter}"
+        if [[ -z "$("${COMPOSE_CMD[@]}" ps -q "$svc" 2>/dev/null)" ]]; then
+            continue
+        fi
+        if ! actual=$("${COMPOSE_CMD[@]}" exec -T "$svc" gh api user --jq .login 2>/dev/null) || [[ -z "$actual" ]]; then
+            log_warn "$svc: GitHub authentication is not configured"
+            continue
+        fi
+        if [[ "$GH_AUTH_MODE" == "per-account" ]]; then
+            expected="${GH_USERS[$((i-1))]}"
+            if [[ "$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')" != \
+                  "$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')" ]]; then
+                log_warn "$svc: GitHub login mismatch (actual: $actual, expected: $expected)"
+                continue
+            fi
+        fi
+        log_success "$svc: GitHub login verified ($actual)"
+    done
 }
 
 # --- Summary ------------------------------------------------------------------
@@ -1051,7 +1336,7 @@ print_summary() {
 
     echo ""
     echo -e "${BOLD}Compose command for this setup:${NC}"
-    echo -e "  ${GREEN}$compose_cmd up -d${NC}"
+    echo -e "  ${GREEN}${COMPOSE_CMD[*]} up -d${NC}"
     echo ""
 }
 
@@ -1093,7 +1378,7 @@ main() {
     echo -e "  Authentication:  Path $AUTH_PATH"
     echo -e "  Source sharing:  Tier $TIER"
     echo -e "  Project:         $SOURCE_DIR"
-    echo -e "  Claude version:  ${CLAUDE_VERSION:-latest}"
+    echo -e "  ${RUNTIME_DISPLAY_NAME} version:  ${RUNTIME_VERSION:-latest}"
     echo ""
 
     if ! prompt_confirm "Proceed with this configuration?" "y"; then
@@ -1109,10 +1394,15 @@ main() {
     build_tui
     run_authentication
     setup_worktrees
+    # After setup_worktrees, so a Tier B .env has its PROJECT_DIR_* populated
+    # before the generator validates the mode it declares.
+    generate_compose_files
     start_containers
     install_dependencies
     run_verification
     print_summary
 }
 
-main "$@"
+if [[ "${CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY:-0}" != "1" ]]; then
+    main "$@"
+fi

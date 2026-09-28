@@ -4,181 +4,105 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/auth"
 	"github.com/kcenon/claude-docker/tui/internal/config"
 	"github.com/kcenon/claude-docker/tui/internal/docker"
-	"github.com/kcenon/claude-docker/tui/internal/usage"
 )
 
+type containerLister interface {
+	PS() ([]docker.ContainerInfo, error)
+}
+
 // Manager provides CRUD operations on accounts.
+//
+// The usageCache field is gone with the JSONL pipeline it served (#358, item
+// 14), and internal/usage went with it once that decision was taken on its own
+// terms: a package no production path reaches, kept alive by a benchmark whose
+// only subject was the package itself, described in the present tense by two
+// documents that were no longer true. Git history has it if the pipeline is
+// ever wanted back.
 type Manager struct {
 	env    *config.Env
-	client *docker.Client
+	client containerLister
+	// cooldowns tracks per-account API backoff in memory. It was a file in
+	// each state directory until #358; see apiCooldowns for why that was a
+	// worse place for a 25-second value with no cross-process reader.
+	cooldowns *apiCooldowns
 }
 
 // NewManager creates an account manager.
-func NewManager(env *config.Env, client *docker.Client) *Manager {
-	return &Manager{env: env, client: client}
+func NewManager(env *config.Env, client containerLister) *Manager {
+	return &Manager{
+		env:       env,
+		client:    client,
+		cooldowns: newAPICooldowns(),
+	}
 }
 
 // ListAccounts returns all configured accounts with enriched runtime status.
+//
+// The method is a thin orchestrator over five focused helpers (defined in
+// manager_helpers.go); each helper owns one phase of the listing workflow.
+// Non-fatal phases still degrade gracefully rather than aborting the listing.
+//
+// It used to return a nil error unconditionally, which is what left
+// Model.err with no writer and the error screen in view.go unreachable
+// (#358, item 9). The docker error is now reported, because the two states it
+// used to collapse together want different responses from the operator:
+//
+//   - docker cannot be reached: nothing is running, `u` will not help, and the
+//     fix is outside the dashboard;
+//   - docker answered and there are no containers: `u` is exactly the fix.
+//
+// Accounts are returned alongside the error rather than instead of them. A
+// caller that can show a partial view should; view.go shows the table with a
+// warning when both are present, and the error screen only when there is
+// nothing else to draw.
 func (m *Manager) ListAccounts() ([]Account, error) {
-	n := m.env.NumAccounts()
-
-	// Get state dirs
-	stateDirs, _ := config.DiscoverStateDirs()
-	stateDirMap := make(map[string]config.StateDir)
-	for _, sd := range stateDirs {
-		stateDirMap[sd.Letter] = sd
-		// Auto-detect accounts: extend n to cover discovered state dirs
-		if idx := config.LetterToIndex(sd.Letter); idx > n {
-			n = idx
-		}
+	stateDirs, n := m.discoverStateDirs()
+	containerMap, dockerErr := m.fetchContainerStatus()
+	accounts := m.buildAccounts(n, stateDirs, containerMap)
+	apiResults := m.enrichAccounts(accounts)
+	m.writeCacheUpdates(accounts, apiResults)
+	if dockerErr != nil {
+		return accounts, fmt.Errorf("container status unavailable: %w", dockerErr)
 	}
-
-	// Get container status
-	containers, _ := m.client.PS()
-	containerMap := make(map[string]docker.ContainerInfo)
-	for _, c := range containers {
-		containerMap[c.Service] = c
-	}
-
-	accounts := make([]Account, n)
-	for i := 1; i <= n; i++ {
-		letter := config.IndexToLetter(i)
-		svcName := "claude-" + letter
-
-		acct := Account{
-			Letter:      letter,
-			ServiceName: svcName,
-		}
-
-		// Resolve state directory
-		if sd, ok := stateDirMap[letter]; ok {
-			acct.StateDirPath = sd.Path
-			acct.AuthType = detectAuthType(sd, m.env, letter)
-
-			// Parse limitline cache for usage data (only from this account's own cache)
-			if sd.HasLimitlineCache() {
-				acct.FiveHourUsage, acct.SevenDayUsage = parseLimitlineCache(sd.LimitlineCachePath())
-			}
-
-			// JSONL token summary (always populated when data exists)
-			if sessions, err := usage.ScanAccountSessions(sd.ProjectsDir()); err == nil && len(sessions) > 0 {
-				opts := usage.AllTimeOptions()
-				tokens := usage.AggregateSessions(sessions, opts)
-				count := usage.CountFilteredSessions(sessions, opts)
-				acct.Tokens = &TokenSummary{
-					InputTokens:  tokens.InputTokens,
-					OutputTokens: tokens.OutputTokens,
-					CacheTokens:  tokens.CacheCreationInputTokens + tokens.CacheReadInputTokens,
-					SessionCount: count,
-				}
-			}
-		}
-
-		// Resolve container status
-		if ci, ok := containerMap[svcName]; ok {
-			acct.ContainerID = ci.ID
-			switch strings.ToLower(ci.State) {
-			case "running":
-				acct.ContainerStatus = ContainerRunning
-			default:
-				acct.ContainerStatus = ContainerStopped
-			}
-		}
-
-		accounts[i-1] = acct
-	}
-
-	// Parallel enrichment: GH auth check + API usage fetch for accounts missing limitline
-	var wg sync.WaitGroup
-	for i := range accounts {
-		acct := &accounts[i]
-
-		// GH auth check (running containers only)
-		if acct.ContainerStatus == ContainerRunning && acct.ContainerID != "" {
-			wg.Add(1)
-			go func(a *Account) {
-				defer wg.Done()
-				cmd := exec.Command("docker", "exec", a.ContainerID, "gh", "auth", "status")
-				out, _ := cmd.CombinedOutput()
-				if strings.Contains(string(out), "Logged in") {
-					a.GHAuthOK = true
-				}
-			}(acct)
-		}
-
-		// Fetch usage from API when limitline cache is missing but credentials exist.
-		// Skip if API was recently rate-limited (short cooldown per account).
-		if acct.AuthType == AuthOAuth && acct.StateDirPath != "" {
-			if acct.FiveHourUsage != nil {
-				acct.LastAPIStatus = "cached (fresh)"
-			} else if isAPICooldownActive(acct.StateDirPath) {
-				acct.APIRateLimited = true
-				acct.LastAPIStatus = "skipped (cooldown active)"
-			} else {
-				wg.Add(1)
-				go func(a *Account) {
-					defer wg.Done()
-					sd := config.StateDir{Letter: a.Letter, Path: a.StateDirPath}
-					token, err := auth.ReadOAuthToken(sd.CredentialsPath())
-					if err != nil {
-						a.LastAPIStatus = fmt.Sprintf("token err: %v", err)
-						return
-					}
-					apiResp, err := auth.FetchUsage(token)
-					if err != nil {
-						var rlErr *auth.RateLimitError
-						if errors.As(err, &rlErr) {
-							writeAPICooldown(a.StateDirPath)
-							a.APIRateLimited = true
-							a.LastAPIStatus = "HTTP 429 (rate limited)"
-						} else {
-							a.LastAPIStatus = fmt.Sprintf("err: %v", err)
-						}
-						return
-					}
-					a.LastAPIStatus = "HTTP 200 (fresh)"
-					if apiResp.FiveHour != nil {
-						a.FiveHourUsage = &UsageBucket{
-							PercentUsed: int(apiResp.FiveHour.Utilization),
-							IsOverLimit: apiResp.FiveHour.Utilization >= 100,
-							ResetAt:     apiResp.FiveHour.ResetsAt,
-						}
-					}
-					if apiResp.SevenDay != nil {
-						a.SevenDayUsage = &UsageBucket{
-							PercentUsed: int(apiResp.SevenDay.Utilization),
-							IsOverLimit: apiResp.SevenDay.Utilization >= 100,
-							ResetAt:     apiResp.SevenDay.ResetsAt,
-						}
-					}
-					// Cache to disk so future loads don't need API
-					writeLimitlineCache(sd.LimitlineCachePath(), apiResp)
-				}(acct)
-			}
-		}
-	}
-	wg.Wait()
-
 	return accounts, nil
 }
 
+// detectAuthType resolves an account's authentication method from the
+// runtime registry, with no per-runtime branching. Runtimes that expose a
+// Claude-style OAuth usage endpoint (SupportsUsage) treat an OAuth
+// credential as AuthOAuth and rank it above an API key; other runtimes
+// treat the credential as opaque login state (AuthLogin) and rank an API
+// key first. A nil env degrades to a Claude-shaped lookup.
 func detectAuthType(sd config.StateDir, env *config.Env, letter string) AuthType {
-	if sd.HasCredentials() {
-		return AuthOAuth
+	spec, _ := config.LookupRuntime(config.RuntimeClaude)
+	apiKey := ""
+	if env != nil {
+		spec = env.RuntimeSpec()
+		apiKey = env.APIKey(letter)
 	}
-	if env.APIKey(letter) != "" {
+	if spec.SupportsUsage {
+		if sd.HasAnyCredential(spec) {
+			return AuthOAuth
+		}
+		if apiKey != "" {
+			return AuthAPIKey
+		}
+		return AuthNone
+	}
+	if apiKey != "" {
 		return AuthAPIKey
+	}
+	if sd.HasAnyCredential(spec) {
+		return AuthLogin
 	}
 	return AuthNone
 }
@@ -247,8 +171,11 @@ func isResetPassed(resetAt string, now time.Time) bool {
 	return now.After(t)
 }
 
-// writeLimitlineCache writes API response to disk in the same format as claude-limitline.
-func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) {
+// writeLimitlineCache writes API response to disk in the same format as
+// claude-limitline. Returns an error so the caller can decide; the write is
+// still best-effort, but "best-effort" now means a caller chose to ignore it
+// rather than the function having nothing to report.
+func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) error {
 	cache := map[string]interface{}{
 		"timestamp": time.Now().UnixMilli(),
 		"usage": map[string]interface{}{
@@ -277,38 +204,168 @@ func writeLimitlineCache(path string, resp *auth.UsageAPIResponse) {
 
 	data, err := json.Marshal(cache)
 	if err != nil {
-		return
+		return fmt.Errorf("marshal limitline cache: %w", err)
 	}
-	os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data)
 }
 
-const apiCooldownFile = ".tui-api-cooldown"
+// writeFileAtomic writes data to path through a temp file in the same
+// directory, chmods it 0600, and renames it into place (#358, item 5).
+//
+// Two reasons, both real for limitline-usage-cache.json:
+//
+//   - The host's claude-limitline tool writes the same file. os.WriteFile
+//     truncates and then writes, so a read interleaved with it sees a
+//     truncated document; parseLimitlineCache returns (nil, nil) for that and
+//     the dashboard draws "--" with nothing said about why. A rename is
+//     atomic, so a reader sees either the old file or the new one.
+//   - 0644 made a file describing an account's API usage world-readable. 0600
+//     matches what Env.Save already does for .env, and what install.sh sets
+//     for the credentials file next to it.
+//
+// The sequence is Env.Save's; it existed in-tree and was simply not applied
+// here.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Removes the temp file on every failure path below; a no-op once the
+	// rename has consumed it.
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		return fmt.Errorf("chmod tmp: %w", err)
+	}
+	if err := renameRetryingSharingViolation(func() error {
+		return os.Rename(tmpName, path)
+	}); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
+const (
+	// How long renameRetryingSharingViolation keeps trying, and how long it
+	// waits between attempts. Measured against a reader looping with no pause
+	// at all -- the worst case this code can face -- the rename succeeded
+	// within 13 attempts, about 65ms. Two seconds is headroom, not a target.
+	renameRetryBudget = 2 * time.Second
+	renameRetryPause  = 5 * time.Millisecond
+)
+
+// renameRetryingSharingViolation calls rename until it succeeds, fails for a
+// reason retrying cannot fix, or the budget runs out.
+//
+// This exists for Windows. os.Rename there is MoveFileEx, and it fails with
+// "Access is denied" whenever another handle has the destination open, because
+// Go's os.Open does not request FILE_SHARE_DELETE. Measured, not assumed: with
+// no reader the rename succeeds; with a plain os.Open held on the destination
+// the same rename fails.
+//
+// It is a regression this file introduced. os.WriteFile truncated in place and
+// did not care about readers, so switching to a rename traded "a reader can
+// see a torn file" for "a write can fail" -- and the same change stopped
+// discarding write errors, so the failure now reaches the user. A reader holds
+// the handle for microseconds, which makes the violation transient by nature
+// and a bounded retry the right shape of fix.
+//
+// The gate is the error, not the platform, so the loop is reachable from a
+// test on any OS -- see rename_retry_test.go, which injects a rename that
+// fails a fixed number of times. On POSIX the condition effectively cannot
+// arise here anyway: the temp file is created in the destination's own
+// directory, so a directory this process cannot write to fails at CreateTemp
+// long before the rename. If some other permission error did occur there, the
+// cost is one delayed failure, not a wrong answer.
+func renameRetryingSharingViolation(rename func() error) error {
+	err := rename()
+	if err == nil || !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+
+	deadline := time.Now().Add(renameRetryBudget)
+	for time.Now().Before(deadline) {
+		time.Sleep(renameRetryPause)
+		err = rename()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			return err
+		}
+	}
+	// Say that retrying happened. Otherwise the message is identical to the
+	// one a single failed attempt produces, and the reader cannot tell a
+	// momentary collision from a file that is permanently unwritable.
+	return fmt.Errorf("%w (still denied after retrying for %s; another process may be holding the file open)",
+		err, renameRetryBudget)
+}
+
 const apiCooldownDuration = 25 * time.Second
 
-// isAPICooldownActive returns true if the API was recently rate-limited
-// and we should skip retrying for this account.
-func isAPICooldownActive(stateDirPath string) bool {
-	data, err := os.ReadFile(filepath.Join(stateDirPath, apiCooldownFile))
-	if err != nil {
-		return false
-	}
-	ts, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return false
-	}
-	return time.Since(time.UnixMilli(ts)) < apiCooldownDuration
+// apiCooldowns records, per account letter, when the usage API last returned
+// 429 (#358, item 5).
+//
+// This used to be a .tui-api-cooldown file in each account state directory.
+// Nothing else in the repository reads that file -- no script, no other Go
+// package -- and the value lives for 25 seconds, so the filesystem bought
+// nothing and cost two things: a read-only state directory made every write
+// fail with no signal at all, and the stale files outlived the process that
+// wrote them.
+//
+// Guarded by its own mutex because enrichAPIUsage records a 429 from a
+// per-account goroutine while the others are still running.
+type apiCooldowns struct {
+	mu sync.Mutex
+	at map[string]time.Time
 }
 
-// writeAPICooldown records that the API returned 429 for this account.
-func writeAPICooldown(stateDirPath string) {
-	ts := fmt.Sprintf("%d", time.Now().UnixMilli())
-	os.WriteFile(filepath.Join(stateDirPath, apiCooldownFile), []byte(ts), 0644)
+func newAPICooldowns() *apiCooldowns {
+	return &apiCooldowns{at: make(map[string]time.Time)}
 }
 
-// ClearAPICooldowns removes all API cooldown files so the next refresh retries the API.
+// active reports whether this account is still inside its backoff window.
+func (c *apiCooldowns) active(letter string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t, ok := c.at[letter]
+	return ok && time.Since(t) < apiCooldownDuration
+}
+
+// record marks this account as rate-limited as of now.
+func (c *apiCooldowns) record(letter string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at[letter] = time.Now()
+}
+
+// clearExpired drops only the entries whose window has elapsed.
+func (c *apiCooldowns) clearExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for letter, t := range c.at {
+		if time.Since(t) >= apiCooldownDuration {
+			delete(c.at, letter)
+		}
+	}
+}
+
+// ClearAPICooldowns drops expired cooldowns so the next refresh retries the
+// API for those accounts.
+//
+// Expired ones only. The `r` key called this unconditionally, which cleared a
+// cooldown recorded a second ago and re-issued the call the 429 was telling us
+// to stop making -- the 25s backoff existed but any keypress skipped it
+// (#358, item 10 is the same defect seen from update.go).
 func (m *Manager) ClearAPICooldowns() {
-	stateDirs, _ := config.DiscoverStateDirs()
-	for _, sd := range stateDirs {
-		os.Remove(filepath.Join(sd.Path, apiCooldownFile))
-	}
+	m.cooldowns.clearExpired()
 }

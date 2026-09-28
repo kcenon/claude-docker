@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "kind": "local budget review and integration-control verification",
+  "recorded_at": "2026-09-09T23:47:57.738528+00:00",
+  "host": {
+    "system": "Darwin",
+    "release": "27.0.0",
+    "version": "Darwin Kernel Version 27.0.0: Tue Aug 11 22:03:09 PDT 2026; root:xnu-13432.1.9~3/RELEASE_ARM64_T6041",
+    "architecture": "arm64",
+    "python": "3.9.6"
+  },
+  "source_commit": "6a85de92cf8fc4d515edb74f7d798166abb16c6d",
+  "source_dirty": true,
+  "sha256": {
+    "tests/test_budget_review.py": "1ad2e960ade4a0ae104a9d3ba42cfe529b92f4e115e381da204124f1eb84430e",
+    "docs/benchmarks/issue-335/budget-review.json": "0643df94da105d2d61c559d2ee423c4e03e9f17d38fe9c3e10ebac2868a2d0a5",
+    "docs/benchmarks/issue-335/container-linux-x86_64-claude.json": "7de3c5abdd2abd3b6903c9657424c22b2dff17e89fe938cc9e01b4b11afeeb9e",
+    "docs/benchmarks/issue-335/dashboard-darwin-arm64.json": "0a0172f8304d880b7e2c7a05090bb57c4610b0ed33d317dfe4e6fc11cd180b53"
+  },
+  "source_scope": "Uncommitted test/documentation follow-up on source_commit; changed test file identified by sha256. Runtime code is the baseline tree.",
+  "toolchain": {
+    "go": "go1.27.1 darwin/arm64",
+    "bash": "3.2.57",
+    "powershell": "7.6.3",
+    "docker_cli": "29.8.0",
+    "compose": "5.5.1",
+    "docker_daemon_available": false,
+    "task_local_tool_root": "/tmp/claude-docker-335-tools"
+  },
+  "status": "available_local_checks_passed",
+  "suites": [
+    {
+      "name": "budget-review",
+      "command": "python3 tests/test_budget_review.py",
+      "exit_code": 0,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "total": 10
+    },
+    {
+      "name": "workflow-coverage",
+      "command": "python3 tests/test_workflow_coverage.py",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "total": 8
+    },
+    {
+      "name": "workflow-support",
+      "command": "python3 tests/test_workflow_support.py",
+      "exit_code": 0,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "total": 8
+    },
+    {
+      "name": "workflow-scenarios",
+      "command": "python3 tests/test_workflow_scenarios.py",
+      "exit_code": 0,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "total": 5
+    },
+    {
+      "name": "workflow-environment",
+      "command": "python3 tests/test_workflow_environment.py",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "total": 3
+    },
+    {
+      "name": "credential-file",
+      "command": "python3 tests/test_credential_file.py",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 2,
+      "total": 5
+    },
+    {
+      "name": "terminal-support",
+      "command": "python3 tests/run_terminal_suite.py test_terminal_support.py",
+      "exit_code": 0,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "total": 7
+    },
+    {
+      "name": "tui-terminal",
+      "command": "python3 tests/run_terminal_suite.py test_tui_terminal.py",
+      "exit_code": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "total": 3
+    }
+  ],
+  "counts": {
+    "suites": 8,
+    "passed": 47,
+    "failed": 0,
+    "skipped": 2,
+    "total": 49
+  },
+  "skips": [
+    {
+      "suite": "credential-file",
+      "count": 2,
+      "reason": "Native Windows DACL tests do not execute on macOS."
+    }
+  ],
+  "regression": {
+    "baseline_commit": "6a85de92cf8fc4d515edb74f7d798166abb16c6d",
+    "method": "Subclass BudgetReviewTest and replace its input record after setUp with a valid synthetic accepted decision. Execute the unchanged original suite.",
+    "before": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "observed_failures": [
+        "'pending' != 'accepted'",
+        "Expected validation exception not raised."
+      ]
+    },
+    "after": {
+      "method": "Run the updated entire suite with its input record replaced after setUp by each synthetic decision.",
+      "accepted": {
+        "tests": 10,
+        "passed": 10
+      },
+      "rejected": {
+        "tests": 10,
+        "passed": 10
+      }
+    },
+    "publication": "All decision substitutions occurred in memory or disposable CLI fixture files; the published review was not modified."
+  },
+  "compose": {
+    "command": "python3 tests/test_resolved_boundaries.py",
+    "exit_code": 0,
+    "resolved_models": 18,
+    "fixture_preparations": 9,
+    "live_containers": 0
+  },
+  "retained_benchmark": {
+    "command": "python3 tests/benchmark_report.py docs/benchmarks/issue-335/container-linux-x86_64-claude.json --require-full",
+    "exit_code": 0,
+    "status": "valid",
+    "scope": "full matrix",
+    "executed_cells": 9,
+    "measured_samples": 45,
+    "budget_review": "pending",
+    "operation": "Validation of retained measurements; no new benchmark executed."
+  },
+  "published_review": {
+    "command": "python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json",
+    "exit_code": 0,
+    "status": "valid",
+    "budget_review": "pending",
+    "profiles": 2,
+    "decision_authenticity": "requires checking the linked maintainer decision",
+    "strict_acceptance": {
+      "command": "python3 tests/budget_review.py docs/benchmarks/issue-335/budget-review.json --require-accepted",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "status": "invalid_or_unaccepted"
+    }
+  },
+  "not_run": [
+    {
+      "scope": "Authenticated provider sessions, identity checks and remote pushes",
+      "reason": "Purpose-provided private credential file, enabled model/account mappings and disposable remote were not supplied; no local Docker daemon was reachable."
+    },
+    {
+      "scope": "Live Docker Desktop, WSL2, Linux Engine, rootless and compatible inner-sandbox workflows",
+      "reason": "Required live hosts/backends were not supplied. Local native terminal tests use controlled process fixtures."
+    },
+    {
+      "scope": "Maintainer performance-budget acceptance",
+      "reason": "The latest issue and published review remain pending; no explicit decision link was supplied."
+    }
+  ],
+  "issue_completion": {
+    "checked": 15,
+    "total": 17,
+    "status": "open",
+    "source": "https://github.com/kcenon/claude-docker/issues/335#issuecomment-5609296427"
+  }
+}

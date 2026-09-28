@@ -7,3 +7,6 @@ build
 .env.*
 .claude/
 .claude-state/
+.claude-docker-lifecycle/
+**/__pycache__/
+**/*.py[cod]
