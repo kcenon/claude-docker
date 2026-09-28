@@ -115,12 +115,12 @@ ENV PATH="/home/node/.local/bin:${PATH}"
 # block bug fixes without a security benefit. CODEX_CLI_VERSION and
 # GEMINI_CLI_VERSION are available when reproducibility is preferred.
 # hadolint ignore=DL3016
-RUN if [[ -n "${CODEX_CLI_VERSION:-}" ]]; then \
+RUN if [ -n "${CODEX_CLI_VERSION:-}" ]; then \
         npm install -g "@openai/codex@${CODEX_CLI_VERSION}" ccstatusline claude-limitline; \
     else \
         npm install -g @openai/codex ccstatusline claude-limitline; \
     fi \
-    && if [[ -n "${GEMINI_CLI_VERSION:-}" ]]; then \
+    && if [ -n "${GEMINI_CLI_VERSION:-}" ]; then \
         npm install -g "@google/gemini-cli@${GEMINI_CLI_VERSION}"; \
     else \
         npm install -g @google/gemini-cli; \
@@ -152,7 +152,13 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 # only, never on plain files) keeps the tree writable regardless of which
 # UID the compose file chooses. gh mounts its own subdir read-only at
 # runtime, so loosening the parent does not affect gh's token security.
+#
+# /home/node itself is set to 0755 for the same reason. Debian trixie (the
+# base of node:26) creates home directories 0700, which stops any UID other
+# than node from traversing into the account bind mounts beneath it; the
+# entrypoint then reports /home/node/.claude as not writable.
 RUN mkdir -p /home/node/.config/ccstatusline \
+    && chmod 0755 /home/node \
     && chmod -R a+rwX /home/node/.config
 
 # Copy entrypoint script (symlinks host config into account state dir).
