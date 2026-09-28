@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     E2E test: Tier B concurrent git safety (Windows PowerShell port).
@@ -13,6 +13,14 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this Windows harness
+# invokes Compose without docker-compose.linux.yml. On Linux that skips UID/GID
+# mapping, so a pass can hide incorrect ownership in the generated worktrees.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "test-concurrent-git.ps1 is Windows-only. Use ./scripts/test-concurrent-git.sh on macOS or Linux."
+    exit 1
+}
 
 $ScriptDir = $PSScriptRoot
 $ProjectDir = Split-Path $ScriptDir -Parent

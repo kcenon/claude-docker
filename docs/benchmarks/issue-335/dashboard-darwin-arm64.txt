@@ -1,0 +1,66 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/kcenon/claude-docker/tui/internal/account
+cpu: Apple M4 Max
+BenchmarkListAccounts/accounts=1/history=10/cache=256-14         	    4008	     29923 ns/op	    5103 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=256-14         	    3921	     30204 ns/op	    5097 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=256-14         	    3396	     30746 ns/op	    5101 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=256-14         	    3933	     30218 ns/op	    5099 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=256-14         	    3829	     29922 ns/op	    5098 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=65536-14       	    1632	     71109 ns/op	   78432 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=65536-14       	    1676	     71760 ns/op	   78433 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=65536-14       	    1443	     71287 ns/op	   78461 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=65536-14       	    1654	     70832 ns/op	   78442 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10/cache=65536-14       	    1665	     71007 ns/op	   78435 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=256-14      	    3968	     30704 ns/op	    5133 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=256-14      	    3669	     30588 ns/op	    5134 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=256-14      	    3831	     30467 ns/op	    5133 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=256-14      	    3864	     30588 ns/op	    5132 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=256-14      	    3859	     30977 ns/op	    5134 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=65536-14    	    1610	     71546 ns/op	   78457 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=65536-14    	    1581	     71823 ns/op	   78425 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=65536-14    	    1557	     72176 ns/op	   78466 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=65536-14    	    1544	     71667 ns/op	   78422 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=1/history=10000/cache=65536-14    	    1561	     71732 ns/op	   78450 B/op	      42 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=256-14         	    2520	     47148 ns/op	    8202 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=256-14         	    2156	     47656 ns/op	    8202 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=256-14         	    2454	     47131 ns/op	    8199 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=256-14         	    2524	     47925 ns/op	    8210 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=256-14         	    2200	     47058 ns/op	    8199 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=65536-14       	     930	    129066 ns/op	  154873 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=65536-14       	     876	    128897 ns/op	  154876 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=65536-14       	     914	    128481 ns/op	  154851 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=65536-14       	     868	    128733 ns/op	  154866 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10/cache=65536-14       	     919	    128765 ns/op	  154837 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=256-14      	    2490	     47656 ns/op	    8236 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=256-14      	    2443	     62673 ns/op	    8239 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=256-14      	    2510	     47971 ns/op	    8245 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=256-14      	    2499	     47708 ns/op	    8236 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=256-14      	    2497	     47131 ns/op	    8236 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=65536-14    	     886	    129076 ns/op	  154880 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=65536-14    	     894	    129606 ns/op	  154839 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=65536-14    	     902	    129563 ns/op	  154904 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=65536-14    	     880	    129866 ns/op	  154920 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=2/history=10000/cache=65536-14    	     896	    129754 ns/op	  154893 B/op	      71 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=256-14         	    1435	     81703 ns/op	   14232 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=256-14         	    1456	     81403 ns/op	   14246 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=256-14         	    1512	     82308 ns/op	   14241 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=256-14         	    1490	     81876 ns/op	   14241 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=256-14         	    1519	     82582 ns/op	   14234 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=65536-14       	     484	    244626 ns/op	  307483 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=65536-14       	     489	    246480 ns/op	  307456 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=65536-14       	     487	    245308 ns/op	  307524 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=65536-14       	     487	    244886 ns/op	  307447 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10/cache=65536-14       	     488	    244885 ns/op	  307475 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=256-14      	    1438	     80934 ns/op	   14271 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=256-14      	    1396	     81537 ns/op	   14269 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=256-14      	    1461	     80813 ns/op	   14271 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=256-14      	    1441	     81854 ns/op	   14271 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=256-14      	    1393	     81114 ns/op	   14269 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=65536-14    	     482	    245297 ns/op	  307496 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=65536-14    	     477	    245209 ns/op	  307561 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=65536-14    	     480	    248150 ns/op	  307585 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=65536-14    	     476	    245235 ns/op	  307486 B/op	     123 allocs/op
+BenchmarkListAccounts/accounts=4/history=10000/cache=65536-14    	     481	    247169 ns/op	  307573 B/op	     123 allocs/op
+PASS
+ok  	github.com/kcenon/claude-docker/tui/internal/account	202.268s

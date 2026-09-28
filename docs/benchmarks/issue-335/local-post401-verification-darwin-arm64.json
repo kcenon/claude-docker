@@ -1,0 +1,276 @@
+{
+  "schema": 1,
+  "kind": "post401-available-execution",
+  "started_at": "2026-09-10T13:09:17.336678+00:00",
+  "source_commit": "7eeeb90baaf6aa26264560a6c93a38f8793acbe8",
+  "source_tree": "a84eb483efde9e0a243fe39cca742db769fdaff1",
+  "source_dirty_at_start": false,
+  "host": "macOS-27.0-arm64-arm-64bit",
+  "tool_root": "/tmp/claude-docker-335-tools",
+  "compose_config_scope": "task-local plugin discovery for daemon-free checks",
+  "live_executions": {
+    "containers": 0,
+    "provider_sessions": 0,
+    "remote_pushes": 0,
+    "sandbox_sessions": 0
+  },
+  "checks": [
+    {
+      "name": "test_budget_review.py",
+      "command": [
+        "python3",
+        "tests/test_budget_review.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 14,
+      "skipped": 0,
+      "passed": 14,
+      "elapsed_seconds": 2.454
+    },
+    {
+      "name": "test_benchmark_harness.py",
+      "command": [
+        "python3",
+        "tests/test_benchmark_harness.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 6,
+      "skipped": 0,
+      "passed": 6,
+      "elapsed_seconds": 0.109
+    },
+    {
+      "name": "test_benchmark_report.py",
+      "command": [
+        "python3",
+        "tests/test_benchmark_report.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 7,
+      "skipped": 0,
+      "passed": 7,
+      "elapsed_seconds": 0.124
+    },
+    {
+      "name": "test_credential_file.py",
+      "command": [
+        "python3",
+        "tests/test_credential_file.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 5,
+      "skipped": 2,
+      "passed": 3,
+      "elapsed_seconds": 0.047
+    },
+    {
+      "name": "test_workflow_support.py",
+      "command": [
+        "python3",
+        "tests/test_workflow_support.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 8,
+      "skipped": 0,
+      "passed": 8,
+      "elapsed_seconds": 0.079
+    },
+    {
+      "name": "test_workflow_coverage.py",
+      "command": [
+        "python3",
+        "tests/test_workflow_coverage.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 8,
+      "skipped": 0,
+      "passed": 8,
+      "elapsed_seconds": 0.12
+    },
+    {
+      "name": "test_workflow_scenarios.py",
+      "command": [
+        "python3",
+        "tests/test_workflow_scenarios.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 5,
+      "skipped": 0,
+      "passed": 5,
+      "elapsed_seconds": 0.7
+    },
+    {
+      "name": "test_workflow_environment.py",
+      "command": [
+        "python3",
+        "tests/test_workflow_environment.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 3,
+      "skipped": 0,
+      "passed": 3,
+      "elapsed_seconds": 0.066
+    },
+    {
+      "name": "test_terminal_support.py",
+      "command": [
+        "python3",
+        "tests/run_terminal_suite.py",
+        "test_terminal_support.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 7,
+      "skipped": 0,
+      "passed": 7,
+      "elapsed_seconds": 1.491
+    },
+    {
+      "name": "test_tui_terminal.py",
+      "command": [
+        "python3",
+        "tests/run_terminal_suite.py",
+        "test_tui_terminal.py"
+      ],
+      "expected_exit": 0,
+      "suite": true,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "tests": 3,
+      "skipped": 0,
+      "passed": 3,
+      "elapsed_seconds": 5.38
+    },
+    {
+      "name": "resolved_boundaries",
+      "command": [
+        "python3",
+        "tests/test_resolved_boundaries.py"
+      ],
+      "expected_exit": 0,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "resolved_models": 18,
+      "fixture_preparations": 9,
+      "elapsed_seconds": 6.455
+    },
+    {
+      "name": "retained_full_benchmark",
+      "command": [
+        "python3",
+        "tests/benchmark_report.py",
+        "docs/benchmarks/issue-335/container-linux-x86_64-claude.json",
+        "--require-full"
+      ],
+      "expected_exit": 0,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "result": {
+        "status": "valid",
+        "scope": "full matrix",
+        "executed_cells": 9,
+        "measured_samples": 45,
+        "budget_review": "pending"
+      },
+      "elapsed_seconds": 0.043
+    },
+    {
+      "name": "budget_structure",
+      "command": [
+        "python3",
+        "tests/budget_review.py",
+        "docs/benchmarks/issue-335/budget-review.json"
+      ],
+      "expected_exit": 0,
+      "exit_code": 0,
+      "expected_outcome_observed": true,
+      "result": {
+        "status": "valid",
+        "budget_review": "pending",
+        "profiles": 2,
+        "decision_authenticity": "requires checking the linked maintainer decision"
+      },
+      "elapsed_seconds": 0.046
+    },
+    {
+      "name": "budget_acceptance",
+      "command": [
+        "python3",
+        "tests/budget_review.py",
+        "docs/benchmarks/issue-335/budget-review.json",
+        "--require-accepted"
+      ],
+      "expected_exit": 1,
+      "exit_code": 1,
+      "expected_outcome_observed": true,
+      "result": {
+        "status": "invalid_or_unaccepted"
+      },
+      "elapsed_seconds": 0.047
+    }
+  ],
+  "toolchain": {
+    "go": "go version go1.27.1 darwin/arm64",
+    "docker_cli": "Docker version 29.8.0, build 88096ef",
+    "compose": "5.5.1",
+    "powershell": "7.6.3"
+  },
+  "daemon_probe": {
+    "command": [
+      "docker",
+      "info",
+      "--format",
+      "{{json .}}"
+    ],
+    "configuration": "caller-selected Docker endpoint; original environment",
+    "exit_code": 1,
+    "available": false
+  },
+  "source_dirty_at_finish": false,
+  "counts": {
+    "tests": 66,
+    "passed": 64,
+    "skipped": 2,
+    "unexpected_check_results": 0
+  },
+  "input_status": {
+    "designated_credentials_file": "not supplied",
+    "additional_native_test_hosts": "not designated",
+    "budget_decision": "pending; issue and PR 401 checked",
+    "compatible_inner_sandbox": "no new execution; requires an actual host"
+  },
+  "sha256": {
+    "docs/benchmarks/issue-335/budget-review.json": "0643df94da105d2d61c559d2ee423c4e03e9f17d38fe9c3e10ebac2868a2d0a5",
+    "docs/benchmarks/issue-335/container-linux-x86_64-claude.json": "7de3c5abdd2abd3b6903c9657424c22b2dff17e89fe938cc9e01b4b11afeeb9e",
+    "docs/benchmarks/issue-335/dashboard-darwin-arm64.json": "0a0172f8304d880b7e2c7a05090bb57c4610b0ed33d317dfe4e6fc11cd180b53"
+  },
+  "status": "available_checks_passed_integration_inputs_missing",
+  "issue_completion": "incomplete",
+  "finished_at": "2026-09-10T13:09:26.118736+00:00"
+}

@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "scope": "actual hosted runner daemon stop/start",
+  "cases": [
+    {
+      "runtime": "claude",
+      "name": "actual_daemon_recovery",
+      "account": null,
+      "status": "passed",
+      "metadata": {
+        "daemon_stop_start": "executed",
+        "services_before": {
+          "running": 1,
+          "stopped": 1
+        },
+        "managed_files_restored": 5,
+        "unrelated_write_preserved": true,
+        "second_recovery": "no_op"
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "cleanup",
+      "account": null,
+      "status": "passed"
+    }
+  ],
+  "provenance": {
+    "source_commit": "c59f851dc887db7c5ec87815626c299d6656ad22",
+    "source_dirty": false,
+    "source_fingerprint_sha256": "61f2796cc622aa0ed5cc7f1ca148e996a26c7cbe7b1c140257d77b0f5bf597f8",
+    "image_id": "sha256:090bf6d2244b9e43e0067d2edcc40da3ccfb1adc8210656997d8856b92325f7b",
+    "engine_version": "28.0.4",
+    "compose_version": "2.38.2",
+    "daemon": {
+      "OperatingSystem": "Ubuntu 24.04.4 LTS",
+      "Architecture": "x86_64",
+      "KernelVersion": "6.17.0-1022-azure",
+      "CgroupVersion": "2",
+      "Driver": "overlay2",
+      "SecurityOptions": [
+        "name=apparmor",
+        "name=seccomp,profile=builtin",
+        "name=cgroupns"
+      ],
+      "NCPU": 4,
+      "MemTotal": 16766406656
+    },
+    "container_uid": 1001,
+    "container_gid": 1001
+  },
+  "counts": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "executed": 2,
+    "planned": 2
+  },
+  "status": "complete"
+}

@@ -1,0 +1,546 @@
+{
+  "schema": 1,
+  "started_at": "2026-09-09T12:14:06.502666+00:00",
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "language": "bash",
+  "authenticated_requested": false,
+  "cases": [
+    {
+      "runtime": "claude",
+      "name": "runtime_workflow",
+      "account": null,
+      "status": "passed"
+    },
+    {
+      "runtime": "claude",
+      "name": "writable_paths",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.claude"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "offline_package_workflow",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "claude",
+      "account": 1,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "claude",
+      "account": 1,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "claude",
+      "name": "writable_paths",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-b",
+          "/workspace-b/node_modules",
+          "/home/node/.claude"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "offline_package_workflow",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "claude",
+      "account": 2,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "claude",
+      "account": 2,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "claude",
+      "name": "writable_paths_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.claude"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": true,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "claude",
+      "name": "package_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "claude",
+      "account": 1,
+      "name": "authenticated_after_recreation",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "claude",
+      "account": 1,
+      "name": "terminal_statusline",
+      "status": "skipped",
+      "reason": "explicit_terminal_and_credentials_required"
+    },
+    {
+      "runtime": "claude",
+      "name": "fixture_cleanup",
+      "account": null,
+      "status": "passed"
+    },
+    {
+      "runtime": "codex",
+      "name": "runtime_workflow",
+      "account": null,
+      "status": "passed"
+    },
+    {
+      "runtime": "codex",
+      "name": "writable_paths",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.codex"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "codex",
+      "name": "offline_package_workflow",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "codex",
+      "account": 1,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "codex",
+      "account": 1,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "codex",
+      "name": "writable_paths",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-b",
+          "/workspace-b/node_modules",
+          "/home/node/.codex"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "codex",
+      "name": "offline_package_workflow",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "codex",
+      "account": 2,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "codex",
+      "account": 2,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "codex",
+      "name": "writable_paths_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.codex"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": true,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "codex",
+      "name": "package_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "codex",
+      "account": 1,
+      "name": "authenticated_after_recreation",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "codex",
+      "name": "fixture_cleanup",
+      "account": null,
+      "status": "passed"
+    },
+    {
+      "runtime": "gemini",
+      "name": "runtime_workflow",
+      "account": null,
+      "status": "passed"
+    },
+    {
+      "runtime": "gemini",
+      "name": "writable_paths",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.gemini"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "gemini",
+      "name": "offline_package_workflow",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "gemini",
+      "account": 1,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "gemini",
+      "account": 1,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "gemini",
+      "name": "writable_paths",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-b",
+          "/workspace-b/node_modules",
+          "/home/node/.gemini"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": false,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "gemini",
+      "name": "offline_package_workflow",
+      "account": 2,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "gemini",
+      "account": 2,
+      "name": "authenticated_session",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "gemini",
+      "account": 2,
+      "name": "authenticated_push",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "gemini",
+      "name": "writable_paths_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "persistent_paths": [
+          "/workspace-a",
+          "/workspace-a/node_modules",
+          "/home/node/.gemini"
+        ],
+        "scratch_paths": [
+          "/tmp",
+          "/home/node/.config",
+          "/home/node/.cache",
+          "/home/node/.npm",
+          "/home/node/.agents"
+        ],
+        "recreation_checked": true,
+        "global_git_config": "passed",
+        "credential_helper_setup": "passed",
+        "local_commit": "passed"
+      }
+    },
+    {
+      "runtime": "gemini",
+      "name": "package_after_recreation",
+      "account": 1,
+      "status": "passed",
+      "metadata": {
+        "verified_reads": 5000,
+        "package_tests": 3
+      }
+    },
+    {
+      "runtime": "gemini",
+      "account": 1,
+      "name": "authenticated_after_recreation",
+      "status": "skipped",
+      "reason": "explicit_test_credentials_missing"
+    },
+    {
+      "runtime": "gemini",
+      "name": "fixture_cleanup",
+      "account": null,
+      "status": "passed"
+    }
+  ],
+  "provenance": {
+    "claude": {
+      "source_commit": "c59f851dc887db7c5ec87815626c299d6656ad22",
+      "source_dirty": false,
+      "source_fingerprint_sha256": "61f2796cc622aa0ed5cc7f1ca148e996a26c7cbe7b1c140257d77b0f5bf597f8",
+      "image_id": "sha256:6b591216371272dcd1eeccadd096cefb8a00b80a16266ddfb244166dfb3fd32a",
+      "engine_version": "28.0.4",
+      "compose_version": "2.38.2",
+      "daemon": {
+        "OperatingSystem": "Ubuntu 24.04.4 LTS",
+        "Architecture": "x86_64",
+        "KernelVersion": "6.17.0-1022-azure",
+        "CgroupVersion": "2",
+        "Driver": "overlay2",
+        "SecurityOptions": [
+          "name=apparmor",
+          "name=seccomp,profile=builtin",
+          "name=cgroupns"
+        ],
+        "NCPU": 4,
+        "MemTotal": 16765370368
+      },
+      "container_uid": 1001,
+      "container_gid": 1001
+    },
+    "codex": {
+      "source_commit": "c59f851dc887db7c5ec87815626c299d6656ad22",
+      "source_dirty": false,
+      "source_fingerprint_sha256": "61f2796cc622aa0ed5cc7f1ca148e996a26c7cbe7b1c140257d77b0f5bf597f8",
+      "image_id": "sha256:6b591216371272dcd1eeccadd096cefb8a00b80a16266ddfb244166dfb3fd32a",
+      "engine_version": "28.0.4",
+      "compose_version": "2.38.2",
+      "daemon": {
+        "OperatingSystem": "Ubuntu 24.04.4 LTS",
+        "Architecture": "x86_64",
+        "KernelVersion": "6.17.0-1022-azure",
+        "CgroupVersion": "2",
+        "Driver": "overlay2",
+        "SecurityOptions": [
+          "name=apparmor",
+          "name=seccomp,profile=builtin",
+          "name=cgroupns"
+        ],
+        "NCPU": 4,
+        "MemTotal": 16765370368
+      },
+      "container_uid": 1001,
+      "container_gid": 1001
+    },
+    "gemini": {
+      "source_commit": "c59f851dc887db7c5ec87815626c299d6656ad22",
+      "source_dirty": false,
+      "source_fingerprint_sha256": "61f2796cc622aa0ed5cc7f1ca148e996a26c7cbe7b1c140257d77b0f5bf597f8",
+      "image_id": "sha256:6b591216371272dcd1eeccadd096cefb8a00b80a16266ddfb244166dfb3fd32a",
+      "engine_version": "28.0.4",
+      "compose_version": "2.38.2",
+      "daemon": {
+        "OperatingSystem": "Ubuntu 24.04.4 LTS",
+        "Architecture": "x86_64",
+        "KernelVersion": "6.17.0-1022-azure",
+        "CgroupVersion": "2",
+        "Driver": "overlay2",
+        "SecurityOptions": [
+          "name=apparmor",
+          "name=seccomp,profile=builtin",
+          "name=cgroupns"
+        ],
+        "NCPU": 4,
+        "MemTotal": 16765370368
+      },
+      "container_uid": 1001,
+      "container_gid": 1001
+    }
+  },
+  "remote_refs": [],
+  "counts": {
+    "passed": 24,
+    "failed": 0,
+    "skipped": 16,
+    "executed": 24,
+    "planned": 40
+  },
+  "status": "incomplete"
+}

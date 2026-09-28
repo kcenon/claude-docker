@@ -3,20 +3,20 @@
 !.env.example
 .claude-state/
 
-# Generated compose files (scripts/generate-compose.sh)
-docker-compose.yml
-docker-compose.worktree.yml
-docker-compose.linux.yml
-
 # npm cache (from host claude install)
 .npm-cache/
 package-lock.json
+!tests/fixtures/isolation-workload/package-lock.json
 node_modules/
 
 # TUI dashboard build artifacts (Go binary, built by install.sh or 'build-tui').
-# Prebuilt binaries are distributed via GitHub Releases, not tracked in Git.
-# See .github/workflows/release-tui.yml for the release pipeline and
-# scripts/lib/tui-release.sh for the download-fallback used when Go is missing.
+# The binary is always built from source; Go 1.24+ is required for it. See
+# .github/workflows/release-tui.yml for the (so far unused) release pipeline.
 tui/claude-docker-tui
 tui/claude-docker-tui.exe
 tui/claude-docker-tui-*
+
+# Protected lifecycle journals/backups and Python host-helper bytecode.
+.claude-docker-lifecycle/
+__pycache__/
+*.py[cod]

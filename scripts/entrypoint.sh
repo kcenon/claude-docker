@@ -1,231 +1,85 @@
 #!/bin/bash
-# Entrypoint: symlink host claude-config into the account state directory.
-# Host config is mounted read-only at /home/node/.claude-host/
-# Account state is at /home/node/.claude/ (writable)
-
-# Config source: CLAUDE_CONFIG_SOURCE overrides the default host config path.
-# Set CLAUDE_CONFIG_SOURCE to a path inside the project (e.g., /project/claude-config/global)
-# so that config changes are reflected immediately without running bootstrap on the host.
-CONFIG_SOURCE="${CLAUDE_CONFIG_SOURCE:-/home/node/.claude-host}"
-ACCOUNT_DIR="/home/node/.claude"
-
-# --- Settings transformation ---------------------------------------------------
-# Generate a container-local settings.json from the host settings.
-# The host settings may be macOS (.sh hooks) or Windows (.ps1/pwsh hooks).
-# The container always runs Linux, so we:
-#   1. Disable sandbox (container itself is the isolation boundary)
-#   2. Strip glob-based permission deny rules (sensitive-file-guard.sh handles this)
-#   3. Rewrite PowerShell hook commands to bash equivalents
-#   4. Fix statusLine command if it uses PowerShell
+# Entrypoint: prepare per-account agent state before running the requested
+# command. Claude remains the default runtime; Codex is selected by setting
+# AGENT_RUNTIME=codex in the generated compose file.
 #
-# The jq pipeline is idempotent: macOS settings pass through with only
-# sandbox/permissions changes; Windows settings get full hook rewriting.
-#
-# See the "Container-side settings transformation" section in README.md
-# for user-facing documentation of two behaviors baked in here:
-#   - step 1 (`sandbox.enabled = false`) assumes default Docker isolation
-#     and is unsafe under --privileged / docker-in-docker / docker-on-sock.
-#   - step 4's pwsh-to-bash rewrite is best-effort and has known silent
-#     failure modes (heredocs, $env:VAR, quoted paths with spaces).
-generate_container_settings() {
-    local src="$1"
-    local dst="$2"
+# This is a thin dispatcher (issue #269): it validates the runtime against
+# the registry, sources the matching per-runtime bootstrap module via the
+# registry's `bootstrapModule` field, runs the runtime-agnostic common
+# steps, and finally execs the requested command. All runtime-specific
+# logic lives in scripts/lib/bootstrap-<runtime>.sh.
 
-    jq '
-        # 1. Disable sandbox (container IS the isolation boundary)
-        .sandbox.enabled = false
+# --- Library resolution ----------------------------------------------------------
+# The shared libraries (runtime.sh, bootstrap-common.sh) and the per-runtime
+# bootstrap modules are copied into the image alongside the runtime registry,
+# preserving the repo's scripts/lib + tui/internal/config layout so runtime.sh
+# resolves runtimes.json via PROJECT_ROOT. On a developer host this file runs
+# from scripts/ and the layout is the repo itself.
+if [ -n "${CLAUDE_DOCKER_ROOT:-}" ] && [ -d "$CLAUDE_DOCKER_ROOT" ]; then
+    PROJECT_ROOT="$CLAUDE_DOCKER_ROOT"
+elif [ -d /usr/local/share/claude-docker ]; then
+    PROJECT_ROOT="/usr/local/share/claude-docker"
+else
+    PROJECT_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+fi
+export PROJECT_ROOT
+LIB_DIR="$PROJECT_ROOT/scripts/lib"
 
-        # 2. Strip glob-based permission deny rules
-        #    (sensitive-file-guard.sh hook provides equivalent protection)
-        | if .permissions.deny then
-            .permissions.deny = [.permissions.deny[] | select(test("[*]") | not)]
-          else . end
+# parse_env.sh first: runtime.sh's agent_runtime falls back to parsing
+# AGENT_RUNTIME from $PROJECT_ROOT/.env (via parse_env_value) when the env
+# var is unset, which is the claude-default case (compose only injects
+# AGENT_RUNTIME for codex). Source order mirrors scripts/generate-compose.sh.
+# shellcheck source=scripts/lib/parse_env.sh
+. "$LIB_DIR/parse_env.sh"
+# shellcheck source=scripts/lib/runtime.sh
+. "$LIB_DIR/runtime.sh"
+# shellcheck source=scripts/lib/bootstrap-common.sh
+. "$LIB_DIR/bootstrap-common.sh"
 
-        # 3. Fix statusLine BEFORE walk() to prevent Join-Path pattern mangling
-        | if .statusLine.command? and (.statusLine.command | test("pwsh")) then
-            .statusLine.command = "~/.claude/scripts/statusline-command.sh"
-          else . end
+# --- Runtime validation ----------------------------------------------------------
+# agent_runtime validates AGENT_RUNTIME against the registry (runtime_list)
+# and prints the normalized runtime name; on an unknown value it writes its
+# own diagnostic to stderr and returns non-zero, so just propagate the exit.
+if ! AGENT_RUNTIME="$(agent_runtime)"; then
+    exit 1
+fi
+export AGENT_RUNTIME
 
-        # 4. Rewrite PowerShell hook commands to bash equivalents
-        | walk(
-            if type == "object" and .command? and (.command | type == "string") and (.command | test("pwsh"))
-            then .command = (.command
-                | gsub("pwsh(\\.exe)?\\s+-NoProfile\\s+(-ExecutionPolicy\\s+\\S+\\s+)?-File\\s+"; "")
-                | gsub("pwsh(\\.exe)?\\s+-NoProfile\\s+(-ExecutionPolicy\\s+\\S+\\s+)?-Command\\s+\"?"; "")
-                | gsub("\"$"; "")
-                | gsub("& "; "")
-                | gsub("; "; " && ")
-                | gsub("\\.ps1"; ".sh")
-            )
-            else . end
-        )
-    ' "$src" > "${dst}.tmp" && mv "${dst}.tmp" "$dst"
-}
+# --- Per-runtime bootstrap -------------------------------------------------------
+# Dispatch via the registry's bootstrapModule field rather than a hardcoded
+# block. Each module defines a runtime_bootstrap function.
+BOOTSTRAP_MODULE="$(runtime_field "$AGENT_RUNTIME" "bootstrapModule")"
+if [ -z "$BOOTSTRAP_MODULE" ] || [ ! -f "$LIB_DIR/$BOOTSTRAP_MODULE" ]; then
+    echo "[entrypoint] ERROR: bootstrap module for runtime '$AGENT_RUNTIME' not found ($BOOTSTRAP_MODULE)" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+. "$LIB_DIR/$BOOTSTRAP_MODULE"
+runtime_bootstrap
 
-if [ -d "$CONFIG_SOURCE" ]; then
-    # Fix Windows CRLF line endings in shell scripts (bind mounts from Windows
-    # hosts may have \r\n even with .gitattributes if the repo lacks one).
-    if [ -n "$CLAUDE_CONFIG_SOURCE" ]; then
-        find "$CONFIG_SOURCE" -name "*.sh" -exec sed -i 's/\r$//' {} + 2>/dev/null
-    fi
-
-    # When CLAUDE_CONFIG_SOURCE is explicitly set, force-relink everything
-    # so config changes are picked up on container restart.
-    FORCE_LINK="${CLAUDE_CONFIG_SOURCE:+true}"
-
-    # --- Executable dirs: copy with CRLF normalization -------------------------
-    # hooks/ and scripts/ contain shell scripts that may have Windows CRLF line
-    # endings from a Windows host. The default host mount is read-only, so we
-    # cannot sed -i in place. Instead, copy .sh files to the writable account
-    # dir, stripping CRLF during the copy. Non-.sh files (json, psm1) are
-    # copied as-is for completeness (hooks/lib/, hooks/known-issues.json).
-    for item in hooks scripts; do
-        if [ -d "$CONFIG_SOURCE/$item" ]; then
-            target="$ACCOUNT_DIR/$item"
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
-                if [ -z "$CLAUDE_CONFIG_SOURCE" ]; then
-                    # Read-only mount: copy + CRLF normalize
-                    rm -rf "$target" 2>/dev/null
-                    mkdir -p "$target"
-                    (cd "$CONFIG_SOURCE/$item" && find . -type f 2>/dev/null) | while IFS= read -r rel; do
-                        mkdir -p "$target/$(dirname "$rel")" 2>/dev/null
-                        case "$rel" in
-                            *.sh) sed 's/\r$//' "$CONFIG_SOURCE/$item/$rel" > "$target/$rel"
-                                  chmod +x "$target/$rel" ;;
-                            *)    cp "$CONFIG_SOURCE/$item/$rel" "$target/$rel" ;;
-                        esac
-                    done
-                    echo "[entrypoint] $item: copied and CRLF-normalized from read-only mount"
-                else
-                    # Writable CLAUDE_CONFIG_SOURCE: symlink as before
-                    if [ -e "$target" ] && [ ! -L "$target" ]; then
-                        backup="${target}.stale.$(date +%s)"
-                        mv "$target" "$backup"
-                        echo "[entrypoint] $item: backed up stale copy to $backup"
-                    fi
-                    ln -sfn "$CONFIG_SOURCE/$item" "$target"
-                fi
-            fi
-        fi
-    done
-
-    # --- Non-executable dirs: symlink (no CRLF concern) ----------------------
-    for item in skills commands ccstatusline; do
-        if [ -d "$CONFIG_SOURCE/$item" ]; then
-            target="$ACCOUNT_DIR/$item"
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$target" ] || [ ! -L "$target" ]; then
-                if [ -e "$target" ] && [ ! -L "$target" ]; then
-                    backup="${target}.stale.$(date +%s)"
-                    mv "$target" "$backup"
-                    echo "[entrypoint] $item: backed up stale copy to $backup"
-                fi
-                ln -sfn "$CONFIG_SOURCE/$item" "$target"
-            fi
-        fi
-    done
-
-    # settings.json: generate a container-optimized copy.
-    #
-    # The host settings.json may be macOS (bash hooks, Seatbelt sandbox) or
-    # Windows (PowerShell hooks, no Linux sandbox). The container always runs
-    # Linux, so we apply a comprehensive transformation:
-    #   - Disable sandbox (container itself is the isolation boundary)
-    #   - Strip glob-based permission deny rules (hook provides protection)
-    #   - Rewrite PowerShell hook commands to bash equivalents
-    #   - Fix statusLine command if it uses PowerShell
-    #
-    # The host file is never modified (read-only mount). The generated
-    # settings.container.json is symlinked as settings.json in the writable
-    # account state directory.
-    if [ -f "$CONFIG_SOURCE/settings.json" ]; then
-        CONTAINER_SETTINGS="$ACCOUNT_DIR/settings.container.json"
-        if command -v jq >/dev/null 2>&1; then
-            if generate_container_settings "$CONFIG_SOURCE/settings.json" "$CONTAINER_SETTINGS"; then
-                # Validate the generated JSON
-                if jq empty "$CONTAINER_SETTINGS" 2>/dev/null; then
-                    ln -sf "$CONTAINER_SETTINGS" "$ACCOUNT_DIR/settings.json"
-                    # Log transformation summary
-                    pwsh_count=$(jq -r '[.. | objects | .command? // empty | select(test("pwsh"))] | length' "$CONFIG_SOURCE/settings.json" 2>/dev/null || echo 0)
-                    if [ "$pwsh_count" -gt 0 ]; then
-                        echo "[entrypoint] settings.json: rewrote $pwsh_count PowerShell hook(s) to bash"
-                    fi
-                    echo "[entrypoint] settings.json: container-optimized (sandbox=off, glob deny rules stripped)"
-
-                    # Post-transform syntax check: `bash -n -c` every .command
-                    # string in the generated file. The rewriter in
-                    # generate_container_settings() is best-effort (see
-                    # README "Container-side settings transformation"); the
-                    # check catches silent failures so the user learns about
-                    # them at container start rather than when a hook misfires.
-                    syntax_failures=0
-                    while IFS= read -r _cmd; do
-                        [ -z "$_cmd" ] && continue
-                        if ! bash -n -c "$_cmd" 2>/dev/null; then
-                            echo "[entrypoint] WARNING: transformed hook command failed bash syntax check: $_cmd" >&2
-                            syntax_failures=$((syntax_failures + 1))
-                        fi
-                    done < <(jq -r '.. | objects | .command? // empty | select(type == "string")' "$CONTAINER_SETTINGS" 2>/dev/null)
-                    if [ "$syntax_failures" -gt 0 ]; then
-                        echo "[entrypoint] WARNING: $syntax_failures hook command(s) failed syntax check — those hooks will not fire. Set CLAUDE_CONFIG_SOURCE to a Linux-native config tree to bypass the pwsh rewriter." >&2
-                    fi
-                else
-                    echo "[entrypoint] ERROR: generated settings.container.json is invalid JSON, using raw host settings"
-                    ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
-                fi
-            else
-                echo "[entrypoint] ERROR: settings transformation failed, using raw host settings"
-                ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
-            fi
-        else
-            # Fallback: raw symlink (jq is always present in our image, this
-            # branch only runs on accidentally stripped-down base images).
-            echo "[entrypoint] WARNING: jq not found, using raw host settings (warnings expected)"
-            ln -sf "$CONFIG_SOURCE/settings.json" "$ACCOUNT_DIR/settings.json"
-        fi
-    fi
-
-    # Ensure logs directory exists (hooks write to ~/.claude/logs/)
-    mkdir -p "$ACCOUNT_DIR/logs" 2>/dev/null
-
-    # Warn about hook scripts referenced in settings but missing on disk
-    if [ -f "$ACCOUNT_DIR/settings.json" ] && command -v jq >/dev/null 2>&1; then
-        jq -r '.. | objects | .command? // empty' "$ACCOUNT_DIR/settings.json" 2>/dev/null \
-            | grep -oE '(~|/)[^ ]+\.sh' | sort -u | while IFS= read -r script; do
-            resolved="${script/#\~/$HOME}"
-            if [ ! -f "$resolved" ]; then
-                echo "[entrypoint] WARNING: hook references missing script: $script"
-            fi
-        done
-    fi
-
-    # Symlink other shared config files
-    for item in CLAUDE.md commit-settings.md .claudeignore; do
-        if [ -f "$CONFIG_SOURCE/$item" ]; then
-            if [ "$FORCE_LINK" = "true" ] || [ ! -e "$ACCOUNT_DIR/$item" ] || [ ! -s "$ACCOUNT_DIR/$item" ]; then
-                ln -sf "$CONFIG_SOURCE/$item" "$ACCOUNT_DIR/$item"
-            fi
-        fi
-    done
-
-    # Symlink ccstatusline config to XDG path (~/.config/ccstatusline/)
-    # ccstatusline reads from ~/.config/ccstatusline/settings.json, not ~/.claude/ccstatusline/
-    XDG_CCSL="/home/node/.config/ccstatusline"
-    mkdir -p "$XDG_CCSL" 2>/dev/null
-    if [ -d "$XDG_CCSL" ] && [ ! -e "$XDG_CCSL/settings.json" ]; then
-        if [ -f "$ACCOUNT_DIR/ccstatusline/settings.json" ]; then
-            ln -sf "$ACCOUNT_DIR/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
-        elif [ -f "$CONFIG_SOURCE/ccstatusline/settings.json" ]; then
-            ln -sf "$CONFIG_SOURCE/ccstatusline/settings.json" "$XDG_CCSL/settings.json"
-        fi
-    fi
+# This gate also runs when bootstrap had no shared configuration source.
+# CLAUDE_ALLOW_DEGRADED_SETTINGS deliberately cannot bypass it.
+# shellcheck source=scripts/lib/bootstrap-sandbox.sh
+. "$LIB_DIR/bootstrap-sandbox.sh"
+if ! runtime_sandbox_check; then
+    echo '[entrypoint] ERROR: refusing the requested command because required sandboxing is unavailable.' >&2
+    exit 1
+fi
+if ! runtime_writable_check; then
+    exit 1
 fi
 
 # --- Git identity ----------------------------------------------------------------
-# Set git user from environment variables (if not already configured)
-if [ -n "${GIT_USER_NAME:-}" ] && [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+# Shared mode preserves the existing initialize-once behavior. Per-account
+# mode reapplies the selected account identity on each start so changing an
+# account-specific override cannot be masked by an older value in persistent
+# runtime state.
+if [ -n "${GIT_USER_NAME:-}" ] && \
+   { [ "${GH_AUTH_MODE:-shared}" = "per-account" ] || [ -z "$(git config --global user.name 2>/dev/null)" ]; }; then
     git config --global user.name "$GIT_USER_NAME"
 fi
-if [ -n "${GIT_USER_EMAIL:-}" ] && [ -z "$(git config --global user.email 2>/dev/null)" ]; then
+if [ -n "${GIT_USER_EMAIL:-}" ] && \
+   { [ "${GH_AUTH_MODE:-shared}" = "per-account" ] || [ -z "$(git config --global user.email 2>/dev/null)" ]; }; then
     git config --global user.email "$GIT_USER_EMAIL"
 fi
 
@@ -249,18 +103,45 @@ if [ -d /project ] && [ "${CLAUDE_NORMALIZE_CRLF:-0}" = "1" ]; then
 fi
 
 # --- Git credential helper (gh) -------------------------------------------------
-# Wire gh as git credential helper so git push/pull uses the mounted gh token
+# Validate the credential used for API calls and, when configured, compare its
+# canonical login with the account expected by the host configuration.
+verify_github_login() {
+    local actual actual_lower expected_lower
+    if ! actual=$(gh api user --jq .login 2>/dev/null) || [ -z "$actual" ]; then
+        echo "[entrypoint] WARNING: GitHub token is invalid or missing."
+        return 1
+    fi
+
+    if [ -n "${GH_USER:-}" ]; then
+        actual_lower=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
+        expected_lower=$(printf '%s' "$GH_USER" | tr '[:upper:]' '[:lower:]')
+        if [ "$actual_lower" != "$expected_lower" ]; then
+            echo "[entrypoint] WARNING: GitHub login mismatch."
+            echo "  actual: $actual"
+            echo "  expected: $GH_USER"
+            return 2
+        fi
+    fi
+
+    echo "[entrypoint] GitHub auth: authenticated as $actual"
+    return 0
+}
+
+# Wire gh as git credential helper so git push/pull uses the selected token.
 if command -v gh >/dev/null 2>&1; then
     if [ -n "${GH_TOKEN:-}" ]; then
         # GH_TOKEN env var takes precedence — no hosts.yml needed
         gh auth setup-git 2>/dev/null || true
         echo "[entrypoint] GitHub auth: using GH_TOKEN environment variable"
+        verify_github_login || true
     elif [ -f /home/node/.config/gh/hosts.yml ]; then
         gh auth setup-git 2>/dev/null || true
-        # Validate token (macOS Keychain / Windows Credential Manager tokens
-        # are NOT in hosts.yml — only the host config structure is present)
-        if ! gh auth status >/dev/null 2>&1; then
-            echo "[entrypoint] WARNING: GitHub token is invalid or missing."
+        # Validate the credential gh actually uses for API calls. `gh api user`
+        # is checked instead of `gh auth status` because the latter also
+        # evaluates the unusable mounted `default` account and exits non-zero.
+        # macOS Keychain / Windows Credential Manager tokens are NOT in
+        # hosts.yml — only the host config structure is present.
+        if ! verify_github_login; then
             echo "  On macOS/Windows, gh stores tokens in OS credential stores"
             echo "  (Keychain / Credential Manager), not in hosts.yml."
             echo "  The read-only bind mount cannot access these tokens."
@@ -276,6 +157,51 @@ if command -v gh >/dev/null 2>&1; then
         echo "    scripts/claude-docker gh-auth"
         echo "  Or re-run the installer to auto-detect from gh CLI."
     fi
+fi
+
+# --- Degraded-settings gate --------------------------------------------------
+# Refuse to exec when bootstrap recorded a blocking degradation (#357, item 8).
+# Until now each of these printed one warning and fell through to `exec "$@"`.
+# Because the transform applies `sandbox.enabled = false` and the deny stripping
+# *before* anything can fail, and only the compensating hook rewrite can fail,
+# the surviving state was "sandbox off, deny rules stripped, and the guard hook
+# that was supposed to make that safe does not fire" -- behind a line that had
+# already scrolled away by the time the prompt appeared.
+#
+# The cost is real: a malformed host settings.json now stops the container
+# instead of starting a weaker one. CLAUDE_ALLOW_DEGRADED_SETTINGS=1 is the way
+# through, and the message names every degradation so the choice is informed
+# rather than a reflex.
+#
+# Advisory degradations are printed alongside but never block on their own --
+# see the tier note in bootstrap-common.sh.
+print_degradations() {
+    local _list="$1" _deg
+    [ -z "$_list" ] && return 0
+    while IFS= read -r _deg; do
+        [ -z "$_deg" ] && continue
+        echo "[entrypoint]   - $_deg" >&2
+    done <<< "$_list"
+}
+
+if [ -n "${CLAUDE_DOCKER_DEGRADATIONS_BLOCKING:-}" ]; then
+    if [ "${CLAUDE_ALLOW_DEGRADED_SETTINGS:-0}" = "1" ]; then
+        echo "[entrypoint] WARNING: starting with degraded settings (CLAUDE_ALLOW_DEGRADED_SETTINGS=1):" >&2
+        print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_BLOCKING"
+        print_degradations "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}"
+    else
+        echo "[entrypoint] ERROR: refusing to start — bootstrap could not fully prepare this container:" >&2
+        print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_BLOCKING"
+        print_degradations "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}"
+        echo "[entrypoint]" >&2
+        echo "[entrypoint] Fix the host configuration, or point CLAUDE_CONFIG_SOURCE at a" >&2
+        echo "[entrypoint] Linux-native config tree to bypass the pwsh rewriter." >&2
+        echo "[entrypoint] To start anyway, set CLAUDE_ALLOW_DEGRADED_SETTINGS=1 in .env." >&2
+        exit 1
+    fi
+elif [ -n "${CLAUDE_DOCKER_DEGRADATIONS_ADVISORY:-}" ]; then
+    echo "[entrypoint] WARNING: starting with degraded settings:" >&2
+    print_degradations "$CLAUDE_DOCKER_DEGRADATIONS_ADVISORY"
 fi
 
 exec "$@"

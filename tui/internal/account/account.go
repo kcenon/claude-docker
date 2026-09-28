@@ -7,7 +7,8 @@ type AuthType int
 const (
 	AuthNone   AuthType = iota
 	AuthOAuth           // .credentials.json present
-	AuthAPIKey          // CLAUDE_API_KEY_* set in .env
+	AuthAPIKey          // provider API key set in .env
+	AuthLogin           // runtime-specific login state present
 )
 
 func (a AuthType) String() string {
@@ -16,6 +17,8 @@ func (a AuthType) String() string {
 		return "OAuth"
 	case AuthAPIKey:
 		return "Key"
+	case AuthLogin:
+		return "Login"
 	default:
 		return "--"
 	}
@@ -48,38 +51,36 @@ type UsageBucket struct {
 	ResetAt     string
 }
 
-// TokenSummary holds JSONL-derived token counts (fallback when limitline is unavailable).
-type TokenSummary struct {
-	InputTokens  int64
-	OutputTokens int64
-	CacheTokens  int64 // cache_creation + cache_read
-	SessionCount int
-}
-
-// Total returns the total token count.
-func (t TokenSummary) Total() int64 {
-	return t.InputTokens + t.OutputTokens + t.CacheTokens
-}
-
-// Account represents a single Claude Code account with its runtime state.
+// Account represents a single agent account with its runtime state.
 type Account struct {
 	Letter          string
 	ServiceName     string
+	Runtime         string // agent runtime name (e.g. "claude", "codex"); set from env.AgentRuntime()
 	StateDirPath    string
 	AuthType        AuthType
 	ContainerStatus ContainerStatus
 	ContainerID     string
 	GHAuthOK        bool
-	FiveHourUsage   *UsageBucket
-	SevenDayUsage   *UsageBucket
-	Tokens          *TokenSummary // JSONL-derived fallback when limitline is unavailable
-	APIRateLimited  bool          // true when usage API returned 429 recently
-	LastAPIStatus   string        // debug: last API status ("200", "429", "err: ...", "skipped (cooldown)", "cached")
-}
+	GHLogin         string
+	GHExpectedLogin string
+	GHLoginMismatch bool
 
-// HasUsageData returns true if any usage data is available (limitline or JSONL).
-func (a *Account) HasUsageData() bool {
-	return a.FiveHourUsage != nil || (a.Tokens != nil && a.Tokens.Total() > 0)
+	// Claude-only fields. These stay zero/nil for runtimes that do not
+	// expose a Claude-style OAuth usage endpoint; the dashboard then
+	// renders "--" for usage. See #271.
+	//
+	// There was a Tokens *TokenSummary here as well, described as a
+	// "JSONL-derived fallback when limitline is unavailable". The fallback was
+	// never implemented: the field was written on every refresh and read only
+	// by HasUsageData, which had no caller. Filling it walked
+	// ~/.claude-state/account-*/projects/**.jsonl on every refresh and on
+	// every --json invocation, for a value nothing rendered. Removed in #358
+	// (item 14); the dashboard still shows "--" when limitline has no data,
+	// exactly as before.
+	FiveHourUsage  *UsageBucket
+	SevenDayUsage  *UsageBucket
+	APIRateLimited bool   // true when usage API returned 429 recently
+	LastAPIStatus  string // debug: last API status ("200", "429", "err: ...", "skipped (cooldown)", "cached")
 }
 
 // IsRunning returns true if the container is running.

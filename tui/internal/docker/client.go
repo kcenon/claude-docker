@@ -2,13 +2,39 @@ package docker
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/config"
 )
+
+// psTimeout bounds `docker compose ps` (#358, item 1).
+//
+// Every dashboard refresh blocks on this call, and an unbounded one leaves
+// ListAccounts with no return path: m.refreshing never clears, so the `r` key
+// is rejected by its own guard and the operator cannot recover without killing
+// the process. A daemon that is starting, a socket that is not answering, or a
+// context switch to an unreachable remote all reach the same state.
+//
+// A package-level var rather than a const so tests can shorten it. Unexported,
+// so only this package can; the tests that do are not parallel.
+var psTimeout = 10 * time.Second
+
+// killGrace is how long a timed-out child gets between SIGKILL and giving up
+// on its output pipes.
+//
+// exec.CommandContext kills the process when the context expires, but Output()
+// waits for the pipes to close, and `docker exec` hands its stdout to a
+// grandchild inside the container. Killing the local docker client does not
+// close that pipe, so without WaitDelay the read blocks anyway and the timeout
+// buys nothing.
+const killGrace = 2 * time.Second
 
 // Client wraps docker compose invocations.
 type Client struct {
@@ -32,10 +58,29 @@ type ContainerInfo struct {
 
 // PS returns the list of containers for this compose project.
 func (c *Client) PS() ([]ContainerInfo, error) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "ps", "--format", "json", "--all")
-	cmd := exec.Command("docker", args...)
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the complete Compose file set stable until Docker finishes reading
+	// it. A preliminary existence check alone leaves a publication race.
+	release, err := config.AcquireLifecycleLock(c.projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	args := append(base, "ps", "--format", "json", "--all")
+	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.WaitDelay = killGrace
 	out, err := cmd.Output()
 	if err != nil {
+		// Report the deadline as a deadline. Wrapping the raw "signal: killed"
+		// would tell the operator their docker client crashed.
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("docker compose ps timed out after %s", psTimeout)
+		}
 		return nil, fmt.Errorf("docker compose ps: %w", err)
 	}
 	return parseComposePS(string(out))
@@ -73,49 +118,66 @@ func parseComposePS(out string) ([]ContainerInfo, error) {
 }
 
 // Up starts all services detached.
+//
+// Deliberately unbounded, unlike PS. `up -d` legitimately runs for minutes
+// when it has to pull or build, and a deadline here would abort a working
+// operation partway. It is also operator-initiated with a toast explaining
+// the wait, where PS runs on every refresh with nothing on screen to say so.
 func (c *Client) Up() error {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d")
-	cmd := exec.Command("docker", args...)
-	return cmd.Run()
+	bin, args, err := c.LifecycleArgs("up")
+	if err != nil {
+		return err
+	}
+	return exec.Command(bin, args...).Run()
 }
 
 // Down stops all services.
 func (c *Client) Down() error {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "down")
-	cmd := exec.Command("docker", args...)
-	return cmd.Run()
+	bin, args, err := c.LifecycleArgs("down")
+	if err != nil {
+		return err
+	}
+	return exec.Command(bin, args...).Run()
 }
+
+// The *Args methods return (bin, args, error) rather than building a command.
+// The error is not decoration: the caller hands the result to tea.ExecProcess,
+// so a compose prefix that could not be resolved has to stop the caller before
+// a docker process is spawned. Returning args anyway and letting docker sort
+// it out is what started every account on the shared mount.
 
 // ExecArgs returns (bin, args) for running a command in a running service container.
 // Used with tea.ExecProcess for interactive terminal handoff.
-func (c *Client) ExecArgs(service string, cmd ...string) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "exec", service)
+func (c *Client) ExecArgs(service string, cmd ...string) (string, []string, error) {
+	base, err := BuildComposeArgs(c.projectRoot, c.env)
+	if err != nil {
+		return "", nil, err
+	}
+	args := append(base, "exec", service)
 	args = append(args, cmd...)
-	return "docker", args
+	return "docker", args, nil
 }
 
 // BuildArgs returns (bin, args) for `docker compose build`.
 // When noCache is true, passes --no-cache to force a full rebuild.
-func (c *Client) BuildArgs(noCache bool) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "build")
+func (c *Client) BuildArgs(noCache bool) (string, []string, error) {
+	args := []string{}
 	if noCache {
 		args = append(args, "--no-cache")
 	}
-	return "docker", args
+	return c.LifecycleArgs("build", args...)
 }
 
 // UpRecreateArgs returns (bin, args) for `docker compose up -d --force-recreate`.
 // Used after image rebuild or .env change so containers pick up new config.
-func (c *Client) UpRecreateArgs() (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "up", "-d", "--force-recreate")
-	return "docker", args
+func (c *Client) UpRecreateArgs(services ...string) (string, []string, error) {
+	return c.LifecycleArgs("up", append([]string{"--force-recreate"}, services...)...)
 }
 
 // RestartArgs returns (bin, args) for restarting a single service.
 // service must be a name produced by ServiceNames() (e.g. "claude-a").
-func (c *Client) RestartArgs(service string) (string, []string) {
-	args := append(BuildComposeArgs(c.projectRoot, c.env), "restart", service)
-	return "docker", args
+func (c *Client) RestartArgs(service string) (string, []string, error) {
+	return c.LifecycleArgs("restart", service)
 }
 
 // HasRunningContainers returns true if any compose service is currently up.
@@ -134,14 +196,35 @@ func (c *Client) HasRunningContainers() bool {
 }
 
 // ServiceNames returns the expected service names based on NUM_ACCOUNTS.
+//
+// The nil-env fallback reads the default runtime's servicePrefix from the
+// registry rather than using the RuntimeClaude constant (#356, row 3). The two
+// happen to be the same string today, because claude's key and servicePrefix
+// are both "claude" -- so the constant was a registry value spelled by hand,
+// correct by coincidence and silent if the registry ever changed. Every other
+// prefix in this program comes from the registry; this one now does too.
 func (c *Client) ServiceNames() []string {
-	n := 1
+	n := config.DefaultNumAccounts
+	prefix := config.DefaultServicePrefix()
 	if c.env != nil {
 		n = c.env.NumAccounts()
+		prefix = c.env.ServicePrefix()
 	}
 	names := make([]string, n)
 	for i := 1; i <= n; i++ {
-		names[i-1] = "claude-" + config.IndexToLetter(i)
+		names[i-1] = prefix + "-" + config.IndexToLetter(i)
 	}
 	return names
+}
+
+// LifecycleArgs routes mutations through the same lock, resolved preflight and
+// resource report as the CLI. Interactive callers show that report before up.
+func (c *Client) LifecycleArgs(operation string, extra ...string) (string, []string, error) {
+	if _, err := BuildComposeArgs(c.projectRoot, c.env); err != nil {
+		return "", nil, err
+	}
+	if runtime.GOOS == "windows" {
+		return "pwsh", append([]string{"-NoProfile", "-File", filepath.Join(c.projectRoot, "scripts", "claude-docker.ps1"), operation}, extra...), nil
+	}
+	return "bash", append([]string{filepath.Join(c.projectRoot, "scripts", "claude-docker"), operation}, extra...), nil
 }

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     Cleanup containers, worktrees, and state directories.
@@ -15,13 +15,36 @@
 .PARAMETER SkipState
     Decline state-directory removal non-interactively. Useful in automation
     that only wants container/volume/worktree cleanup.
+.PARAMETER Backups
+    Remove stale .env.backup.* and .env.bak files older than -BackupAgeDays
+    days from the project root. Preserves .env, .env.example, and fresh
+    backups.
+.PARAMETER BackupAgeDays
+    Age threshold in days for -Backups removal. Default: 7.
 #>
 [CmdletBinding()]
 param(
     [string]$RepoDir,
     [Alias('Yes')][switch]$Force,
-    [Alias('No')][switch]$SkipState
+    [Alias('No')][switch]$SkipState,
+    [Alias('B')][switch]$Backups,
+    # Bounded so a negative value cannot put the cutoff in the future and
+    # sweep every backup. 0 is allowed and means the same as `find -mtime +0`:
+    # anything at least a whole day old. Validation runs at parameter binding,
+    # before the platform guard below, so a rejected value never reaches the
+    # deletion path on any host.
+    [ValidateRange(0, 3650)]
+    [int]$BackupAgeDays = 7
 )
+
+# Platform guard: PowerShell 7 runs on Linux and macOS, but this script resolves
+# runtime state through USERPROFILE. That is not the state root created by the
+# bash installer, so cleanup can report success while leaving the real state
+# behind.
+if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersionTable.OS -notlike '*Windows*') {
+    Write-Error "cleanup.ps1 is Windows-only. Use ./scripts/cleanup.sh on macOS or Linux."
+    exit 1
+}
 
 if ($Force -and $SkipState) {
     Write-Error '-Force and -SkipState are mutually exclusive.'
@@ -34,7 +57,64 @@ Import-Module "$PSScriptRoot\ClaudeDocker.psm1" -Force
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $ProjectRoot
 
+# Interactive-only paths need a real host that can accept input. Detected once
+# here so both destructive steps below judge it the same way; a redirected
+# stdin or a remoting host cannot answer a prompt, and hanging CI on one is
+# what the check prevents.
+$script:Interactive = ($Host.Name -ne 'ServerRemoteHost') -and (-not [Console]::IsInputRedirected)
+
+# Resolve-Step turns the switches into an answer for one destructive step, or
+# aborts when there is no answer to be had. Both steps call it, which is the
+# point: this script used to gate state-directory removal and not gate backup
+# removal, so one script carried two policies for two destructive actions.
+function Resolve-Step {
+    param([Parameter(Mandatory)][string]$Question)
+
+    $decision = Get-CleanupDecision -Force:$Force.IsPresent -Skip:$SkipState.IsPresent `
+                                    -Interactive:$script:Interactive
+    switch ($decision) {
+        'remove' { return $true }
+        'skip' { return $false }
+        'ask' { return (Read-Confirmation -Question $Question) }
+        'refuse' {
+            Write-Error '  stdin is not interactive. Pass -Force to proceed non-interactively, or -SkipState to skip.'
+            exit 1
+        }
+        default {
+            # Fail closed. An unrecognized decision reaching a delete is worse
+            # than an aborted cleanup, and `default` silently prompting would
+            # hide the mismatch on an interactive host.
+            Write-Error "  Unexpected cleanup decision '$decision'."
+            exit 1
+        }
+    }
+}
+
 try {
+    if ($Backups) {
+        Write-Host "=== Removing stale .env backup files (>$BackupAgeDays days) ===" -ForegroundColor Cyan
+        # These files are the only recovery point for a .env holding API keys
+        # and GH tokens (install.ps1 rotates them and keeps three), which is
+        # why cleanup.sh has always asked before deleting them and why
+        # remove.ps1 sweeps them only after its own confirmation.
+        if (Resolve-Step -Question "Remove stale .env.backup.* and .env.bak files older than $BackupAgeDays days?") {
+            # `find -mtime +N` truncates the age to whole days; matching that
+            # here is what keeps the same flag and value from producing
+            # opposite outcomes on the two platforms.
+            $now = Get-Date
+            Get-ChildItem -Path $ProjectRoot -Filter '.env.backup.*' -File -ErrorAction SilentlyContinue |
+                Where-Object { Test-FileAgeExceedsDays -LastWriteTime $_.LastWriteTime -Now $now -Days $BackupAgeDays } |
+                Remove-Item -Force
+            Get-ChildItem -Path $ProjectRoot -Filter '.env.bak' -File -ErrorAction SilentlyContinue |
+                Where-Object { Test-FileAgeExceedsDays -LastWriteTime $_.LastWriteTime -Now $now -Days $BackupAgeDays } |
+                Remove-Item -Force
+            Write-Host '  Stale backups removed.'
+        }
+        else {
+            Write-Host '  Skipped.'
+        }
+    }
+
     Write-Host '=== Stopping containers ===' -ForegroundColor Cyan
     & docker compose down --remove-orphans 2>$null
     # Ignore errors if no containers running
@@ -44,17 +124,40 @@ try {
 
     Write-Host '=== Removing worktrees (if Tier B) ===' -ForegroundColor Cyan
     if ($RepoDir -and (Test-Path (Join-Path $RepoDir '.git'))) {
+        # .env names the workspaces the installer created. Read before the
+        # Push-Location so the path stays relative to the project root.
+        $envData = $null
+        $envFile = Join-Path $ProjectRoot '.env'
+        if (Test-Path $envFile) { $envData = Read-EnvFile -Path $envFile }
+
         Push-Location $RepoDir
         try {
-            $currentDir = (Get-Location).Path
-            $worktrees = & git worktree list --porcelain 2>$null |
+            $listed = @(& git worktree list --porcelain 2>$null |
                 Where-Object { $_ -match '^worktree (.+)$' } |
-                ForEach-Object { $Matches[1] }
+                ForEach-Object { $Matches[1] })
 
-            foreach ($wt in $worktrees) {
-                if ($wt -ne $currentDir) {
-                    Write-Host "  Removing worktree: $wt"
-                    & git worktree remove $wt --force 2>$null
+            # The raw current-directory comparison this replaces could not
+            # match on Windows -- git reports forward slashes, Get-Location
+            # backslashes -- so -RepoDir itself was offered up for removal
+            # (#342). git refuses for a main working tree, but not when
+            # -RepoDir names a linked one, which is the tree the check
+            # existed to preserve.
+            $removable = @(Select-RemovableWorktree -WorktreePath $listed `
+                -CurrentPath (Get-Location).Path)
+
+            # Ownership check and failure reporting kept in step with
+            # cleanup.sh: a worktree the user added themselves is not this
+            # tool's to delete, and a refusal that is swallowed reads as a
+            # successful removal.
+            foreach ($wt in $removable) {
+                if (-not (Test-OwnedWorktreePath -Path $wt -ProjectDir $RepoDir -EnvData $envData)) {
+                    Write-Host "  Keeping worktree not created by claude-docker: $wt"
+                    continue
+                }
+                Write-Host "  Removing worktree: $wt"
+                & git worktree remove $wt --force 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "git declined to remove $wt - left in place."
                 }
             }
         }
@@ -64,29 +167,21 @@ try {
     }
 
     Write-Host '=== Removing state directories ===' -ForegroundColor Cyan
-    $shouldRemove = $false
-    if ($Force) {
-        $shouldRemove = $true
-    } elseif ($SkipState) {
-        $shouldRemove = $false
-    } else {
-        # Interactive-only path: detect a real host that can accept input.
-        # Read-Confirmation throws on non-interactive hosts (ServerRemoteHost,
-        # redirected stdin) which prevents CI hangs.
-        $interactive = ($Host.Name -ne 'ServerRemoteHost') -and (-not [Console]::IsInputRedirected)
-        if (-not $interactive) {
-            Write-Error '  stdin is not interactive. Pass -Force to remove state non-interactively, or -SkipState to skip.'
-            exit 1
+    # Same gate as the backup step above. This block is where the pattern came
+    # from; it now shares the implementation instead of being the only copy.
+    if (Resolve-Step -Question "Remove every runtime's state directory (~/.*-state)?") {
+        # Remove every registered runtime's state directory, not just
+        # Claude's, so a codex/gemini install is fully cleaned up (see #273).
+        foreach ($runtime in Get-RuntimeList -ProjectRoot $ProjectRoot) {
+            $stateDir = Get-RuntimeField -ProjectRoot $ProjectRoot -Runtime $runtime -Field 'stateDir'
+            if (-not $stateDir) { continue }
+            $statePath = Join-Path $env:USERPROFILE $stateDir
+            if (Test-Path $statePath) {
+                Remove-Item $statePath -Recurse -Force
+                Write-Host "  Removed: ~/$stateDir"
+            }
         }
-        $shouldRemove = Read-Confirmation -Question 'Remove ~/.claude-state/*?'
-    }
-
-    if ($shouldRemove) {
-        $statePath = Join-Path $env:USERPROFILE '.claude-state'
-        if (Test-Path $statePath) {
-            Remove-Item $statePath -Recurse -Force
-            Write-Host '  State directories removed.'
-        }
+        Write-Host '  State directories removed.'
     }
     else {
         Write-Host '  Skipped.'
