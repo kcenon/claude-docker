@@ -58,3 +58,10 @@ updates:
     labels:
       - "type/chore"
       - "priority/low"
+    ignore:
+      # A nested module with no tags of its own; only pseudo-versions exist.
+      # Dependabot resolves it against the parent repository's root tag
+      # v0.1.0 (2023), which does not contain the package, and the whole
+      # gomod job fails with dependency_file_not_resolvable. Bump it by hand:
+      #   cd tui && go get github.com/charmbracelet/x/exp/teatest@latest
+      - dependency-name: "github.com/charmbracelet/x/exp/teatest"
