@@ -51,9 +51,12 @@ class AuthenticatedFixture(ContainerFixture):
 
     def up(self):
         # Host policy also redacts its subprocess errors. Never request logs.
+        # The entrypoint wait is the parent's: this override replaces up(), so
+        # without the call these fixtures would keep the git config lock race.
         try:
             policy.prepare_dependency_volumes(self.model, self.cmd, self.host_env, self.root)
             self.run(self.cmd + ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
+            self.wait_for_entrypoints()
         except policy.PolicyError:
             raise WorkflowFailure("startup_failed") from None
 

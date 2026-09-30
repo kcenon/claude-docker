@@ -198,12 +198,46 @@ class ContainerFixture:
         policy.prepare_dependency_volumes(self.model, self.cmd, self.host_env, self.root)
         try:
             self.run(self.cmd + ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
+            self.wait_for_entrypoints()
         except (policy.PolicyError, subprocess.TimeoutExpired):
             try:
                 print(self.run(self.cmd + ["logs", "--no-color", "--tail", "80"], timeout=30), file=sys.stderr)
             except (policy.PolicyError, subprocess.SubprocessError, OSError) as error:
                 print("Fixture startup logs unavailable: " + str(error), file=sys.stderr)
             raise
+
+    def wait_for_entrypoints(self, timeout=60):
+        """Return once every service's entrypoint has exec'd its command.
+
+        No service declares a healthcheck, so `compose up --wait` returns as
+        soon as the containers run, while entrypoint.sh may still be running
+        `gh auth setup-git` against the account's global git config. A test
+        that writes the same file then loses the lock race: "could not lock
+        config file /home/node/.gemini/gitconfig: File exists" (CI run
+        36666940393). entrypoint.sh ends in `exec "$@"`, which is the moment
+        setup is complete.
+
+        The probe looks at each process's second argument: a running
+        entrypoint is `/bin/bash /usr/local/bin/entrypoint.sh ...`. The whole
+        command line would not do, because under `init: true` PID 1 stays
+        `docker-init -- entrypoint.sh ...` for the container's lifetime, and
+        this probe's own `sh -c` has `-c` there.
+        """
+        script = ("for f in /proc/[0-9]*/cmdline; do tr '\\000' '\\n' < \"$f\" 2>/dev/null | sed -n 2p; done"
+                  " | grep 'entrypoint\\.sh$' || true")
+        deadline = time.monotonic() + timeout
+        probes = 0
+        for index, service in enumerate(self.services):
+            while True:
+                probes += 1
+                result = self.probe(index, "sh", "-c", script)
+                if result.returncode == 0 and not result.stdout.strip():
+                    break
+                if time.monotonic() >= deadline:
+                    raise policy.PolicyError("Entrypoint of " + service + " did not exec its command within "
+                                             + str(timeout) + " seconds.\n" + result.stdout + result.stderr)
+                time.sleep(0.25)
+        print("Fixture entrypoints finished after " + str(probes) + " probe(s).", file=sys.stderr)
 
     def execute(self, index, *argv, timeout=60):
         return self.run(self.cmd + ["exec", "-T", self.services[index]] + list(argv), timeout)
