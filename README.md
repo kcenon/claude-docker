@@ -1,6 +1,6 @@
 # Claude Docker
 
-Status: active · Version [`2026.09.28`](VERSION) · Base image `node:26.10.0-slim` (Debian trixie)
+Status: active · Version [`2026.09.30`](VERSION) · Base image `node:26.10.0-slim` (Debian trixie)
 
 Run multiple isolated accounts for Claude Code, OpenAI Codex CLI, or Google
 Gemini CLI on a single host while sharing source code and one Docker image.
