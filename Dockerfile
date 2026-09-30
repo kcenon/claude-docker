@@ -9,9 +9,11 @@
 #        docker pull node:<new-version>-slim \
 #          && docker inspect --format='{{index .RepoDigests 0}}' node:<new-version>-slim
 #   3. Update BOTH the tag and the @sha256: suffix in the FROM line below
-#      and synchronize version references in these comments and README.md
+#      and synchronize version references in these comments, the README.md
+#      status line and docs/MAINTENANCE.md
 #   4. Bump VERSION and regenerate Compose files from repository defaults
-#      (see README.md for the clean-worktree procedure)
+#      (see docs/MAINTENANCE.md#bumping-the-base-image for the clean-worktree
+#      procedure)
 #   5. Rebuild: docker compose build --no-cache
 FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
 
@@ -134,8 +136,8 @@ RUN if [ -n "${CODEX_CLI_VERSION:-}" ]; then \
 # allocations, subprocesses and page cache (scripts/lib/resources.sh). This
 # line is what a plain `docker run` of the image gets, where there is no
 # declared cap to derive from. Running it that way, set --max-old-space-size
-# to roughly three quarters of whatever --memory is passed; see "Resource
-# Requirements" in README.md.
+# to roughly three quarters of whatever --memory is passed; see
+# docs/RESOURCES.md#node-heap-headroom.
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
 # Pre-create ccstatusline XDG config dir world-writable.
