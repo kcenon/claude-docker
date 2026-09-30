@@ -351,9 +351,11 @@ jobs:
           # unset (#356).
           - tests/test_env_value_semantics.sh
           # Enumeration checks only: every tracked compose file is listed where
-          # README enumerates them, every ${VAR} the base compose reads is in
-          # .env.example. Prose correctness is not machine-checkable; these are
-          # the lists that went stale when isolated mode landed (#360).
+          # the docs enumerate them, every ${VAR} the base compose reads is in
+          # .env.example, and README links every reference page under docs/.
+          # Prose correctness is not machine-checkable; these are the lists
+          # that went stale when isolated mode landed (#360) and that the
+          # README trim created (#399).
           - tests/test_docs_contracts.sh
           - scripts/test-entrypoint-settings.sh
     steps:
