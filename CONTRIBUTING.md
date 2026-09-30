@@ -86,12 +86,24 @@ A rule with copies and no equivalence test is a future repair commit.
   code, it is testing something else.
 - Silence is not success: a harness that finds nothing to check reports the
   same "0 failures" as one that checked everything. Assert your input count.
+- **README changes pass the evidence lint.** Run
+  `python3 tests/test_readme_lint.py` and `python3 scripts/readme_lint.py`;
+  the rules are in `docs/README_POLICY.md`. Reference material belongs in a
+  `docs/` page rather than in README.
 
 ### Portability
 
-- macOS ships bash 3.2 as `/bin/bash`. No `${var,,}`, no `mapfile`, no
-  associative arrays, no namerefs, no `wait -n`. The full list is in
-  `tests/test_bash32_portability.sh`, which enforces it.
+**Shell portability.** macOS ships bash 3.2 as `/bin/bash`, and every bash entry
+point is `#!/usr/bin/env bash`, so a bash 4+ construct is not a style question
+there -- it is `bad substitution` and an exited shell. Scripts under `scripts/`
+and `tests/` must stay within bash 3.2: no case-modifying expansions
+(`${var,,}`, `${var^^}`), no associative arrays, no `mapfile`/`readarray`, no
+namerefs, no `&>>`, no `;&`/`;;&`, no `coproc`, no `wait -n`, and no
+`printf '%(...)T'`. Use `printf '%s' "$v" | tr '[:upper:]' '[:lower:]'` in place
+of `${v,,}`. `tests/test_bash32_portability.sh` enforces the list on every run,
+and the `Bash Tests (macOS, bash 3.2)` CI job exercises a subset of the suite
+under `/bin/bash` itself.
+
 - Windows PowerShell 5.1 is **not** supported; scripts require `pwsh` 7+.
 - `scripts/lib/*.sh` is sourced by the container entrypoint, so it must not
   assume anything the Debian image does not have.
@@ -113,6 +125,10 @@ The `Image content changes bump VERSION` job enforces this. Check the paths it
 matches before relying on it: the rule is "anything the Dockerfile `COPY`s",
 and the job's pattern is a hand-maintained approximation of that list — which
 makes it one more copy that can drift from what it describes.
+
+A `VERSION` or base image bump also updates the README status line; the
+`Documentation Audit` workflow checks that line against `VERSION` and the
+`Dockerfile` `FROM` tag.
 
 ### Generated files
 
@@ -139,7 +155,20 @@ compares against. Do not hand-edit them.
 
 ## Where the deeper documents are
 
-- [`README.md`](README.md) — installation, usage, configuration reference
+- [`README.md`](README.md) — status, quick start, command summary, and the
+  map of the pages below
+- [`docs/USAGE.md`](docs/USAGE.md), [`docs/RUNTIMES.md`](docs/RUNTIMES.md),
+  [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md),
+  [`docs/HOST_CONFIG.md`](docs/HOST_CONFIG.md),
+  [`docs/COMPOSE.md`](docs/COMPOSE.md), [`docs/RESOURCES.md`](docs/RESOURCES.md),
+  [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — the reference that
+  used to live in README
+- [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md) — what the image pins and the
+  base image bump procedure
+- [`docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md) — the repository
+  layout
+- [`docs/README_POLICY.md`](docs/README_POLICY.md) — what README may claim and
+  how `scripts/readme_lint.py` checks it
 - [`docs/ISOLATION.md`](docs/ISOLATION.md) — the three workspace isolation
   modes and exactly what each one does and does not defend against
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — benchmark numbers of record

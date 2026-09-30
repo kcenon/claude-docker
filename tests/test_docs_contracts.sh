@@ -12,9 +12,16 @@
 # other way: six keys in real use appeared in it zero times, while README tells
 # the reader to `cp .env.example .env` as the complete manual path.
 #
-#   1. Every git-tracked docker-compose*.yml appears in README's Project
-#      Structure tree, in the recovery command, and in the overlay table.
+#   1. Every git-tracked docker-compose*.yml appears in the Project Structure
+#      tree (docs/PROJECT_STRUCTURE.md), and in the recovery command and the
+#      overlay table (docs/COMPOSE.md).
 #   2. Every ${VAR} the base compose file reads appears in .env.example.
+#
+# README became an entry page in #399, and those enumerations moved to the docs
+# pages named above; the checks followed them there rather than being dropped.
+# A third section covers the UID/GID caveat, and a fourth checks that README
+# links every reference page under docs/, which is the enumeration the trim
+# created.
 #
 # What this deliberately does not do is check prose for correctness. It checks
 # enumerations -- the places where a list in a document is supposed to mirror a
@@ -26,6 +33,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 README="$PROJECT_ROOT/README.md"
+STRUCTURE_DOC="$PROJECT_ROOT/docs/PROJECT_STRUCTURE.md"
+COMPOSE_DOC="$PROJECT_ROOT/docs/COMPOSE.md"
 ENV_EXAMPLE="$PROJECT_ROOT/.env.example"
 BASE_COMPOSE="$PROJECT_ROOT/docker-compose.yml"
 
@@ -36,7 +45,7 @@ pass() { echo "  PASS  $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL  $1"; FAIL=$((FAIL + 1)); }
 
 # ---------------------------------------------------------------------------
-echo "=== every generated compose file is enumerated in README ==="
+echo "=== every generated compose file is enumerated in the docs ==="
 # ---------------------------------------------------------------------------
 
 # git ls-files rather than a glob: an untracked docker-compose.override.yml a
@@ -51,24 +60,25 @@ if [ "$count" -lt 2 ]; then
 fi
 echo "  (checking $count tracked compose files)"
 
-# The recovery command README gives for restoring the committed copies. It has
+# The recovery command the docs give for restoring the committed copies. It has
 # to name every generated file, or following it leaves one modified and the
 # `Compose files are current` job still failing.
-recovery_line=$(grep -n 'git checkout -- docker-compose' "$README" | head -1)
+recovery_line=$(grep -n 'git checkout -- docker-compose' "$COMPOSE_DOC" | head -1)
 if [ -z "$recovery_line" ]; then
-    fail "README has no 'git checkout -- docker-compose' recovery command"
+    fail "docs/COMPOSE.md has no 'git checkout -- docker-compose' recovery command"
     recovery_line=""
 fi
 
-# The Project Structure tree.
-tree_block=$(awk '/^## Project Structure/,/^## License/' "$README")
+# The Project Structure tree: the fenced block of its page. Reading the fence,
+# not the whole file, keeps the prose above it from satisfying the check.
+tree_block=$(awk '/^```/ { inside = !inside; next } inside' "$STRUCTURE_DOC")
 if [ -z "$tree_block" ]; then
-    echo "  ERROR: could not locate the Project Structure section" >&2
+    echo "  ERROR: could not locate the Project Structure tree" >&2
     exit 1
 fi
 
 # The overlay table: rows begin with | `docker-compose...
-overlay_rows=$(grep -E '^\| `docker-compose[^`]*\.yml`' "$README")
+overlay_rows=$(grep -E '^\| `docker-compose[^`]*\.yml`' "$COMPOSE_DOC")
 
 for f in $compose_files; do
     if printf '%s' "$tree_block" | grep -qF "$f"; then
@@ -199,8 +209,8 @@ while IFS= read -r doc; do
     done < <(grep -n '^[[:space:]]*\(export \)\?UID=\|UID=%s' "$doc" | cut -d: -f1)
 done <<EOF
 $PROJECT_ROOT/README.md
-$PROJECT_ROOT/docs/ISOLATION.md
 $PROJECT_ROOT/.env.example
+$(for page in "$PROJECT_ROOT"/docs/*.md; do printf '%s\n' "$page"; done)
 EOF
 
 # Without this the section passes by finding nothing to check -- which is what
@@ -208,7 +218,36 @@ EOF
 if [ "$uid_anchors" -ge 4 ]; then
     pass "found $uid_anchors UID/GID instructions to check"
 else
-    fail "expected at least 4 UID/GID instructions across the three documents, found $uid_anchors"
+    fail "expected at least 4 UID/GID instructions across README, .env.example and docs/, found $uid_anchors"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== README links every reference page under docs/ ==="
+# ---------------------------------------------------------------------------
+#
+# README keeps summaries and links rather than reference text (#399), so a page
+# under docs/ that README does not link is reference a reader starting from
+# README cannot find. The issue evidence pages (ISSUE-*.md) are reached from
+# docs/ISOLATION.md and docs/PERFORMANCE.md, where their subject lives.
+doc_pages=0
+for page in "$PROJECT_ROOT"/docs/*.md; do
+    name="$(basename "$page")"
+    case "$name" in
+        ISSUE-*) continue ;;
+    esac
+    doc_pages=$((doc_pages + 1))
+    if grep -qF "](docs/$name" "$README"; then
+        pass "README links docs/$name"
+    else
+        fail "README does not link docs/$name"
+    fi
+done
+
+if [ "$doc_pages" -ge 5 ]; then
+    pass "found $doc_pages reference pages under docs/ to check"
+else
+    fail "expected at least 5 reference pages under docs/, found $doc_pages"
 fi
 
 # ---------------------------------------------------------------------------

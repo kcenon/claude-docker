@@ -22,12 +22,48 @@ this boundary.
 | `worktree` | Each account mounts only its own git worktree. Git metadata is still shared. | Concurrent branches with fewer lock and wrong-tree collisions. |
 | `isolated` | Each account mounts its own independent clone, with its own git metadata and no shared host configuration. | Accounts that must not read or modify each other's source. |
 
+### Setting up `shared`
+
+Both containers mount the same project directory. Simplest setup, minimum
+storage. Best when one session writes and the other reads/reviews. Any account
+can modify any other account's work, so use it only between mutually trusted
+accounts.
+
+### Setting up `worktree`
+
+Each container gets its own worktree for full concurrent editing safety.
+No `.git/index.lock` contention.
+
+```bash
+scripts/setup-worktrees.sh ~/work/project    # Create worktrees
+# add the printed PROJECT_DIR_* lines to .env
+scripts/claude-docker up                     # Selects the worktree overlay
+```
+
+The middle step is not optional. `setup-worktrees.sh` creates the worktrees and
+**prints** the `PROJECT_DIR_<X>` lines; it does not write them anywhere. With
+neither those paths nor an explicit `ISOLATION_MODE` in `.env`, the mode
+resolves to `shared`, the worktree overlay is never composed, and `up` starts
+every container on the one Tier A mount — silently, because that is a valid
+shared install and nothing distinguishes it from an intended one. (Declaring
+`ISOLATION_MODE=worktree` *and* omitting the paths is refused outright; it is
+the inferred case that passes quietly.) `isolated` below has the same shape.
+
+On native Windows, use
+`.\scripts\setup-worktrees.ps1 C:\path\to\project`, add the printed lines to
+`.env`, then start with `.\scripts\claude-docker.ps1 up`.
+
 ### Setting up `isolated`
 
 ```bash
 scripts/setup-isolated.sh --dry-run /path/to/repo 2
 scripts/setup-isolated.sh /path/to/repo 2
+# Set the printed ISOLATED_WORKSPACE_* entries and ISOLATION_MODE=isolated.
+scripts/generate-compose.sh
+scripts/claude-docker config
+scripts/claude-docker up
 # Windows: .\scripts\setup-isolated.ps1 -RepoDir C:\Projects\repo -AccountCount 2 -DryRun
+#          then .\scripts\generate-compose.ps1 and .\scripts\claude-docker.ps1
 ```
 
 The preview lists every clone, state path, mount, network and resource budget.

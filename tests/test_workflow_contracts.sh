@@ -27,6 +27,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKFLOWS="$PROJECT_ROOT/.github/workflows"
 RELEASE="$WORKFLOWS/release-tui.yml"
 CI="$WORKFLOWS/ci.yml"
+DOC_AUDIT="$WORKFLOWS/doc-audit.yml"
 
 PASS=0
 FAIL=0
@@ -61,7 +62,7 @@ assert_absent() {
     fi
 }
 
-for f in "$RELEASE" "$CI"; do
+for f in "$RELEASE" "$CI" "$DOC_AUDIT"; do
     if [[ ! -r "$f" ]]; then
         fail "workflow exists" "$f"
         echo "== Summary: PASS=$PASS FAIL=$FAIL =="
@@ -199,6 +200,30 @@ assert_matches 'ci.yml declares workflow-level permissions' "$CI" \
 assert_matches 'ci.yml grants only contents: read' "$CI" \
     '^ +contents: read$'
 assert_absent 'ci.yml grants no write scope' "$CI" \
+    '^ +[a-z-]+: write$'
+
+echo "== doc-audit.yml runs the README lint on every pull request =="
+
+# The linter and its tests are the whole job; a rename that dropped either
+# step would leave a green check that runs nothing (#399).
+assert_matches 'doc-audit.yml runs the README lint tests' "$DOC_AUDIT" \
+    '^ +run: python3 tests/test_readme_lint\.py$'
+assert_matches 'doc-audit.yml lints README' "$DOC_AUDIT" \
+    '^ +run: python3 scripts/readme_lint\.py README\.md$'
+
+# The lint reads VERSION, the Dockerfile, docs/ anchors and workflow files as
+# well as README. A paths filter would be a second list of those inputs, and a
+# required check that a filter skips never reports.
+assert_absent 'doc-audit.yml runs without a paths filter' "$DOC_AUDIT" \
+    '^ +paths(-ignore)?:'
+
+default_perm=$(grep -A1 -E '^permissions:$' "$DOC_AUDIT" | tail -n 1)
+if [[ "$default_perm" =~ ^[[:space:]]+contents:[[:space:]]read$ ]]; then
+    pass 'doc-audit.yml defaults to contents: read'
+else
+    fail 'doc-audit.yml defaults to contents: read' "got: $default_perm"
+fi
+assert_absent 'doc-audit.yml grants no write scope' "$DOC_AUDIT" \
     '^ +[a-z-]+: write$'
 
 echo

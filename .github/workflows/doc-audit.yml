@@ -1,0 +1,36 @@
+name: Documentation Audit
+
+# README evidence policy (#399). scripts/readme_lint.py checks README.md for a
+# status line, the VERSION value and the Dockerfile base image tag in the first
+# 20 lines, unsourced figures, promotional qualifiers, badges and length;
+# tests/test_readme_lint.py checks the linter itself. Both are standard-library
+# Python and never use the network. See docs/README_POLICY.md.
+#
+# No paths filter, unlike isolation-evidence.yml. The lint reads more than
+# README -- VERSION, the Dockerfile FROM line, anchors in docs/ and workflow
+# files for badges -- so a filter is one more list that can miss an input, and
+# marking this check required can never leave a pull request waiting on a check
+# that a filter skipped.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doc-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readme-lint:
+    name: README lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: README lint behavior tests
+        run: python3 tests/test_readme_lint.py
+      - name: Lint README
+        run: python3 scripts/readme_lint.py README.md
