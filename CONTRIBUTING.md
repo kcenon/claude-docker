@@ -138,6 +138,8 @@ compares against. Do not hand-edit them.
 
 ## Conventions
 
+- **Questions and usage help** belong in [Discussions](https://github.com/kcenon/claude-docker/discussions).
+  Use issues for reproducible defects and concrete change requests.
 - **Branch from `develop`**, and open PRs against `develop`. `main` takes
   releases only.
 - **Dependabot** opens version updates against `develop` (`target-branch` in
