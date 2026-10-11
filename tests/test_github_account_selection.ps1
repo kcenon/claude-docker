@@ -51,6 +51,17 @@ function New-TestSandbox([string]$Name) {
 
     $bin = Join-Path $dir 'bin'
     Copy-Item (Join-Path $ScriptDir 'lib/mock_compose.py') (Join-Path $bin 'mock_compose.py')
+    Copy-Item (Join-Path $ScriptDir 'lib/mock_github_docker.py') (Join-Path $bin 'mock_github_docker.py')
+    # Python's Windows CreateProcess lookup skips .cmd shims. Bind this
+    # disposable policy copy to the Python adapter so real docker.exe cannot win.
+    $policyPath = Join-Path $dir 'scripts/lib/lifecycle.py'
+    $policyText = [System.IO.File]::ReadAllText($policyPath)
+    $adapterPath = (Join-Path $bin 'mock_github_docker.py') | ConvertTo-Json -Compress
+    $signature = "def run(argv, env=None, cwd=None, timeout=60):`n"
+    $adapter = "    if argv[0] == 'docker':`n        argv = [sys.executable, $adapterPath] + argv[1:]`n"
+    if (-not $policyText.Contains($signature)) { throw 'Missing policy process boundary' }
+    Write-TestFile $policyPath ($policyText.Replace($signature, $signature + $adapter))
+
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         Write-TestFile (Join-Path $bin 'gh.cmd') @'
 @echo off

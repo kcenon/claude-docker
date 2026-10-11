@@ -132,6 +132,16 @@ class WrapperReadinessTests(unittest.TestCase):
             state_path = root / "state.json"
             state_path.write_text(json.dumps({"calls": [], "premature": [], "refuse": refuse, "probe_exit": probe_exit}))
             fixture = str(ROOT / "tests/readiness_fixture.py")
+            if os.name == "nt":
+                # CreateProcess searches for docker.exe, bypassing a .cmd
+                # shim when Python invokes Docker. Bind this disposable
+                # policy copy to the adapter explicitly; never call a daemon.
+                path = root / "scripts/lib/lifecycle.py"
+                source = path.read_text()
+                target = "def run(argv, env=None, cwd=None, timeout=60):\n"
+                self.assertIn(target, source)
+                path.write_text(source.replace(target, target +
+                    "    if argv[0] == 'docker':\n        argv = [sys.executable, " + repr(fixture) + ", 'docker'] + argv[1:]\n", 1))
             for name in ("docker", "gh"):
                 if os.name == "nt":
                     script = root / "bin" / (name + ".cmd")
@@ -152,6 +162,11 @@ class WrapperReadinessTests(unittest.TestCase):
                 if os.name != "nt":
                     script.write_text(script.read_text().replace("$ErrorActionPreference = 'Stop'",
                                       "$ErrorActionPreference = 'Stop'\n$PSVersionTable.OS = 'Microsoft Windows'", 1))
+                else:
+                    script.write_text(script.read_text().replace("$ErrorActionPreference = 'Stop'",
+                        "$ErrorActionPreference = 'Stop'\n" +
+                        "Set-Alias docker '" + str(root / "bin/docker.cmd").replace("'", "''") + "'\n" +
+                        "Set-Alias gh '" + str(root / "bin/gh.cmd").replace("'", "''") + "'\n", 1))
                 command = ["pwsh", "-NoProfile", "-File", str(script)]
             else:
                 command = ["bash", str(root / "scripts/claude-docker")]
