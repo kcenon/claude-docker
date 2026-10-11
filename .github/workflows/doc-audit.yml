@@ -4,7 +4,8 @@ name: Documentation Audit
 # status line, the VERSION value and the Dockerfile base image tag in the first
 # 20 lines, unsourced figures, promotional qualifiers, badges and length;
 # tests/test_readme_lint.py checks the linter itself. Both are standard-library
-# Python and never use the network. See docs/README_POLICY.md.
+# Python and never use the network. Docs claim rules and named evidence-page
+# exceptions (#414) are also checked. See docs/README_POLICY.md.
 #
 # No paths filter, unlike isolation-evidence.yml. The lint reads more than
 # README -- VERSION, the Dockerfile FROM line, anchors in docs/ and workflow
@@ -34,3 +35,5 @@ jobs:
         run: python3 tests/test_readme_lint.py
       - name: Lint README
         run: python3 scripts/readme_lint.py README.md
+      - name: Lint documentation claims
+        run: python3 scripts/readme_lint.py --docs

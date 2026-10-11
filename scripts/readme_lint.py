@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline README policy checks; see docs/README_POLICY.md.
+"""Offline README and docs policy checks; see docs/README_POLICY.md.
 
 Ported from kcenon/common_system scripts/readme_lint.py (c2f4037) by way of the
 kcenon/dcmtk-docker port (7953067), for a single README.md. This repository
@@ -27,6 +27,15 @@ from urllib.parse import unquote, urlsplit
 
 
 REPOSITORY = "kcenon/claude-docker"
+# Only these evidence pages own measurements. New docs pages are checked by
+# default, including new issue records until their scope is reviewed.
+DOC_RULE_EXCEPTIONS = {
+    "docs/PERFORMANCE.md": {"unsourced-measurement", "measurement-table"},
+    "docs/ISSUE-335-REVIEW.md": {"unsourced-measurement", "measurement-table"},
+    "docs/ISSUE-335-VALIDATION.md": {"unsourced-measurement", "measurement-table"},
+    "docs/ISSUE-335-WORKFLOWS.md": {"unsourced-measurement", "measurement-table"},
+    "docs/README_POLICY.md": {"qualifier", "unsourced-measurement"},
+}
 SEP = r"[\s\-\u2010-\u2015]+"
 QUALIFIER = re.compile(
     rf"\b(?:production{SEP}ready|enterprise{SEP}grade|battle{SEP}tested|"
@@ -400,42 +409,45 @@ def configured_policy(line: str, links: list, line_no: int, root: Path) -> bool:
                for n, url, _ in links)
 
 
-def lint_text(text: str, path: Path, root: Path) -> Report:
+def lint_text(text: str, path: Path, root: Path, mode: str = "readme") -> Report:
+    if mode not in {"readme", "docs"}:
+        raise ValueError(f"unknown lint mode: {mode}")
     report = Report(path, len(text.splitlines()))
     if not text.strip():
-        report.add(1, "empty", "README must not be empty")
-    if report.lines > 300:
+        report.add(1, "empty", "document must not be empty")
+    if mode == "readme" and report.lines > 300:
         report.add(301, "length", f"{report.lines} physical lines; maximum is 300")
     blocks, markers = prose_blocks(text)
     visible, images, links = inline_content(blocks)
     lines = visible.splitlines()
-    titles = [i for i, line in enumerate(lines[:20], 1) if re.match(r"^#\s+\S", line)]
-    title = titles[0] if titles else 21
-    if not titles:
-        report.add(1, "title", "put a visible title in the first 20 lines")
-    statuses = [(i, re.search(r"\bStatus:\s*(\w+)", line, re.I))
-                for i, line in enumerate(lines[:20], 1) if i > title]
-    if not any(m and m[1].lower() in {"active", "maintenance", "experimental"} for _, m in statuses):
-        report.add(1, "status", "show Status: active|maintenance|experimental after the title within 20 lines")
-    # There is no GitHub release to link, and release-tui.yml publishes TUI
-    # binaries for any v* tag, so a release link cannot carry the version here.
-    # VERSION is the image tag the generators and installers default to, and the
-    # FROM tag is what that image is built on. Both live in the tree, so a bump
-    # that leaves README behind fails this check instead of going stale.
-    try:
-        version = (root / "VERSION").read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
-        version = ""
-    if not version:
-        report.add(1, "version", "VERSION is missing or empty")
-    elif not any(title < n <= 20 and mentions(label, version) and version_target(url, version, root)
-                 for n, url, label in links):
-        report.add(1, "version", f"link VERSION ({version}) after the title within the first 20 lines")
-    image, error = base_image(root)
-    if error:
-        report.add(1, "base-image", error)
-    elif not any(mentions(line, image) for line in lines[title:20]):
-        report.add(1, "base-image", f"name the base image {image} after the title within the first 20 lines")
+    if mode == "readme":
+        titles = [i for i, line in enumerate(lines[:20], 1) if re.match(r"^#\s+\S", line)]
+        title = titles[0] if titles else 21
+        if not titles:
+            report.add(1, "title", "put a visible title in the first 20 lines")
+        statuses = [(i, re.search(r"\bStatus:\s*(\w+)", line, re.I))
+                    for i, line in enumerate(lines[:20], 1) if i > title]
+        if not any(m and m[1].lower() in {"active", "maintenance", "experimental"} for _, m in statuses):
+            report.add(1, "status", "show Status: active|maintenance|experimental after the title within 20 lines")
+        # There is no GitHub release to link, and release-tui.yml publishes TUI
+        # binaries for any v* tag, so a release link cannot carry the version here.
+        # VERSION is the image tag the generators and installers default to, and the
+        # FROM tag is what that image is built on. Both live in the tree, so a bump
+        # that leaves README behind fails this check instead of going stale.
+        try:
+            version = (root / "VERSION").read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            version = ""
+        if not version:
+            report.add(1, "version", "VERSION is missing or empty")
+        elif not any(title < n <= 20 and mentions(label, version) and version_target(url, version, root)
+                     for n, url, label in links):
+            report.add(1, "version", f"link VERSION ({version}) after the title within the first 20 lines")
+        image, error = base_image(root)
+        if error:
+            report.add(1, "base-image", error)
+        elif not any(mentions(line, image) for line in lines[title:20]):
+            report.add(1, "base-image", f"name the base image {image} after the title within the first 20 lines")
 
     measured, table_columns = set(), []
     for i, line in enumerate(lines, 1):
@@ -482,23 +494,37 @@ def lint_text(text: str, path: Path, root: Path) -> Report:
         error = badge_error(src, href, alt, root)
         if error:
             report.add(line_no, "badge", error)
-    if report.density > 1.0:
+    if mode == "readme" and report.density > 1.0:
         report.add(min(report.claim_lines), "density", f"{report.density:.4f} claim lines per 100 lines; maximum is 1.0")
+    if mode == "docs":
+        try:
+            relative = path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            relative = ""
+        exempt = DOC_RULE_EXCEPTIONS.get(relative, set())
+        report.findings = [finding for finding in report.findings if finding.rule not in exempt]
     report.findings.sort(key=lambda item: (item.line, item.rule))
     return report
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("files", nargs="*", help="README paths relative to --root (default: README.md)")
+    parser.add_argument("files", nargs="*", help="paths relative to --root (default: README.md, or docs/*.md with --docs)")
+    parser.add_argument("--docs", action="store_true", help="check docs claims with named evidence-page exceptions")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1],
                         help="repository root; defaults to the script's repository")
     args = parser.parse_args(argv)
     failed = False
-    for name in args.files or ["README.md"]:
+    names = args.files or ([str(path.relative_to(args.root)) for path in sorted((args.root / "docs").glob("*.md"))]
+                           if args.docs else ["README.md"])
+    if not names:
+        print(f"{args.root}/docs:1: input: no documentation pages found")
+        return 1
+    for name in names:
         path = args.root / name
         try:
-            report = lint_text(path.read_text(encoding="utf-8"), path, args.root)
+            report = lint_text(path.read_text(encoding="utf-8"), path, args.root,
+                               mode="docs" if args.docs else "readme")
         except (OSError, UnicodeError) as error:
             print(f"{path}:1: input: {error}")
             failed = True
