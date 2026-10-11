@@ -191,13 +191,26 @@ function Show-IsolationMode {
     Write-UnusedWorkspacePathWarning -ProjectRoot $ProjectRoot -Mode $mode
 }
 
+function Invoke-ReadyUp {
+    param([Parameter(ValueFromRemainingArguments)][string[]]$UpArguments)
+    try {
+        Invoke-HostPolicy -ProjectRoot $ProjectRoot up -- @UpArguments
+    } catch {
+        # Keep Docker's native failure code through both the direct wrapper
+        # and the outer lifecycle-lock process.
+        $nativeCode = $_.Exception.Data['ExitCode']
+        if ($nativeCode) { exit ([int]$nativeCode) }
+        throw
+    }
+}
+
 function Invoke-Up {
     # Printed before the compose call so an unusable mode is diagnosed with
     # its description already on screen.
     Show-IsolationMode
     Write-Host ''
     Write-Host 'Starting containers...' -ForegroundColor Cyan
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot up -- @Arguments
+    Invoke-ReadyUp @Arguments
     if (-not (Test-ComposeSucceeded 'up')) { return }
     Write-Host 'Containers started.' -ForegroundColor Green
     Write-Host ''
@@ -209,7 +222,6 @@ function Invoke-Up {
     $primary = Get-PrimaryService -ProjectRoot $ProjectRoot
     $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($cid) {
-        Start-Sleep -Seconds 2  # wait for entrypoint gh auth setup
         Test-AllContainerGhAuth | Out-Null
     }
 }
@@ -369,13 +381,12 @@ function Invoke-GhAuthShared {
     $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($running) {
         Write-Host 'Recreating containers to apply...' -ForegroundColor Cyan
-        Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
+        Invoke-ReadyUp --force-recreate
         # A failed recreate means the token was written to .env but no
         # container picked it up. Verifying auth after that would report a
         # stale answer, so stop here with the code recorded.
         if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
 
-        Start-Sleep -Seconds 2
         $cid = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
         if ($cid) {
             Write-Host ''
@@ -500,11 +511,10 @@ function Invoke-GhAuthPerAccount {
     }
 
     Write-Host 'Recreating selected container(s) to apply...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate @runningServices
+    Invoke-ReadyUp --force-recreate @runningServices
     # Same as the shared path: verifying auth against containers that were not
     # recreated would report a stale answer.
     if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
-    Start-Sleep -Seconds 2
     foreach ($service in $runningServices) {
         Test-ContainerGhAuth -Service $service | Out-Null
     }
@@ -723,7 +733,7 @@ function Invoke-Update {
     if (-not (Test-ComposeSucceeded 'build --no-cache')) { return }
 
     Write-Host '[4/5] Recreating containers...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot up --detach --force-recreate
+    Invoke-ReadyUp --force-recreate
     if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
 
     # Verify version and GitHub auth
@@ -735,8 +745,6 @@ function Invoke-Update {
         if (-not $version) { $version = 'unknown' }
         Write-Host "  * $binary version: $version" -ForegroundColor Green
 
-        # Wait briefly for entrypoint to complete gh auth setup
-        Start-Sleep -Seconds 2
         Test-AllContainerGhAuth | Out-Null
 
         Write-Host ''

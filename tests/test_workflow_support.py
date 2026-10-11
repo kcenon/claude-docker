@@ -107,29 +107,22 @@ class WorkflowSupportTest(unittest.TestCase):
         self.assertEqual(1, run.call_count)
         wait.assert_called_once_with()
 
-    def test_entrypoint_wait_polls_each_service_until_its_entrypoint_execs(self):
+    def test_entrypoint_wait_uses_product_gate_for_all_services(self):
         fixture = AuthenticatedFixture()
         self.addCleanup(fixture.temp.cleanup)
-        running = SimpleNamespace(returncode=0, stdout="/usr/local/bin/entrypoint.sh\n", stderr="")
-        failed = SimpleNamespace(returncode=1, stdout="", stderr="exec failed")
-        done = SimpleNamespace(returncode=0, stdout="", stderr="")
-        # The first service is still in its entrypoint, then a probe fails,
-        # then it is done; the second service is already done.
-        with patch.object(fixture, "probe", side_effect=[running, failed, done, done]) as probe, \
-                patch("container_fixture.time.sleep") as sleep, \
+        fixture.cmd = ["docker", "compose"]
+        with patch.object(policy, "wait_for_entrypoints") as wait, \
                 contextlib.redirect_stderr(io.StringIO()) as err:
-            fixture.wait_for_entrypoints()
-        self.assertEqual([0, 0, 0, 1], [call.args[0] for call in probe.call_args_list])
-        self.assertEqual(2, sleep.call_count)
-        self.assertIn("after 4 probe(s)", err.getvalue())
+            fixture.wait_for_entrypoints(timeout=7)
+        wait.assert_called_once_with(fixture.cmd, fixture.services, fixture.host_env, fixture.root, 7)
+        self.assertIn("entrypoints finished", err.getvalue())
 
     def test_entrypoint_wait_gives_up_after_its_timeout(self):
         fixture = AuthenticatedFixture()
         self.addCleanup(fixture.temp.cleanup)
-        running = SimpleNamespace(returncode=0, stdout="/usr/local/bin/entrypoint.sh\n", stderr="")
-        with patch.object(fixture, "probe", return_value=running), patch("container_fixture.time.sleep"), \
-                patch("container_fixture.time.monotonic", side_effect=[0.0, 30.0, 61.0]):
-            with self.assertRaisesRegex(policy.PolicyError, "did not exec its command within 60 seconds"):
+        fixture.cmd = ["docker", "compose"]
+        with patch.object(policy, "wait_for_entrypoints", side_effect=policy.PolicyError("Service claude-b readiness timed out.")):
+            with self.assertRaisesRegex(policy.PolicyError, "claude-b readiness timed out"):
                 fixture.wait_for_entrypoints()
 
     def test_credentials_require_explicit_disposable_contract(self):

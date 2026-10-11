@@ -354,5 +354,61 @@ Zero memory leaks; zero data races; RAII Grade: A.
         self.assertIn("base-image", self.rules(self.lint(fenced)))
 
 
+class DocsLintTests(unittest.TestCase):
+    setUp = ReadmeLintTests.setUp
+    write = ReadmeLintTests.write
+    rules = ReadmeLintTests.rules
+
+    def docs(self, text, name="USAGE.md"):
+        return lint.lint_text(text, self.root / "docs" / name, self.root, mode="docs")
+
+    def test_docs_have_no_readme_front_matter_length_or_density_rules(self):
+        report = self.docs("# Usage\n" + "Ordinary reference.\n" * 310)
+        self.assertFalse(report.findings)
+        self.assertNotIn("density", self.rules(self.docs("# Usage\n2 ms\n")))
+
+    def test_docs_claim_rules(self):
+        cases = {"robust design": "qualifier", "2 ms": "unsourced-measurement",
+                 "| Time (ms) | Result |\n| --- | --- |\n| 2 | ok |": "measurement-table",
+                 "![Build](https://example.com/badge.svg)": "badge",
+                 "2 ms <!-- source: docs/missing.md#run (2026-10-11, Linux) -->": "source-marker"}
+        for text, rule in cases.items():
+            with self.subTest(rule=rule):
+                self.assertIn(rule, self.rules(self.docs(text)))
+        self.assertFalse(self.docs(f"# Usage\n2 ms {MARKER}\n").findings)
+
+    def test_evidence_exceptions_are_rule_and_path_specific(self):
+        measurement = "| Time (ms) | Result |\n| --- | --- |\n| 2 | ok |\n"
+        for name in ("PERFORMANCE.md", "ISSUE-335-REVIEW.md", "ISSUE-335-VALIDATION.md",
+                     "ISSUE-335-WORKFLOWS.md"):
+            with self.subTest(name=name):
+                self.assertFalse(self.docs(measurement, name).findings)
+                self.assertIn("qualifier", self.rules(self.docs("robust design", name)))
+                self.assertIn("source-marker", self.rules(self.docs("2 ms <!-- source: bad -->", name)))
+        self.assertIn("unsourced-measurement", self.rules(self.docs("2 ms", "ISSUE-999-REVIEW.md")))
+        self.assertIn("unsourced-measurement", self.rules(self.docs("2 ms", "nested/PERFORMANCE.md")))
+
+    def test_policy_examples_do_not_exempt_badges_or_markers(self):
+        self.assertFalse(self.docs("Forbidden examples: robust; 2 ms", "README_POLICY.md").findings)
+        self.assertIn("badge", self.rules(self.docs("![Bad](https://example.com/badge.svg)", "README_POLICY.md")))
+
+    def test_docs_cli_discovers_new_pages_and_rejects_empty_or_missing_inputs(self):
+        command = [sys.executable, str(SCRIPT), "--root", str(self.root), "--docs"]
+        self.write("docs/NEW.md", "# New page\nrobust design\n")
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("NEW.md:2: qualifier:", result.stdout)
+        self.write("docs/NEW.md", "# New page\nOrdinary reference.\n")
+        self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+        result = subprocess.run(command + ["docs/missing.md"], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("input:", result.stdout)
+        for path in (self.root / "docs").glob("*.md"):
+            path.unlink()
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no documentation pages", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

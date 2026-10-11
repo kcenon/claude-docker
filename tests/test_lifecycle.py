@@ -119,6 +119,10 @@ class LifecycleTest(unittest.TestCase):
         self.calls.append(argv)
         if argv[1] == "info":
             return json.dumps({"NCPU": 4, "MemTotal": 8589934592})
+        if argv[1] == "inspect":
+            return json.dumps({"Status": "running", "StartedAt": "fixture-start"})
+        if argv[1] == "exec" and argv[3:5] == ["python3", "-c"]:
+            return "ready"
         if argv[1] in ("volume", "network"):
             if argv[2] == "ls":
                 return "\n".join(self.resource_set[argv[1]])
@@ -149,6 +153,8 @@ class LifecycleTest(unittest.TestCase):
             count = sum(1 for line in base.read_text().splitlines() if line.startswith("  claude-") and line.endswith(":"))
             return json.dumps(self.model(env, count))
         if "ps" in argv:
+            if "--quiet" in argv:
+                return argv[-1] if argv[-1] in self.existing else ""
             return "\n".join(sorted(self.running if "--status" in argv else self.existing))
         if "up" in argv:
             services = {x for x in argv[argv.index("up") + 1:] if x.startswith("claude-")}

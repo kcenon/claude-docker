@@ -11,6 +11,14 @@ scripts/claude-docker restart   # Restart
 scripts/claude-docker ps        # Check status
 ```
 
+`up` waits for the affected accounts to finish entrypoint bootstrap before
+reporting success or checking GitHub authentication. The same gate applies to
+`update`, shared/per-account `gh-auth` recreation, and dashboard start/recreate.
+After Compose returns, readiness has a shared 60-second deadline. A stopped or
+restarting container, failed probe, or timeout returns an error naming the
+service. Inspect that service's logs, fix its configuration, and retry.
+This checks bootstrap completion; it does not authenticate a provider session.
+
 ## Running Claude Code
 
 ```bash

@@ -15,6 +15,7 @@ Run from the repository root:
 ```sh
 python3 tests/test_readme_lint.py
 python3 scripts/readme_lint.py
+python3 scripts/readme_lint.py --docs
 ```
 
 The [standard-library linter](../scripts/readme_lint.py) checks `README.md` by
@@ -88,7 +89,35 @@ it the same kind of source.
 `scripts/readme_lint.py` is a port of the kcenon/common_system README lint at
 commit `c2f4037`, by way of the kcenon/dcmtk-docker port at `7953067`, with the
 same qualifier, measurement, marker, badge, length and density rules. It checks
-only `README.md` and replaces the release-link rule with the `VERSION` and base
+`README.md` by default and replaces the release-link rule with the `VERSION` and base
 image checks above. It keeps the upstream Korean patterns, so later upstream
 fixes stay easy to carry over. Like upstream, it reads an image dimension such
 as `512x512` as a speedup (kcenon/dcmtk-docker#109).
+
+## Documentation Claim Scope
+
+Decision for #414: extend claim checks to the reference pages so moving a
+paragraph out of README does not remove its evidence requirements.
+`--docs` discovers every `docs/*.md` page, including newly added pages, in
+sorted order. Explicit paths can select a subset. Unreadable or empty pages
+and an empty discovery result fail. Source-marker paths remain relative to
+the repository root, just as in README.
+
+The docs rules are `qualifier`, `badge`, `source-marker`,
+`unsourced-measurement`, and `measurement-table`. README's title, status,
+version, base-image, line-count and density requirements do not apply.
+The displayed density is informational in docs mode.
+
+Exceptions are exact paths and named rules, held in
+`scripts/readme_lint.py` as `DOC_RULE_EXCEPTIONS`:
+
+| Pages | Exempt rules | Reason |
+|---|---|---|
+| `docs/PERFORMANCE.md`, `docs/ISSUE-335-REVIEW.md`, `docs/ISSUE-335-VALIDATION.md`, `docs/ISSUE-335-WORKFLOWS.md` | `unsourced-measurement`, `measurement-table` | These pages hold measurements and execution evidence with their own provenance. |
+| `docs/README_POLICY.md` | `qualifier`, `unsourced-measurement` | This policy names forbidden wording and measurement examples. |
+
+Badge and source-marker validation still apply to all these pages, and
+qualifier checks still apply to evidence pages. New issue records and nested
+pages passed explicitly do not inherit exceptions from similarly named files.
+Changing this list requires a scope explanation in the same change.
+Documentation Audit runs both modes on every pull request and push to `main`.
