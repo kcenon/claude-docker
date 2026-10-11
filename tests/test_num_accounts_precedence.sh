@@ -23,7 +23,7 @@
 # in tui/internal/config/env.go reads .env alone because Env is the document the
 # TUI edits and writes back, and it treats the value as a floor rather than an
 # exact count -- discoverStateDirs raises it to cover state directories found on
-# disk. See the README's Compose Overrides section.
+# disk. See the Compose Overrides section of docs/COMPOSE.md.
 #
 # Both generators write compose files into the project root they derive from
 # their own location, so every reader runs against a throwaway sandbox holding

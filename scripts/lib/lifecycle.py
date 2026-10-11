@@ -712,6 +712,109 @@ def names(cmd, env, root, running=False):
     return sorted(set(run(cmd + arguments, env, root).split()))
 
 
+ENTRYPOINT_PROBE = """import pathlib
+starting = False
+seen = 0
+for path in pathlib.Path('/proc').glob('[0-9]*/cmdline'):
+    try:
+        argv = path.read_bytes().split(b'\\0')
+    except FileNotFoundError:
+        continue
+    seen += 1
+    if len(argv) > 1 and argv[1].rsplit(b'/', 1)[-1] == b'entrypoint.sh':
+        starting = True
+if not seen:
+    raise RuntimeError('No process arguments readable')
+print('starting' if starting else 'ready')
+"""
+
+
+def startup_services(model, argv):
+    """Select up's positional services without mistaking option values for them."""
+    values = {"--attach", "--no-attach", "--exit-code-from", "--pull", "--scale",
+              "--timeout", "-t", "--wait-timeout"}
+    selected, skip, positional = set(), False, False
+    for arg in argv:
+        if skip:
+            skip = False
+        elif arg == "--":
+            positional = True
+        elif not positional and arg in values:
+            skip = True
+        elif arg in model["services"]:
+            selected.add(arg)
+    if not selected:
+        selected = set(model["services"])
+    if "--no-deps" not in argv:
+        pending = list(selected)
+        while pending:
+            for dependency in model["services"][pending.pop()].get("depends_on", {}):
+                if dependency not in selected:
+                    selected.add(dependency)
+                    pending.append(dependency)
+    return sorted(selected)
+
+
+def wait_for_entrypoints(cmd, services, env, root, timeout=60):
+    """Wait for bootstrap exec, pinning each container and its current run.
+
+    Compose running state precedes bootstrap completion. Under init: true,
+    docker-init retains the entrypoint in its arguments forever, so the probe
+    checks only each process's second argument. Probe errors never mean ready.
+    """
+    deadline = time.monotonic() + timeout
+
+    def checked(service, argv):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PolicyError("Service " + service + " readiness timed out.")
+        try:
+            return run(argv, env, root, min(15, remaining))
+        except PolicyError as error:
+            # Never expose Docker output, which can contain configuration or
+            # credentials. The service and native exit code are sufficient.
+            raise PolicyError("Service " + service + " readiness probe failed; check its container state.",
+                              error.exit_code) from error
+
+    pending, started = {}, {}
+    for service in services:
+        ids = checked(service, cmd + ["ps", "--all", "--quiet", service]).split()
+        if not ids:
+            raise PolicyError("Service " + service + " has no container after startup.")
+        for cid in ids:
+            pending[cid] = service
+    if not pending:
+        raise PolicyError("No services selected for startup readiness.")
+
+    def running(cid, service):
+        try:
+            state = json.loads(checked(service, ["docker", "inspect", "--format", "{{json .State}}", cid]))
+            status, identity = state["Status"], state["StartedAt"]
+            if not isinstance(identity, str) or not identity:
+                raise ValueError("missing start identity")
+        except (ValueError, KeyError, TypeError) as error:
+            raise PolicyError("Service " + service + " returned invalid container state.") from error
+        if status != "running":
+            raise PolicyError("Service " + service + " stopped or refused startup before becoming ready.")
+        if cid in started and started[cid] != identity:
+            raise PolicyError("Service " + service + " restarted during startup readiness.")
+        started[cid] = identity
+
+    while pending:
+        for cid, service in list(pending.items()):
+            running(cid, service)
+            # Keep argv free of literal newlines for native Windows launchers.
+            result = checked(service, ["docker", "exec", cid, "python3", "-c",
+                                       "exec(" + repr(ENTRYPOINT_PROBE) + ")"]).strip()
+            if result == "ready":
+                running(cid, service)
+                del pending[cid]
+            elif result != "starting":
+                raise PolicyError("Service " + service + " returned an invalid readiness result.")
+        if pending:
+            time.sleep(max(0, min(0.25, deadline - time.monotonic())))
+
+
 def resources(project, env):
     result = {}
     for kind in ("volume", "network"):
@@ -1094,6 +1197,7 @@ def main():
             worktree_metadata(env, root, create=True)
             argv = trailing[1:] if trailing[:1] == ["--"] else trailing
             run(cmd + ["up", "--detach"] + argv, env, root, 600)
+            wait_for_entrypoints(cmd, startup_services(model, argv), env, root)
         return
     if trailing:
         raise PolicyError("Unexpected host policy arguments.")

@@ -11,7 +11,7 @@ import textwrap
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from container_fixture import ROOT
+from container_fixture import ROOT, policy
 from test_credential_file import make_private_fixture
 from workflow_support import (AuthenticatedFixture, WorkflowFailure, finish,
                               load_credentials, provenance, record, runtime_command)
@@ -92,6 +92,38 @@ class WorkflowSupportTest(unittest.TestCase):
                 fixture.up()
         self.assertEqual(1, run.call_count)
         self.assertNotIn("logs", run.call_args.args[0])
+
+    def test_auth_startup_waits_for_entrypoints(self):
+        # compose --wait returns while entrypoint.sh may still write the
+        # account's git config; this override of up() must wait like the
+        # parent's does, or its tests keep the lock race.
+        fixture = AuthenticatedFixture()
+        self.addCleanup(fixture.temp.cleanup)
+        fixture.cmd, fixture.model = ["docker", "compose"], {}
+        with patch("workflow_support.policy.prepare_dependency_volumes"), \
+                patch.object(fixture, "run", return_value="") as run, \
+                patch.object(fixture, "wait_for_entrypoints") as wait:
+            fixture.up()
+        self.assertEqual(1, run.call_count)
+        wait.assert_called_once_with()
+
+    def test_entrypoint_wait_uses_product_gate_for_all_services(self):
+        fixture = AuthenticatedFixture()
+        self.addCleanup(fixture.temp.cleanup)
+        fixture.cmd = ["docker", "compose"]
+        with patch.object(policy, "wait_for_entrypoints") as wait, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            fixture.wait_for_entrypoints(timeout=7)
+        wait.assert_called_once_with(fixture.cmd, fixture.services, fixture.host_env, fixture.root, 7)
+        self.assertIn("entrypoints finished", err.getvalue())
+
+    def test_entrypoint_wait_gives_up_after_its_timeout(self):
+        fixture = AuthenticatedFixture()
+        self.addCleanup(fixture.temp.cleanup)
+        fixture.cmd = ["docker", "compose"]
+        with patch.object(policy, "wait_for_entrypoints", side_effect=policy.PolicyError("Service claude-b readiness timed out.")):
+            with self.assertRaisesRegex(policy.PolicyError, "claude-b readiness timed out"):
+                fixture.wait_for_entrypoints()
 
     def test_credentials_require_explicit_disposable_contract(self):
         with tempfile.TemporaryDirectory() as directory:

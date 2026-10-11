@@ -34,8 +34,8 @@ _CLAUDE_DOCKER_BOOTSTRAP_CLAUDE_SH_SOURCED=1
 # The jq pipeline is idempotent: macOS settings pass through with only
 # sandbox/permissions changes; Windows settings get full hook rewriting.
 #
-# See the "Container-side settings transformation" section in README.md
-# for user-facing documentation of the security-sensitive behaviors here:
+# See docs/HOST_CONFIG.md#container-side-settings-transformation for
+# user-facing documentation of the security-sensitive behaviors here:
 #   - step 1 (`sandbox.enabled = false`) assumes default Docker isolation
 #     and is unsafe under --privileged / docker-in-docker / docker-on-sock.
 #   - step 4's pwsh-to-bash rewrite is best-effort. The post-transform syntax
@@ -54,7 +54,7 @@ generate_container_settings() {
         #
         #    This used to drop *every* rule containing an asterisk, so
         #    Bash(sudo:*) and WebFetch(domain:*) went with the file globs --
-        #    while the compensating control the README names,
+        #    while the compensating control docs/HOST_CONFIG.md names,
         #    sensitive-file-guard.sh, only substitutes for the file rules.
         #    WebFetch had nothing behind it at all (#357, item 4).
         #
@@ -262,10 +262,11 @@ runtime_bootstrap() {
 
                     # Post-transform syntax check: `bash -n -c` every .command
                     # string in the generated file. The rewriter in
-                    # generate_container_settings() is best-effort (see
-                    # README "Container-side settings transformation"); the
-                    # check catches silent failures so the user learns about
-                    # them at container start rather than when a hook misfires.
+                    # generate_container_settings() is best-effort, as
+                    # docs/HOST_CONFIG.md#container-side-settings-transformation
+                    # explains; the check catches silent failures so the user
+                    # learns about them at container start rather than when a
+                    # hook misfires.
                     local syntax_failures=0
                     local _cmd
                     while IFS= read -r _cmd; do

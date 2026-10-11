@@ -26,5 +26,11 @@ elif "config" in args:
     print(json.dumps(model))
 elif "up" in args and os.environ.get("MOCK_UP_FAILURE"):
     sys.exit(int(os.environ["MOCK_UP_FAILURE"]))
+elif "ps" in args and "--quiet" in args:
+    print(args[-1])
+elif args[:1] == ["inspect"]:
+    print(json.dumps({"Status": "running", "StartedAt": "fixture-start"}))
+elif args[:1] == ["exec"] and args[2:4] == ["python3", "-c"]:
+    print("ready")
 # No services are running, and no volumes/networks exist. No native Docker
 # binary is delegated to, including on an unrecognized command.

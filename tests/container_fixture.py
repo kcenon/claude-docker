@@ -198,12 +198,18 @@ class ContainerFixture:
         policy.prepare_dependency_volumes(self.model, self.cmd, self.host_env, self.root)
         try:
             self.run(self.cmd + ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "90"], timeout=150)
+            self.wait_for_entrypoints()
         except (policy.PolicyError, subprocess.TimeoutExpired):
             try:
                 print(self.run(self.cmd + ["logs", "--no-color", "--tail", "80"], timeout=30), file=sys.stderr)
             except (policy.PolicyError, subprocess.SubprocessError, OSError) as error:
                 print("Fixture startup logs unavailable: " + str(error), file=sys.stderr)
             raise
+
+    def wait_for_entrypoints(self, timeout=60):
+        """Use the product gate so fixture Git writes cannot race bootstrap."""
+        policy.wait_for_entrypoints(self.cmd, self.services, self.host_env, self.root, timeout)
+        print("Fixture entrypoints finished.", file=sys.stderr)
 
     def execute(self, index, *argv, timeout=60):
         return self.run(self.cmd + ["exec", "-T", self.services[index]] + list(argv), timeout)

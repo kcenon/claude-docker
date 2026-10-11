@@ -102,9 +102,9 @@ RT_MOUNTS_AGENTS_SKILLS="$(runtime_field "$AGENT_RUNTIME" mountsAgentsSkills)"
 RT_HOST_CONFIG_BASENAME=".${RT_CONTAINER_CONFIG_MOUNT##*.}"
 
 # IMAGE_TAG defaults come from the repo-root VERSION file — single source of
-# truth shared with install.sh and the "Bumping the Base Image" README
-# procedure. Falls back to "latest" if VERSION is missing (e.g. the user is
-# running the script from an older clone or a sparse checkout).
+# truth shared with install.sh and the "Bumping the Base Image" procedure in
+# docs/MAINTENANCE.md. Falls back to "latest" if VERSION is missing (e.g. the
+# user is running the script from an older clone or a sparse checkout).
 if [[ -z "${IMAGE_TAG:-}" ]]; then
     if [[ -f "$PROJECT_ROOT/VERSION" ]]; then
         IMAGE_TAG="$(head -n1 "$PROJECT_ROOT/VERSION" | tr -d '[:space:]')"

@@ -10,9 +10,13 @@ resource reports and transactional scaling are implemented. Local regression,
 Compose-model and TUI benchmark evidence is recorded in
 [ISSUE-335-VALIDATION.md](ISSUE-335-VALIDATION.md). Linux live-container and full
 45-sample performance evidence, plus native Windows policy/ACL CI, are recorded.
-Authenticated workflows, Desktop/rootless platform runs and budget review remain
-required before issue #335 can be closed. The host, daemon owner and kernel/runtime compromise remain outside
-this boundary.
+The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772)
+accepts the reference performance budgets. Issue #335 remains at 16 of 17
+criteria: authenticated runtime/write workflows on the claimed native backends,
+including compatible requested inner sandbox execution, still need evidence.
+See [verification and supported combinations](#verification-and-supported-combinations)
+for the execution scope. The host, daemon owner and kernel/runtime compromise
+remain outside this boundary.
 
 ## Modes
 
@@ -22,18 +26,49 @@ this boundary.
 | `worktree` | Each account mounts only its own git worktree. Git metadata is still shared. | Concurrent branches with fewer lock and wrong-tree collisions. |
 | `isolated` | Each account mounts its own independent clone, with its own git metadata and no shared host configuration. | Accounts that must not read or modify each other's source. |
 
+### Setting up `shared`
+
+Both containers mount the same project directory. Simplest setup, minimum
+storage. Best when one session writes and the other reads/reviews. Any account
+can modify any other account's work, so use it only between mutually trusted
+accounts.
+
+### Setting up `worktree`
+
+Each container gets its own worktree for full concurrent editing safety.
+No `.git/index.lock` contention.
+
+```bash
+scripts/setup-worktrees.sh ~/work/project    # Create worktrees
+# add the printed PROJECT_DIR_* lines to .env
+scripts/claude-docker up                     # Selects the worktree overlay
+```
+
+The middle step is not optional. `setup-worktrees.sh` creates the worktrees and
+**prints** the `PROJECT_DIR_<X>` lines; it does not write them anywhere.
+The [resolution rules](#resolution) explain the shared-mode fallback when both
+the paths and explicit mode are omitted, and the refusal when an explicit
+worktree mode lacks its paths.
+
+On native Windows, use
+`.\scripts\setup-worktrees.ps1 C:\path\to\project`, add the printed lines to
+`.env`, then start with `.\scripts\claude-docker.ps1 up`.
+
 ### Setting up `isolated`
 
 ```bash
 scripts/setup-isolated.sh --dry-run /path/to/repo 2
 scripts/setup-isolated.sh /path/to/repo 2
+# Set the printed ISOLATED_WORKSPACE_* entries and ISOLATION_MODE=isolated.
+scripts/generate-compose.sh
+scripts/claude-docker config
+scripts/claude-docker up
 # Windows: .\scripts\setup-isolated.ps1 -RepoDir C:\Projects\repo -AccountCount 2 -DryRun
+#          then .\scripts\generate-compose.ps1 and .\scripts\claude-docker.ps1
 ```
 
-The preview lists every clone, state path, mount, network and resource budget.
-It does not change destinations, installation files, credentials or Docker
-resources. Daemon discovery is read-only and bounded; missing capacity is shown
-as unknown. Apply uses the same plan after validating all destinations.
+The [host validation and resource budgets](#host-validation-and-resource-budgets)
+section describes the dry-run preview and its read-only daemon discovery.
 
 Fresh clones are staged beside the source, created with
 `git clone --no-hardlinks --dissociate`, and verified before publication.
@@ -65,10 +100,11 @@ the mode the same way:
 1. `ISOLATION_MODE` in the caller's environment.
 2. `ISOLATION_MODE` in `.env`.
 3. **Legacy inference**: a configured `PROJECT_DIR_A` means `worktree`.
-   Installations predating this key configured Tier B by setting that variable
+   Installations predating this key configured `worktree` (Tier B) by setting that variable
    alone, and compose overlay selection used to key off it directly. The
    inference is what keeps those installations behaving unchanged.
-4. `shared`.
+4. `shared`. With neither paths nor an explicit mode, every container mounts
+   the shared project; this is a valid installation and produces no warning.
 
 There is deliberately **no** matching inference from `ISOLATED_WORKSPACE_A`.
 Nothing predates that key, so setting it without declaring the mode is a
@@ -452,6 +488,12 @@ requested sandbox. The outer account boundary remains in force.
 
 ## Host validation and resource budgets
 
+The setup dry-run preview lists every clone, state path, mount, network and
+resource budget. It does not change destinations, installation files,
+credentials or Docker resources. Daemon discovery is read-only and bounded;
+missing capacity is shown as unknown. Apply uses the same plan after
+validating all destinations.
+
 Python 3.9+ is a host prerequisite. `scripts/lib/lifecycle.py` implements the
 shared policy for both shell wrappers; it uses only the standard library. The
 TUI starts containers through the same wrapper. Normal `config` and startup
@@ -599,6 +641,5 @@ degraded-settings cases refuse before the requested command executes. This is
 verified fail-closed behavior, not a claim that an authenticated inner sandbox
 session ran. No privileged or unconfined workaround is used. Full measured
 container results and accepted reference fixture budgets are in
-[PERFORMANCE.md](PERFORMANCE.md). The [maintainer decision](https://github.com/kcenon/claude-docker/issues/335#issuecomment-5633933772)
-accepts the measured budgets; authenticated workflows on the claimed backends
-and compatible requested inner sandbox execution still require evidence.
+[PERFORMANCE.md](PERFORMANCE.md); the opening status records the remaining
+completion criterion.

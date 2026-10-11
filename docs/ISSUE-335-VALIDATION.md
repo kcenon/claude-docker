@@ -19,6 +19,46 @@ The evidence below preserves the original execution identities and outcomes.
 Its earlier pending-budget and 15/17 statuses describe those historical runs;
 the later decision does not change raw report bytes or establish new live runs.
 
+## Startup readiness and execution prerequisites — 2026-10-11
+
+[PR #422](https://github.com/kcenon/claude-docker/pull/422) moves the fixture's
+entrypoint wait into the product host engine. Bash, PowerShell and dashboard
+start/recreate now wait for bootstrap before post-start work. The implementation
+at `de33d3b18bd76930df7651dc1060880a3a897cc8` has process regressions for both
+wrappers, including delayed readiness, refusal, native exit codes, selected
+services and removal of the wait. The original wrappers failed the new startup
+and refusal regressions; this is deterministic Docker simulation, not provider
+or live-container execution.
+
+Local macOS checks covered workflow support, coverage, scenarios, environment
+and credential-file validation; native terminal and compiled TUI controls;
+lifecycle/process recovery; parser, runtime-registry and generator parity;
+sandbox refusal policy; and Go tests with race detection. The accepted budget
+record and retained full benchmark report still validate without changing their
+bytes or provenance. These checks do not complete the runtime/write criterion.
+
+The prerequisite inspection on this date found no designated private integration
+JSON, no `issue335-integration` GitHub environment, no repository test secret,
+and no self-hosted runner. The local host had no Docker installation. No
+authenticated workflow was dispatched, no test remote was created, and no
+provider session, remote push or compatible inner-sandbox session is claimed.
+
+| Required execution | Remaining input/evidence |
+|---|---|
+| Native Linux Engine | Designated test credentials/models, run and spending limits, an owned disposable remote, and a complete authenticated report. Existing offline CI does not cover these sessions. |
+| macOS Docker Desktop | A local Desktop daemon/version and the designated integration inputs; native macOS process tests do not establish container enforcement. |
+| Native Windows Desktop | A native Desktop host/version and integration inputs; hosted Windows policy/ACL tests do not establish Desktop workflows. |
+| WSL2 with Desktop integration | An actual WSL2 host/backend and integration inputs. |
+| Rootless Linux | An actual rootless daemon/host and integration inputs. |
+| Requested inner sandbox | Successful authenticated tool work on a compatible requested-sandbox backend; refusal checks remain separately scoped. |
+
+Use the profile-specific commands in [ISSUE-335-WORKFLOWS.md](ISSUE-335-WORKFLOWS.md),
+retain source/image/backend identities and matching push-cleanup records, and
+run the strict completion validator. Required skipped or missing rows still
+prevent completion; #335 remains at 16 of 17 criteria.
+
+## Historical implementation baseline
+
 Historical #394 implementation started: 2026-09-08; local verification: 2026-09-09. Baseline: `develop` at
 `4eb55c085be46bbd7c537ab30aab18a74b0936be`. The issue and comments were refreshed
 before implementation. Image version: `2026.09.08.1`.

@@ -290,7 +290,6 @@ cmd_up() {
     local primary
     primary=$(get_primary_service)
     if [[ -n "$(get_container_id "$primary")" ]]; then
-        sleep 2  # wait for entrypoint gh auth setup
         verify_all_container_gh_auth || true
     fi
 }
@@ -624,10 +623,9 @@ cmd_gh_auth_shared() {
     running=$("${COMPOSE_CMD[@]}" ps -q 2>/dev/null | head -1)
     if [[ -n "$running" ]]; then
         echo -e "${CYAN}Recreating containers to apply...${NC}"
-        "${COMPOSE_CMD[@]}" up -d --force-recreate
+        host_policy up -- --force-recreate
 
         # Verify inside container
-        sleep 2
         local primary
         primary=$(get_primary_service)
         local cid
@@ -748,8 +746,7 @@ cmd_gh_auth_per_account() {
     fi
 
     echo -e "${CYAN}Recreating selected container(s) to apply...${NC}"
-    "${COMPOSE_CMD[@]}" up -d --force-recreate "${running_services[@]}"
-    sleep 2
+    host_policy up -- --force-recreate "${running_services[@]}"
     for i in "${!running_services[@]}"; do
         verify_container_gh_auth "${running_services[$i]}" || true
     done
@@ -805,7 +802,7 @@ cmd_update() {
 
     # Recreate containers with the new image
     echo -e "${CYAN}[4/5] Recreating containers...${NC}"
-    "${COMPOSE_CMD[@]}" up -d --force-recreate
+    host_policy up -- --force-recreate
 
     # Verify version and GitHub auth
     echo -e "${CYAN}[5/5] Verifying...${NC}"
@@ -818,8 +815,6 @@ cmd_update() {
         version=$(docker exec "$cid" "$binary" --version 2>/dev/null || echo "unknown")
         echo -e "  ${GREEN}*${NC} ${binary} version: ${BOLD}$version${NC}"
 
-        # Wait briefly for entrypoint to complete gh auth setup
-        sleep 2
         verify_all_container_gh_auth || true
 
         echo ""
