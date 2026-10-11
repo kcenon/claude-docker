@@ -65,7 +65,11 @@ claude-docker/
 |       +-- isolation.sh               Isolation-mode resolution and the trust-boundary text
 |       +-- resources.sh               Memory cap to Node heap arithmetic
 |       +-- build-compose-cmd.sh       Compose overlay selection (bash)
+|       +-- lifecycle.py              Shared host policy, resource validation and lifecycle compensation
+|       +-- host.sh                   Bash interface to the shared Python host policy
+|       +-- host.ps1                  PowerShell interface using native argv and exit codes
 |       +-- bootstrap-common.sh        Shared entrypoint helpers
+|       +-- bootstrap-sandbox.sh       Requested sandbox and writable-path gates
 |       +-- bootstrap-claude.sh        Per-runtime container bootstrap modules
 |       +-- bootstrap-codex.sh         (dispatched by entrypoint.sh via the registry)
 |       +-- bootstrap-gemini.sh
@@ -73,10 +77,24 @@ claude-docker/
 |   +-- main.go
 |   +-- Makefile
 |   +-- go.mod / go.sum
-|   +-- internal/                      account, auth, config, docker, ui subpackages
-|       +-- config/runtimes.json       Runtime registry: cross-language single source of truth
+|   +-- cmd/
+|   |   +-- envprobe/                  Prints parsed environment values for parity tests
+|   +-- internal/
+|       +-- account/                   Account discovery and history
+|       +-- auth/                      Runtime authentication discovery
+|       +-- config/                    Environment parsing and runtime registry access
+|       |   +-- runtimes.json          Runtime registry: cross-language single source of truth
+|       +-- docker/                    Container client and wrapper lifecycle calls
+|       +-- ui/
+|           +-- components/            Reusable terminal view components
+|           +-- dashboard/             Dashboard model, updates and rendering
 +-- tests/                             Registry/parser/generator/auth/platform/entrypoint
     |                                  regression tests and fixtures
     +-- env_fixtures/
     +-- entrypoint_fixtures/
+    |   +-- global/                    Shared runtime settings fixtures
+    +-- lib/                          Compose assertions and mock Compose support
+    +-- fixtures/
+        +-- isolation-workload/       Offline package workload used by isolation benchmarks
+            +-- vendor/               Local package archive for the offline workload
 ```
