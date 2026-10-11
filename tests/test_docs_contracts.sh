@@ -23,6 +23,7 @@
 # links every reference page under docs/, which is the enumeration the trim
 # created. A fifth validates local docs pages and anchors cited by tracked
 # image inputs, sharing the README linter's anchor parser (#420).
+# A sixth keeps the current Node base references synchronized with FROM (#421).
 #
 # What this deliberately does not do is check prose for correctness. It checks
 # enumerations and references that can be checked against the tracked tree.
@@ -258,6 +259,14 @@ if python3 "$SCRIPT_DIR/test_image_doc_refs.py" &&
     pass "image documentation reference contract"
 else
     fail "image documentation reference contract"
+fi
+
+echo ""
+echo "=== current Node base references match FROM ==="
+if python3 "$SCRIPT_DIR/image_doc_refs.py" "$PROJECT_ROOT" --base-tags; then
+    pass "current Node base references"
+else
+    fail "current Node base references"
 fi
 
 echo ""

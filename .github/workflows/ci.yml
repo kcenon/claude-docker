@@ -357,6 +357,7 @@ jobs:
           # that went stale when isolated mode landed (#360) and that the
           # README trim created (#399). Image-input docs references must resolve
           # to existing local pages and anchors (#420); parser behavior is tested.
+          # Current Node base comments/documentation also match FROM (#421).
           - tests/test_docs_contracts.sh
           - scripts/test-entrypoint-settings.sh
     steps:

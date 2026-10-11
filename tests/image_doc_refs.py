@@ -2,12 +2,13 @@
 """Validate local docs references in tracked image inputs (#420)."""
 
 from pathlib import Path
+import argparse
 import re
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from readme_lint import anchors  # noqa: E402
+from readme_lint import anchors, base_image, prose_blocks  # noqa: E402
 
 
 REFERENCE = re.compile(r"(?<![\w/])docs/[\w./-]+\.md(?:#[\w-]+)?")
@@ -41,16 +42,50 @@ def check(root):
 
 
 def main():
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", nargs="?", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--base-tags", action="store_true")
+    args = parser.parse_args()
+    root = args.root
     try:
-        count, fragments, errors = check(root)
+        if args.base_tags:
+            errors = check_base_tags(root)
+        else:
+            count, fragments, errors = check(root)
     except (OSError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f"image docs references: input error: {error}", file=sys.stderr)
         return 1
     for error in errors:
         print(error)
-    print(f"Checked {count} local image docs references ({fragments} with anchors).")
+    if args.base_tags:
+        print("Checked current Node base references against FROM.")
+    else:
+        print(f"Checked {count} local image docs references ({fragments} with anchors).")
     return int(bool(errors))
+
+
+def check_base_tags(root):
+    image, error = base_image(root)
+    if error:
+        return [f"Dockerfile:1: {error}"]
+    errors = []
+    for name, minimum in (("Dockerfile", 2), ("docs/MAINTENANCE.md", 1)):
+        text = (root / name).read_text(encoding="utf-8")
+        if name.endswith(".md"):
+            # Procedures may show historical tags in fenced examples; only
+            # current declarations in visible prose are compared with FROM.
+            text, _ = prose_blocks(text)
+        count = 0
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if name == "Dockerfile" and not line.lstrip().startswith("#"):
+                continue
+            for match in re.finditer(r"\bnode:[0-9]+\.[0-9]+\.[0-9]+[\w.-]*", line):
+                count += 1
+                if match[0] != image:
+                    errors.append(f"{name}:{line_no}: base tag {match[0]} differs from FROM {image}")
+        if count < minimum:
+            errors.append(f"{name}:1: expected at least {minimum} current Node base references, found {count}")
+    return errors
 
 
 if __name__ == "__main__":

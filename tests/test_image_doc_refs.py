@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-from image_doc_refs import check
+from image_doc_refs import check, check_base_tags
 
 
 class ImageDocRefsTests(unittest.TestCase):
@@ -59,6 +59,23 @@ class ImageDocRefsTests(unittest.TestCase):
         (self.root / "scripts/lib").mkdir(parents=True)
         (self.root / "scripts/lib/local.sh").write_text("# docs/MISSING.md\n")
         self.assertEqual(self.scan("# docs/PAGE.md\n"), (1, 0, []))
+
+    def test_base_tags_reject_stale_prose_but_allow_fenced_examples(self):
+        self.scan("# Base: node:26.10.0-slim\nFROM node:26.10.0-slim@sha256:abc\n"
+                  "# digest-pinned node:26.10.0-slim\n# node:26 creates /home/node\n")
+        page = self.root / "docs/MAINTENANCE.md"
+        page.write_text("Current: `node:26.10.0-slim`\n```sh\nnode:20.18.1-slim\n```\n")
+        self.assertFalse(check_base_tags(self.root))
+        page.write_text("Current: `node:20.18.1-slim`\n")
+        self.assertIn("docs/MAINTENANCE.md:1: base tag node:20.18.1-slim", check_base_tags(self.root)[0])
+        dockerfile = self.root / "Dockerfile"
+        dockerfile.write_text(dockerfile.read_text().replace("# Base: node:26.10.0-slim", "# Base: node:20.18.1-slim"))
+        self.assertIn("Dockerfile:1: base tag node:20.18.1-slim", check_base_tags(self.root)[0])
+
+    def test_base_tag_inventory_cannot_be_empty(self):
+        self.scan("FROM node:26.10.0-slim\n")
+        (self.root / "docs/MAINTENANCE.md").write_text("# Maintenance\n")
+        self.assertEqual(len(check_base_tags(self.root)), 2)
 
 
 if __name__ == "__main__":

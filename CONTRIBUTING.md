@@ -145,6 +145,8 @@ compares against. Do not hand-edit them.
   open against `main`. After merging one there, open a `main` -> `develop`
   sync PR the same day. Otherwise `develop` misses the fix, and the next
   release has to reconcile the two branches by hand, as #408 did.
+  For Docker updates, follow [Completing a Dependabot base image PR](docs/MAINTENANCE.md#completing-a-dependabot-base-image-pr)
+  to verify the digest and synchronize image/version references before merging.
 - **Conventional Commit** subjects: `type(scope): description`, imperative,
   lowercase, no trailing period.
 - **English** for code, comments, commit messages, issues and PRs.
