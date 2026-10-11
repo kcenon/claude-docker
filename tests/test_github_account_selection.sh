@@ -13,6 +13,8 @@ fail() { printf '  FAIL  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+export HOME="$WORK/home"
+mkdir -p "$HOME"
 
 make_sandbox() {
     local name="$1"
@@ -57,6 +59,14 @@ case " $* " in
     *" config --format json "*|" info "*)
         exec python3 "$(dirname "$0")/mock_compose.py" "$@" ;;
 esac
+if [[ "${1:-}" == "inspect" ]]; then
+    printf '%s\n' '{"Status":"running","StartedAt":"fixture-start"}'
+    exit 0
+fi
+if [[ "${1:-}" == "exec" && "${3:-}" == "python3" ]]; then
+    printf '%s\n' ready
+    exit 0
+fi
 if [[ "${1:-}" == "exec" ]]; then
     case "${2:-}" in
         cid-a) printf '%s\n' 'fixture-user-a' ;;
@@ -66,8 +76,8 @@ if [[ "${1:-}" == "exec" ]]; then
     exit 0
 fi
 case " $* " in
-    *" ps -q claude-a "*) printf '%s\n' 'cid-a' ;;
-    *" ps -q claude-b "*) printf '%s\n' 'cid-b' ;;
+    *" ps -q claude-a "*|*" ps --all --quiet claude-a "*) printf '%s\n' 'cid-a' ;;
+    *" ps -q claude-b "*|*" ps --all --quiet claude-b "*) printf '%s\n' 'cid-b' ;;
     *" ps -q "*) printf '%s\n' 'cid-a' ;;
 esac
 exit 0

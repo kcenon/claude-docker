@@ -22,6 +22,7 @@ function Assert-True([string]$Label, [bool]$Condition) {
 
 function Write-TestFile([string]$Path, [string]$Content) {
     $utf8 = [System.Text.UTF8Encoding]::new($false)
+    if (-not $IsWindows) { $Content = $Content.Replace("`r`n", "`n") }
     [System.IO.File]::WriteAllText($Path, $Content, $utf8)
 }
 
@@ -30,6 +31,9 @@ function Write-TestFile([string]$Path, [string]$Content) {
 # commands, which must never win command discovery in this isolated test.
 $work = Join-Path $ProjectRoot ".test-github-account-selection-$PID"
 New-Item -ItemType Directory -Path $work -Force | Out-Null
+$originalHome = $env:HOME
+$env:HOME = Join-Path $work "home"
+New-Item -ItemType Directory -Path $env:HOME -Force | Out-Null
 $originalPath = $env:PATH
 $originalOS = $PSVersionTable.OS
 
@@ -46,6 +50,7 @@ function New-TestSandbox([string]$Name) {
     Copy-Item (Join-Path $ScriptDir 'env_fixtures' 'github-per-account.env') (Join-Path $dir '.env')
 
     $bin = Join-Path $dir 'bin'
+    Copy-Item (Join-Path $ScriptDir 'lib/mock_compose.py') (Join-Path $bin 'mock_compose.py')
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         Write-TestFile (Join-Path $bin 'gh.cmd') @'
 @echo off
@@ -70,6 +75,28 @@ exit /b 1
         Write-TestFile (Join-Path $bin 'docker.cmd') @'
 @echo off
 echo %*>>"%DOCKER_MOCK_LOG%"
+if "%~1"=="inspect" (
+  echo {"Status":"running","StartedAt":"fixture-start"}
+  exit /b 0
+)
+if "%~1"=="info" (
+  python "%~dp0mock_compose.py" %*
+  exit /b
+)
+echo %*| findstr /C:" config --format json" >nul
+if not errorlevel 1 (
+  python "%~dp0mock_compose.py" %*
+  exit /b
+)
+echo %*| findstr /C:" ps --all --quiet " >nul
+if not errorlevel 1 (
+  python "%~dp0mock_compose.py" %*
+  exit /b
+)
+if "%~1"=="exec" if "%~3"=="python3" (
+  echo ready
+  exit /b 0
+)
 if "%~1"=="exec" (
   if "%~2"=="cid-a" (
     echo fixture-user-a
@@ -118,6 +145,18 @@ exit 1
         Write-TestFile (Join-Path $bin 'docker') @'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DOCKER_MOCK_LOG"
+case " $* " in
+  *" config --format json "*|" info "*|*" ps --all --quiet "*)
+    exec python3 "$(dirname "$0")/mock_compose.py" "$@" ;;
+esac
+if [[ "${1:-}" == "inspect" ]]; then
+  printf '%s\n' '{"Status":"running","StartedAt":"fixture-start"}'
+  exit 0
+fi
+if [[ "${1:-}" == "exec" && "${3:-}" == "python3" ]]; then
+  printf '%s\n' ready
+  exit 0
+fi
 if [[ "${1:-}" == "exec" ]]; then
   case "${2:-}" in
     cid-a) printf '%s\n' 'fixture-user-a' ;;
@@ -195,6 +234,7 @@ try {
     Assert-True 'update does not print imported values' ($updateOutput -notmatch 'mock-value-a|mock-value-b')
 }
 finally {
+    $env:HOME = $originalHome
     $env:PATH = $originalPath
     $env:GH_MOCK_LOG = $null
     $env:DOCKER_MOCK_LOG = $null
