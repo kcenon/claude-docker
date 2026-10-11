@@ -21,11 +21,11 @@
 # pages named above; the checks followed them there rather than being dropped.
 # A third section covers the UID/GID caveat, and a fourth checks that README
 # links every reference page under docs/, which is the enumeration the trim
-# created.
+# created. A fifth validates local docs pages and anchors cited by tracked
+# image inputs, sharing the README linter's anchor parser (#420).
 #
 # What this deliberately does not do is check prose for correctness. It checks
-# enumerations -- the places where a list in a document is supposed to mirror a
-# list in the tree, and where "someone added a file" is the failure mode.
+# enumerations and references that can be checked against the tracked tree.
 
 set -uo pipefail
 
@@ -251,6 +251,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+echo ""
+echo "=== image inputs cite existing docs pages and anchors ==="
+if python3 "$SCRIPT_DIR/test_image_doc_refs.py" &&
+   python3 "$SCRIPT_DIR/image_doc_refs.py" "$PROJECT_ROOT"; then
+    pass "image documentation reference contract"
+else
+    fail "image documentation reference contract"
+fi
+
 echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
