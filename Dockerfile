@@ -15,7 +15,7 @@
 #      (see docs/MAINTENANCE.md#bumping-the-base-image for the clean-worktree
 #      procedure)
 #   5. Rebuild: docker compose build --no-cache
-FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
+FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39
 
 # Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
 # aborts the build instead of masking the error behind a downstream success.
