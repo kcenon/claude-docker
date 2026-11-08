@@ -64,6 +64,7 @@ OUTPUTS=(
 # and the environment path is the one #315 fixed.
 FIXTURES=(
     "minimal|minimal.env|"
+    "duplicate-keys|duplicate-keys.env|"
     "codex|codex.env|"
     "gemini|gemini.env|"
     "github-per-account|github-per-account.env|"

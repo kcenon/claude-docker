@@ -253,7 +253,7 @@ function Read-EnvFile {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
-    $result = @{}
+    $result = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     if (-not (Test-Path $Path)) { return $result }
 
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
@@ -282,7 +282,7 @@ function Get-EnvValue {
     $last = $null
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $parsed = ConvertFrom-EnvLine -Line $line
-        if ($null -ne $parsed -and $parsed[0] -eq $Key) {
+        if ($null -ne $parsed -and $parsed[0] -ceq $Key) {
             $last = $parsed[1]
         }
     }
@@ -351,14 +351,13 @@ function Set-EnvValue {
         return
     }
 
-    # Scan-and-replace the first matching KEY= line; leave others intact so
-    # values containing regex metacharacters or '$n' backreferences are
-    # handled literally.
-    $keyPattern = "^\s*$([regex]::Escape($Key))="
+    # Update every exact key so a later duplicate cannot undo a token update.
+    # Use literal assignment to preserve regex metacharacters and backslashes.
+    $keyPattern = "^\s*$([regex]::Escape($Key))\s*="
     $lines = [System.IO.File]::ReadAllLines($Path)
     $replaced = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if (-not $replaced -and $lines[$i] -match $keyPattern) {
+        if ($lines[$i] -cmatch $keyPattern) {
             $lines[$i] = $line
             $replaced = $true
         }

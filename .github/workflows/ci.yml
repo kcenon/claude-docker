@@ -314,7 +314,7 @@ jobs:
           fi
 
           echo "Image inputs changed:"
-          printf '  %s\n' $image_inputs
+          printf '  %s\n' "$image_inputs"
 
           if printf '%s\n' "$changed" | grep -qx 'VERSION'; then
             echo "VERSION was bumped in the same change."

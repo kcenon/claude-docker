@@ -124,7 +124,7 @@ load_env_file() {
     local file="$1" mode="${2:--x}"
     [[ -r "$file" ]] || return 0
 
-    local line key value eq_idx force=0
+    local line key value eq_idx force=0 loaded_keys=$'\n'
     [[ "$mode" == "-a" ]] && force=1
 
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -154,8 +154,11 @@ load_env_file() {
             value="${value%"${value##*[![:space:]]}"}"
         fi
 
-        if (( force )) || [[ -z "${!key:-}" ]]; then
+        # A value loaded earlier in this file is not a caller override. Later
+        # duplicates must replace it, including when their final value is empty.
+        if (( force )) || [[ -z "${!key:-}" ]] || [[ "$loaded_keys" == *$'\n'"$key"$'\n'* ]]; then
             export "$key=$value"
+            loaded_keys="${loaded_keys}${key}"$'\n'
         fi
     done < "$file"
 }
@@ -191,37 +194,28 @@ set_env_value() {
         return 0
     fi
 
-    if grep -qE "^[[:space:]]*${key}=" "$file"; then
-        # Rewrite in place using a temp file to avoid sed delimiter issues
-        # with values containing '/', '|', '&', etc.
-        local tmp
-        tmp=$(mktemp "${file}.XXXXXX") || return 1
-        awk -v key="$key" -v repl="$line" '
-            BEGIN { replaced = 0 }
-            {
-                # Match "^[[:space:]]*KEY=" with literal key.
-                if (!replaced && match($0, "^[[:space:]]*" key "=") != 0) {
-                    print repl
-                    replaced = 1
-                } else {
-                    print $0
-                }
+    local tmp
+    tmp=$(mktemp "${file}.XXXXXX") || return 1
+    # Replace every exact key, so no later duplicate can undo a token update.
+    # ENVIRON keeps backslashes literal; awk -v interprets escape sequences.
+    if CLAUDE_DOCKER_ENV_REPLACEMENT="$line" awk -v key="$key" '
+        BEGIN { replacement = ENVIRON["CLAUDE_DOCKER_ENV_REPLACEMENT"]; replaced = 0 }
+        {
+            eq = index($0, "=")
+            lhs = substr($0, 1, eq - 1)
+            sub(/^[[:space:]]+/, "", lhs)
+            sub(/[[:space:]]+$/, "", lhs)
+            if (eq > 0 && lhs == key) {
+                print replacement
+                replaced = 1
+            } else {
+                print $0
             }
-        ' "$file" > "$tmp" && mv "$tmp" "$file"
-    else
-        # Ensure the file ends with a newline before appending.
-        #
-        # `$(tail -c1 "$file")` cannot be compared against $'\n': command
-        # substitution strips trailing newlines, so it yields '' for a file
-        # that already ends in one and the comparison was always true. Every
-        # append therefore inserted a blank line first, and .env grew a gap
-        # per key (#354, item 8).
-        #
-        # `tail -c1 | wc -l` answers the actual question: 1 when the last byte
-        # is a newline, 0 when it is not.
-        if [[ -s "$file" ]] && [[ "$(tail -c1 "$file" | wc -l)" -eq 0 ]]; then
-            printf '\n' >> "$file"
-        fi
-        printf '%s\n' "$line" >> "$file"
+        }
+        END { if (!replaced) print replacement }
+    ' "$file" > "$tmp" && mv "$tmp" "$file"; then
+        return 0
     fi
+    rm -f "$tmp"
+    return 1
 }
