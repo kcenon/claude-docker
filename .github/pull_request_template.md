@@ -43,7 +43,7 @@ reads as an oversight.
       from `tui/internal/config/runtimes.json`, not restated
 - [ ] An equivalence test covers the rule I changed, or this PR adds one
 - [ ] `docker-compose*.yml` regenerated if the generator changed
-      (`rm -f .env && bash scripts/generate-compose.sh`)
+      (`bash scripts/generate-compose.sh --env-file /dev/null`)
 - [ ] `VERSION` bumped if anything the `Dockerfile` `COPY`s changed — without
       it the change never reaches an existing installation
 

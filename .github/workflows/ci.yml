@@ -255,16 +255,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Regenerate from generator defaults
-        # `.env` is gitignored and absent on a fresh checkout; removing it
-        # anyway pins the job to the documented defaults rather than to
-        # whatever a future change might leave in the working tree.
+        # Use defaults without deleting a local installation's configuration.
         run: |
-          rm -f .env
-          bash scripts/generate-compose.sh
+          bash scripts/generate-compose.sh --env-file /dev/null
       - name: Assert no drift
         run: |
           if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml docker-compose.isolated.yml; then
-            echo "::error::Committed compose files differ from generator output. Regenerate with: rm -f .env && bash scripts/generate-compose.sh"
+            echo "::error::Committed compose files differ from generator output. Regenerate with: bash scripts/generate-compose.sh --env-file /dev/null"
             exit 1
           fi
 
@@ -324,7 +321,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (rm -f .env && bash scripts/generate-compose.sh)."
+          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (bash scripts/generate-compose.sh --env-file /dev/null)."
           exit 1
 
   image-sync-tests:
@@ -502,6 +499,8 @@ jobs:
         run: pwsh --version
       - name: Transaction and boundary fault tests
         run: python tests/test_lifecycle.py
+      - name: Worktree cleanup confirmation and dirty-work preservation
+        run: python tests/test_cleanup_worktrees.py
       - name: Native wrapper process interruption and recovery
         run: python tests/test_lifecycle_process.py
       - name: Startup readiness and wrapper parity
