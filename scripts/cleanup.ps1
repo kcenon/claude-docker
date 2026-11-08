@@ -9,12 +9,12 @@
 .PARAMETER RepoDir
     Git repository path for worktree cleanup (Tier B). Optional.
 .PARAMETER Force
-    Remove state directories without prompting. Without -Force, an
+    Remove clean worktrees and state directories without prompting. Without -Force, an
     interactive console prompts y/N; a non-interactive host (CI, piped
     stdin) aborts instead of hanging.
 .PARAMETER SkipState
-    Decline state-directory removal non-interactively. Useful in automation
-    that only wants container/volume/worktree cleanup.
+    Decline worktree and state-directory removal non-interactively. Useful in automation
+    that only wants container/volume cleanup.
 .PARAMETER Backups
     Remove stale .env.backup.* and .env.bak files older than -BackupAgeDays
     days from the project root. Preserves .env, .env.example, and fresh
@@ -149,15 +149,27 @@ try {
             # cleanup.sh: a worktree the user added themselves is not this
             # tool's to delete, and a refusal that is swallowed reads as a
             # successful removal.
+            $targets = @()
             foreach ($wt in $removable) {
                 if (-not (Test-OwnedWorktreePath -Path $wt -ProjectDir $RepoDir -EnvData $envData)) {
                     Write-Host "  Keeping worktree not created by claude-docker: $wt"
                     continue
                 }
-                Write-Host "  Removing worktree: $wt"
-                & git worktree remove $wt --force 2>$null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "git declined to remove $wt - left in place."
+                $targets += $wt
+            }
+            if ($targets.Count -gt 0) {
+                foreach ($wt in $targets) { Write-Host "  Candidate worktree: $wt" }
+                if (Resolve-Step -Question 'Remove the listed clean worktrees? Dirty worktrees will be kept.') {
+                    foreach ($wt in $targets) {
+                        & git worktree remove $wt 2>$null
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Warning "git declined to remove $wt (dirty or otherwise protected) - left in place."
+                        } else {
+                            Write-Host "  Removed worktree: $wt"
+                        }
+                    }
+                } else {
+                    Write-Host '  Skipped.'
                 }
             }
         }

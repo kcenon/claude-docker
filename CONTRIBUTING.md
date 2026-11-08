@@ -118,7 +118,7 @@ reaches an existing installation.** Bump `VERSION` and regenerate the compose
 files:
 
 ```bash
-rm -f .env && bash scripts/generate-compose.sh
+bash scripts/generate-compose.sh --env-file /dev/null
 ```
 
 The `Image content changes bump VERSION` job enforces this. Check the paths it
@@ -133,7 +133,7 @@ A `VERSION` or base image bump also updates the README status line; the
 ### Generated files
 
 The four `docker-compose*.yml` files are generated and **tracked**. Regenerate
-with no `.env` present, which is what the `Compose files are current` job
+with `--env-file /dev/null` to preserve any local `.env`, which is what the `Compose files are current` job
 compares against. Do not hand-edit them.
 
 ## Conventions

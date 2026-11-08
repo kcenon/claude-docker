@@ -1,4 +1,4 @@
-# Base: node:26.10.0-slim (Debian/glibc)
+# Base: node:26.13.0-slim (Debian/glibc)
 # Pinned to a specific patch version AND content digest so upstream tag
 # movement cannot silently change the base layers. The full image is not
 # byte-for-byte reproducible because later apt/npm installs may track current
@@ -15,7 +15,7 @@
 #      (see docs/MAINTENANCE.md#bumping-the-base-image for the clean-worktree
 #      procedure)
 #   5. Rebuild: docker compose build --no-cache
-FROM node:26.10.0-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1
+FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072
 
 # Use bash with pipefail for all RUN pipes so an upstream curl/gpg failure
 # aborts the build instead of masking the error behind a downstream success.
@@ -36,7 +36,7 @@ WORKDIR /workspace
 # because this is the interpreter only, no pip or venv.
 #
 # DL3008 waived: rolling Debian base tracks security updates via the
-# digest-pinned node:26.10.0-slim; per-package apt pins would be churn
+# digest-pinned node:26.13.0-slim; per-package apt pins would be churn
 # without a meaningful security benefit. Pinning policy tracked in #171.
 # hadolint ignore=DL3008
 RUN apt-get update \

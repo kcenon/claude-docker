@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,19 @@ import (
 
 	"github.com/kcenon/claude-docker/tui/internal/config"
 )
+
+func TestClosedClientCannotStartAnotherRefresh(t *testing.T) {
+	root := t.TempDir()
+	client := NewClient(root, config.NewEmptyEnv(filepath.Join(root, ".env")))
+	client.Close()
+	client.Close()
+	if _, err := client.PS(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("closed client refresh: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude-docker-lifecycle")); !os.IsNotExist(err) {
+		t.Fatalf("closed client created a lifecycle lock: %v", err)
+	}
+}
 
 // writeShim puts an executable script named `name` in a fresh directory and
 // prepends that directory to PATH for the duration of the test.

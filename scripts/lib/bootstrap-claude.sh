@@ -170,25 +170,23 @@ runtime_bootstrap() {
     # below call the helper unconditionally and repointed correctly, which is
     # why the account ended up half on each source (#357, cluster A).
     #
-    # The two arms need different treatment rather than one shared guard, which
-    # is why the guard could not simply be deleted: the symlink arm is cheap and
-    # idempotent, while the copy arm must not re-copy the tree on every boot.
+    # Refresh managed executable directories on every boot so they stay in
+    # step with settings.json, which is also regenerated every time.
     for item in hooks scripts; do
         if [ -d "$CONFIG_SOURCE/$item" ]; then
             target="$ACCOUNT_DIR/$item"
             if [ -z "$EXPLICIT_SOURCE" ]; then
                 # Read-only mount: copy + CRLF normalize.
                 #
-                # A symlink here is a leftover from a boot that had
-                # CLAUDE_CONFIG_SOURCE set. It has to go before the copy, or
-                # the account keeps reading the old source forever.
+                # A leftover explicit-source link is replaced only after the
+                # new copy is complete, so failed refreshes retain it too.
                 if [ -L "$target" ]; then
-                    echo "[entrypoint] $item: dropping link into $(readlink "$target"); CLAUDE_CONFIG_SOURCE is no longer set"
-                    rm -f "$target"
+                    echo "[entrypoint] $item: refreshing link into $(readlink "$target"); CLAUDE_CONFIG_SOURCE is no longer set"
                 fi
-                if [ ! -e "$target" ]; then
-                    bootstrap_copy_dir "$CONFIG_SOURCE/$item" "$target"
+                if bootstrap_copy_dir "$CONFIG_SOURCE/$item" "$target"; then
                     echo "[entrypoint] $item: copied and CRLF-normalized from read-only mount"
+                else
+                    bootstrap_degradation blocking "$item could not be refreshed from the host configuration; the current guard scripts cannot be guaranteed"
                 fi
             else
                 # Writable CLAUDE_CONFIG_SOURCE: symlink. The helper decides
@@ -321,8 +319,8 @@ runtime_bootstrap() {
         local script resolved missing_hooks=0
         while IFS= read -r script; do
             resolved="${script/#\~/$HOME}"
-            if [ ! -f "$resolved" ]; then
-                echo "[entrypoint] WARNING: hook references missing script: $script"
+            if [ ! -s "$resolved" ]; then
+                echo "[entrypoint] WARNING: hook references missing or empty script: $script"
                 missing_hooks=$((missing_hooks + 1))
             fi
         done < <(jq -r '.. | objects | .command? // empty' "$ACCOUNT_DIR/settings.json" 2>/dev/null \

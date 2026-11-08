@@ -43,6 +43,11 @@ same-named account directories on startup. For `skills/`, `commands/`,
 per-account instruction files are preserved, but do not use the managed
 directories for persistent per-account overrides.
 
+Copies are staged before replacing either executable directory. If any entry
+cannot be copied or normalized, the previous complete directory is retained
+and startup is blocked through the bootstrap degradation gate. Correct the
+host files or mount permissions and restart to retry the refresh.
+
 The account state directory itself is created `0700`. On Linux and macOS the
 installer already sets that host-side; on Windows `chmod` is meaningless
 against NTFS and Docker Desktop typically exposes bind mounts as `0777` inside

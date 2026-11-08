@@ -171,6 +171,12 @@ QUOTED_HASH_THEN_COMMENT="a # b"  # note
 SQ_HASH_THEN_COMMENT='a # b'  # note
 JUNK_AFTER_QUOTE="abc"def
 BACKTRACK_QUOTE="abc" # x" def
+CASE_KEY=upper
+case_key=lower
+DUPLICATE=old
+DUPLICATE=last
+DUPLICATE_EMPTY=old
+DUPLICATE_EMPTY=
 SYNTH_EOF
 
 echo "== synthetic edge cases =="
@@ -178,6 +184,41 @@ while IFS= read -r key; do
     [[ -z "$key" ]] && continue
     assert_equiv "$SYNTH" "$key"
 done < <(enumerate_keys "$SYNTH")
+
+echo "== default loader agrees with the readers, including duplicates =="
+while IFS= read -r key; do
+    loaded=$(
+        while IFS= read -r unset_key; do unset "$unset_key"; done < <(enumerate_keys "$SYNTH")
+        load_env_file "$SYNTH"
+        printf '%s' "${!key:-}"
+    )
+    expected=$(parse_env_value "$SYNTH" "$key")
+    if [[ "$loaded" == "$expected" ]]; then
+        printf '  PASS  load_env_file: %s\n' "$key"
+        PASS=$((PASS + 1))
+    else
+        printf '  FAIL  load_env_file: %s\n' "$key"
+        FAIL=$((FAIL + 1))
+    fi
+done < <(enumerate_keys "$SYNTH")
+
+echo "== updates to duplicate keys are visible to every reader =="
+for writer in bash powershell; do
+    written="$SYNTH_DIR/written-$writer.env"
+    cp "$SYNTH" "$written"
+    if [[ "$writer" == bash ]]; then
+        set_env_value "$written" DUPLICATE 'updated # placeholder'
+    else
+        pwsh -NoProfile -Command "Import-Module '$PSM1_PATH' -Force; Set-EnvValue -Path '$written' -Key DUPLICATE -Value 'updated # placeholder'"
+    fi
+    assert_equiv "$written" DUPLICATE
+    if [[ "$(parse_env_value "$written" DUPLICATE)" == 'updated # placeholder' ]]; then
+        PASS=$((PASS + 1))
+    else
+        printf '  FAIL  %s update did not replace the effective value\n' "$writer"
+        FAIL=$((FAIL + 1))
+    fi
+done
 
 # Agreement is not enough on its own: three readers can be wrong together, and
 # two of them were. Before #356, bash and pwsh both returned `"a` for

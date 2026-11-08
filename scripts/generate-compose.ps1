@@ -45,7 +45,7 @@ if ($IsWindows -and $OutputDir -eq $ProjectRoot -and -not $env:CLAUDE_DOCKER_LOC
     $generatorArgs = @('-NoProfile', '-File', $PSCommandPath, '-EnvFile', $EnvFile, '-OutputDir', $OutputDir)
     if ($NumAccounts -gt 0) { $generatorArgs += @('-NumAccounts', [string]$NumAccounts) }
     if ($ImageTag) { $generatorArgs += @('-ImageTag', $ImageTag) }
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot run-locked -- pwsh @generatorArgs
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs (@('run-locked', '--', 'pwsh') + $generatorArgs)
     exit 0
 }
 $savedConfigurationEnvFile = $env:CLAUDE_DOCKER_ENV_FILE
@@ -744,9 +744,9 @@ function New-LinuxCompose {
 }
 
 # Validate all inputs before opening an output file.
-$null = Invoke-HostPolicy -ProjectRoot $ProjectRoot validate-input --env-file $EnvFile
+$null = Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('validate-input', '--env-file', $EnvFile)
 $null = New-Item -ItemType Directory -Path $OutputDir -Force
-$IsolatedTmpfsLines = @(Invoke-HostPolicy -ProjectRoot $ProjectRoot scratch --env-file $EnvFile)
+$IsolatedTmpfsLines = @(Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('scratch', '--env-file', $EnvFile))
 
 # --- Main ---------------------------------------------------------------------
 
