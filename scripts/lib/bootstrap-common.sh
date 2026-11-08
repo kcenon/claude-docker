@@ -105,8 +105,8 @@ $message"
 #     symlinks silently lost those entries. A missing hooks/lib/* left no
 #     signal at all.
 #   * The `while` ran in a pipe subshell, so a sed or cp failure could not
-#     propagate. The loop reads from a process substitution now, and the
-#     first failure is reported and returned.
+#     propagate. A checked file inventory and staged destination now keep
+#     enumeration/copy failures from publishing a partial directory.
 bootstrap_copy_dir() {
     local src="$1"
     local target_dir="$2" dst files previous=""

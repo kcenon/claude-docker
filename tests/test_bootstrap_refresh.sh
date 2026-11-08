@@ -63,6 +63,17 @@ check 'failed first boot records a blocking degradation' yes \
 check 'failed first boot never reports copy success' no \
     "$(if grep -q 'copied and CRLF-normalized' "$WORK/failed-first.log"; then echo yes; else echo no; fi)"
 
+mkdir -p "$WORK/legacy-hooks"
+printf 'legacy-guard\n' > "$WORK/legacy-hooks/guard.sh"
+ln -s "$WORK/legacy-hooks" "$CLAUDE_CONFIG_DIR/hooks"
+sed() { return 1; }
+runtime_bootstrap > "$WORK/failed-link-refresh.log" 2>&1
+unset -f sed
+check 'failed fallback refresh retains the previous hook link' "$WORK/legacy-hooks" \
+    "$(readlink "$CLAUDE_CONFIG_DIR/hooks" 2>/dev/null)"
+check 'failed fallback refresh retains the previous hook content' legacy-guard \
+    "$(cat "$CLAUDE_CONFIG_DIR/hooks/guard.sh" 2>/dev/null)"
+
 # Missing/unreadable input cannot replace a valid destination with an empty dir.
 mkdir -p "$WORK/retained"
 printf 'keep\n' > "$WORK/retained/guard.sh"

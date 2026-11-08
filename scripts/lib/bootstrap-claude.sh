@@ -178,12 +178,10 @@ runtime_bootstrap() {
             if [ -z "$EXPLICIT_SOURCE" ]; then
                 # Read-only mount: copy + CRLF normalize.
                 #
-                # A symlink here is a leftover from a boot that had
-                # CLAUDE_CONFIG_SOURCE set. It has to go before the copy, or
-                # the account keeps reading the old source forever.
+                # A leftover explicit-source link is replaced only after the
+                # new copy is complete, so failed refreshes retain it too.
                 if [ -L "$target" ]; then
-                    echo "[entrypoint] $item: dropping link into $(readlink "$target"); CLAUDE_CONFIG_SOURCE is no longer set"
-                    rm -f "$target"
+                    echo "[entrypoint] $item: refreshing link into $(readlink "$target"); CLAUDE_CONFIG_SOURCE is no longer set"
                 fi
                 if bootstrap_copy_dir "$CONFIG_SOURCE/$item" "$target"; then
                     echo "[entrypoint] $item: copied and CRLF-normalized from read-only mount"
