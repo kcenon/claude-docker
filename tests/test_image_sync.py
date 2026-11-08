@@ -88,7 +88,9 @@ class ImageSyncTests(unittest.TestCase):
                 shutil.copytree(ROOT / name, root / name)
             (root / "tui/internal/config").mkdir(parents=True)
             shutil.copy(ROOT / "tui/internal/config/runtimes.json", root / "tui/internal/config")
-            for name in ("Dockerfile", "VERSION", "README.md", ".env.example"):
+            for name in ("Dockerfile", "VERSION", "README.md", ".env.example", ".gitignore",
+                         "docker-compose.yml", "docker-compose.linux.yml",
+                         "docker-compose.worktree.yml", "docker-compose.isolated.yml"):
                 shutil.copy(ROOT / name, root / name)
             current = sync.node_image((root / "Dockerfile").read_text())
             for name in ("Dockerfile", "README.md", "docs/MAINTENANCE.md"):
@@ -102,10 +104,36 @@ class ImageSyncTests(unittest.TestCase):
             # the documentation contract red, even though FROM itself is valid.
             self.assertTrue(check_base_tags(root))
             (root / "Dockerfile").write_text(before)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                            "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], check=True)
+            base = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
             config = b'NUM_ACCOUNTS=19\nGH_TOKEN=placeholder-do-not-touch\n'
             (root / ".env").write_bytes(config)
-            with patch.dict(os.environ, {"NUM_ACCOUNTS": "7", "IMAGE_TAG": "stale"}):
-                sync.synchronize(root, NEW, "2099.01.01")
+            pr = {"number": 1, "user": {"login": "dependabot[bot]"}, "base": {"sha": base},
+                  "head": {"repo": {"full_name": "owner/repo"}, "sha": "bot-head", "ref": "dependabot/docker/node"}}
+            responses = [[{"filename": "Dockerfile"}],
+                         {"content": base64.b64encode(before.replace("FROM " + OLD, "FROM " + NEW).encode()).decode()},
+                         {"tree": {"sha": "bot-tree"}}, {"sha": "synchronized-tree"},
+                         {"sha": "synchronized-head"}, None,
+                         {"workflow_runs": []}, None, None, None]
+            with patch.dict(os.environ, {"NUM_ACCOUNTS": "7", "IMAGE_TAG": "stale"}), \
+                    patch.object(pr_sync, "api", side_effect=responses) as api, \
+                    patch.object(pr_sync.image_sync, "verify_digest") as verify, \
+                    patch.object(pr_sync.image_sync, "next_version", return_value="2099.01.01"):
+                pr_sync.synchronize_pr("owner/repo", root, pr)
+            verify.assert_called_once_with(NEW)
+            calls = api.call_args_list
+            tree = calls[3].args[2]
+            self.assertEqual(tree["base_tree"], "bot-tree")
+            paths = {entry["path"] for entry in tree["tree"]}
+            self.assertTrue({"Dockerfile", "VERSION", "docker-compose.yml", "README.md", "docs/MAINTENANCE.md"} <= paths)
+            self.assertNotIn(".env", paths)
+            self.assertEqual(calls[4].args[2]["parents"], ["bot-head"])
+            self.assertEqual(calls[5].args[2], {"sha": "synchronized-head", "force": False})
+            self.assertEqual(calls[5].kwargs["method"], "PATCH")
+            self.assertIn("head_sha=synchronized-head", calls[6].args[1])
             self.assertEqual((root / ".env").read_bytes(), config)
             self.assertEqual(sync.node_image((root / "Dockerfile").read_text()), NEW)
             self.assertEqual(check_base_tags(root), [])
