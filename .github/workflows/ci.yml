@@ -363,6 +363,7 @@ jobs:
           - tests/test_sandbox_gate.sh
           - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
+          - tests/test_bootstrap_refresh.sh
           - tests/test_workflow_contracts.sh
           # Linux-only on purpose: this covers container bootstrap code, the
           # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
@@ -435,6 +436,7 @@ jobs:
           failed=0
           for t in \
             tests/test_bash32_portability.sh \
+            tests/test_bootstrap_refresh.sh \
             tests/test_parse_env.sh \
             tests/test_agent_attach_argv.sh \
             tests/test_num_accounts_precedence.sh \
