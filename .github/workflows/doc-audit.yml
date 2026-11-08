@@ -14,6 +14,7 @@ name: Documentation Audit
 # that a filter skipped.
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
 

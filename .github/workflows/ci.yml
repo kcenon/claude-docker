@@ -2,6 +2,12 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Base commit for image-input freshness validation
+        required: true
+        type: string
   push:
     branches: [main]
 
@@ -253,7 +259,7 @@ jobs:
   # and no gemini, and nothing told it so.
   image-tag-freshness:
     name: Image content changes bump VERSION
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -263,11 +269,11 @@ jobs:
           fetch-depth: 0
       - name: Compare image inputs against VERSION
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
 
           # The inputs that decide what lands inside the image: every path the
           # Dockerfile COPYs, plus the Dockerfile itself. Keep this in step with
@@ -295,6 +301,13 @@ jobs:
 
           echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (rm -f .env && bash scripts/generate-compose.sh)."
           exit 1
+
+  image-sync-tests:
+    name: Image update synchronization
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 tests/test_image_sync.py
 
   bash-tests:
     name: Bash Tests (${{ matrix.test }})

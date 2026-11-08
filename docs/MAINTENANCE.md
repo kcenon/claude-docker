@@ -4,7 +4,7 @@ What the image installs and pins, and how to move its base image.
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins **`node:26.10.0-slim` and its content digest**, so the
+The `Dockerfile` pins **`node:26.13.0-slim` and its content digest**, so the
 base layers stay fixed when the upstream tag moves. A digest-qualified reference
 selects that content; it does not require the tag to keep pointing to it.
 
@@ -36,7 +36,9 @@ To bump the Node base:
    references in its comments, this page and the README status line at the
    same time
 4. Update `VERSION` at the repo root to today's date
-   (e.g. `2026.04.17`). Both `scripts/generate-compose.sh`/`.ps1` and
+   (e.g. `2026.04.17`). For another image on the same day append an increasing
+   revision (`2026.04.17.1`, then `.2`); never reuse a published image tag.
+   Both `scripts/generate-compose.sh`/`.ps1` and
    `scripts/install.sh`/`.ps1` read this file, so regenerating compose
    or running `install` picks up the new default automatically. Do not
    hand-edit the generated `docker-compose.yml` — its header forbids it.
@@ -55,8 +57,16 @@ To bump the Node base:
 ### Completing a Dependabot Base Image PR
 
 Dependabot version updates target `develop`. A Docker update normally changes
-only the `FROM` tag and digest. The image-version freshness and README checks
-then fail until a maintainer adds the synchronization commit below.
+only the `FROM` tag and digest. `Synchronize Node image PRs` runs hourly and can
+also be dispatched manually. It verifies the proposed slim/trixie digests,
+adds the version, documentation and Compose synchronization commit, and dispatches
+CI, documentation and isolation checks on the resulting PR head. The image-version
+and documentation checks still apply to dependency updates.
+The workflow takes scripts and generators from trusted repository branches;
+it never checks out or executes PR code with its write token. It accepts only
+same-major, non-downgrade FROM-only changes by Dependabot in this repository.
+PRs with additional manual changes are left for maintainers to complete.
+The schedule becomes active when the workflow reaches the default branch.
 Security updates target `main`; follow the same checks there, then the
 `main` to `develop` synchronization rule in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -76,12 +86,20 @@ Security updates target `main`; follow the same checks there, then the
    moved, investigate the exact proposed digest instead of silently substituting
    another image. Resolve any distribution change before updating the prose.
 
-2. **Push a synchronization commit onto the Dependabot branch.** Check out its
-   current head in a clean worktree. Retain the verified `FROM` change and update:
+2. **Check the automatic synchronization, or complete it manually.** In a clean
+   worktree with the base branch's Dockerfile still present, run:
+
+   ```sh
+   python3 scripts/sync-image-inputs.py --image 'node:<version>-slim@sha256:<verified-digest>'
+   ```
+
+   The command verifies both registry tags again, allocates a new image version,
+   synchronizes the following files and regenerates Compose without reading the
+   local `.env` or exported generator inputs:
 
    | File | Synchronization |
    |---|---|
-   | `VERSION` | Today's date, strictly later than the current image version. |
+   | `VERSION` | Today's date, with a daily revision when needed. |
    | `Dockerfile` | The `Base:` and `digest-pinned` comments name the new tag. |
    | `docs/MAINTENANCE.md` | The current base declaration at the top names the new tag. |
    | `README.md` | The status line names both the new VERSION and base image. |
@@ -89,10 +107,7 @@ Security updates target `main`; follow the same checks there, then the
 
    Keep any installation's `.env` intact. With unchanged generator defaults,
    only image-tag defaults in `docker-compose.yml` should change; inspect any
-   other generated difference. If today's date is already in VERSION, combine
-   still-unpublished changes into the same planned image or wait for a later
-   date before publishing a different image. Do not reuse a published tag or
-   invent an unimplemented version suffix. Updating an existing PR's planned
+   other generated difference. Updating an existing PR's planned
    image must still leave VERSION changed relative to its base.
 
    A maintainer commit stops Dependabot from automatically rebasing that PR.
@@ -117,4 +132,4 @@ Decision for #421: current Node base references are enforced by
 and this page's visible prose with `FROM`, asserts that the expected references
 exist, and ignores fenced historical examples. Its behavior tests deliberately
 introduce stale tags. The first actual Dependabot Docker update on `develop`
-provides the live check of the complete procedure.
+provides the live check of the automatic synchronization and dispatch path.
