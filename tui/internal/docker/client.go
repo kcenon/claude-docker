@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kcenon/claude-docker/tui/internal/config"
@@ -40,11 +41,27 @@ const killGrace = 2 * time.Second
 type Client struct {
 	projectRoot string
 	env         *config.Env
+	ctx         context.Context
+	cancel      context.CancelFunc
+	mu          sync.Mutex
+	closed      bool
+	refreshes   sync.WaitGroup
 }
 
 // NewClient creates a docker compose client.
 func NewClient(projectRoot string, env *config.Env) *Client {
-	return &Client{projectRoot: projectRoot, env: env}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Client{projectRoot: projectRoot, env: env, ctx: ctx, cancel: cancel}
+}
+
+// Close cancels and drains refreshes before the process can exit. Bubble Tea
+// does not wait for command goroutines, whose defers release lifecycle locks.
+func (c *Client) Close() {
+	c.mu.Lock()
+	c.closed = true
+	c.cancel()
+	c.mu.Unlock()
+	c.refreshes.Wait()
 }
 
 // ContainerInfo mirrors the subset of `docker compose ps --format json` we care about.
@@ -58,6 +75,15 @@ type ContainerInfo struct {
 
 // PS returns the list of containers for this compose project.
 func (c *Client) PS() ([]ContainerInfo, error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, context.Canceled
+	}
+	c.refreshes.Add(1)
+	c.mu.Unlock()
+	defer c.refreshes.Done()
+
 	base, err := BuildComposeArgs(c.projectRoot, c.env)
 	if err != nil {
 		return nil, err
@@ -70,7 +96,7 @@ func (c *Client) PS() ([]ContainerInfo, error) {
 	}
 	defer release()
 	args := append(base, "ps", "--format", "json", "--all")
-	ctx, cancel := context.WithTimeout(context.Background(), psTimeout)
+	ctx, cancel := context.WithTimeout(c.ctx, psTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.WaitDelay = killGrace
@@ -80,6 +106,9 @@ func (c *Client) PS() ([]ContainerInfo, error) {
 		// would tell the operator their docker client crashed.
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("docker compose ps timed out after %s", psTimeout)
+		}
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("docker compose ps: %w", ctx.Err())
 		}
 		return nil, fmt.Errorf("docker compose ps: %w", err)
 	}
