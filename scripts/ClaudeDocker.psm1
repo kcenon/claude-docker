@@ -250,10 +250,11 @@ function Read-EnvFile {
     Handles CRLF, inline comments, quoted values, and trailing whitespace.
     Later duplicate keys win, matching POSIX shell env semantics.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseLiteralInitializerForHashtable', '', Justification = 'Env keys must be case-sensitive to match Bash, Go and Python; the literal hashtable is case-insensitive.')]
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
-    $result = @{}
+    $result = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     if (-not (Test-Path $Path)) { return $result }
 
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
@@ -282,7 +283,7 @@ function Get-EnvValue {
     $last = $null
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $parsed = ConvertFrom-EnvLine -Line $line
-        if ($null -ne $parsed -and $parsed[0] -eq $Key) {
+        if ($null -ne $parsed -and $parsed[0] -ceq $Key) {
             $last = $parsed[1]
         }
     }
@@ -351,14 +352,13 @@ function Set-EnvValue {
         return
     }
 
-    # Scan-and-replace the first matching KEY= line; leave others intact so
-    # values containing regex metacharacters or '$n' backreferences are
-    # handled literally.
-    $keyPattern = "^\s*$([regex]::Escape($Key))="
+    # Update every exact key so a later duplicate cannot undo a token update.
+    # Use literal assignment to preserve regex metacharacters and backslashes.
+    $keyPattern = "^\s*$([regex]::Escape($Key))\s*="
     $lines = [System.IO.File]::ReadAllLines($Path)
     $replaced = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if (-not $replaced -and $lines[$i] -match $keyPattern) {
+        if ($lines[$i] -cmatch $keyPattern) {
             $lines[$i] = $line
             $replaced = $true
         }
@@ -1074,16 +1074,13 @@ function Invoke-Compose {
     Execute docker compose with the correct file arguments.
     Replaces bash's eval "$compose_cmd ..." pattern with safe array splatting.
     .NOTES
-    CAUTION: This is an advanced function (CmdletBinding + Parameter attributes).
-    PowerShell intercepts short flags that match common parameters before they
-    reach ValueFromRemainingArguments. Use long flags for Docker options:
-      --detach (not -d, which maps to -Debug)
-      --verbose (not -v, which maps to -Verbose)
+    Pass Docker arguments as an explicit -ComposeArgs array so PowerShell's
+    binder cannot consume Docker options as common or named parameters.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
-        [Parameter(ValueFromRemainingArguments)][string[]]$ComposeArgs
+        [string[]]$ComposeArgs
     )
 
     $baseArgs = @(Get-ComposeArgs -ProjectRoot $ProjectRoot)

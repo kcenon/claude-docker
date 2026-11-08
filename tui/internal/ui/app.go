@@ -56,6 +56,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
+			if a.client != nil {
+				a.client.Close()
+			}
 			return a, tea.Quit
 		}
 	}

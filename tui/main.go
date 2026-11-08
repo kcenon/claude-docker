@@ -62,7 +62,9 @@ func main() {
 
 	app := ui.NewApp(version, projectRoot, env, composeClient, skipPermissions)
 	p := tea.NewProgram(app, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	_, err = p.Run()
+	composeClient.Close()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

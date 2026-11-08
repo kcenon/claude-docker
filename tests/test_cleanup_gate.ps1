@@ -133,14 +133,14 @@ if ($range.Count -eq 1) {
     Assert-Eq 'upper bound is 3650' 3650 $bounds[1]
 }
 
-Write-Host '== cleanup.ps1: one gate, both destructive steps =='
+Write-Host '== cleanup.ps1: one gate, all destructive steps =='
 
 # The defect was one script carrying two policies: state-directory removal was
 # gated, backup removal was not. Both now call the same helper, so a future
 # edit that reintroduces a private copy fails here.
 $source = Get-Content -LiteralPath $cleanupPath -Raw
 $gateCalls = ([regex]::Matches($source, 'Resolve-Step -Question')).Count
-Assert-Eq 'both destructive steps call the shared gate' 2 $gateCalls
+Assert-Eq 'all three destructive steps call the shared gate' 3 $gateCalls
 Assert-Eq 'the gate delegates to Get-CleanupDecision' $true `
     ($source -like '*Get-CleanupDecision*')
 Assert-Eq 'the backup sweep uses the shared age rule' $true `

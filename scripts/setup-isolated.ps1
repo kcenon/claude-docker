@@ -52,4 +52,4 @@ if ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.OS -and $PSVersion
 . (Join-Path $PSScriptRoot 'lib/host.ps1')
 $policyArgs = @('setup', '--source', $RepoDir, '--count', $AccountCount)
 if ($DryRun) { $policyArgs += '--dry-run' }
-Invoke-HostPolicy -ProjectRoot (Split-Path -Parent $PSScriptRoot) @policyArgs
+Invoke-HostPolicy -ProjectRoot (Split-Path -Parent $PSScriptRoot) -PolicyArgs $policyArgs

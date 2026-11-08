@@ -52,6 +52,20 @@ Write-Host '== Get-EnvValue: duplicate keys — last wins =='
 $dup = Join-Path $Fixtures 'duplicate-keys.env'
 Assert-Eq 'NUM_ACCOUNTS last wins' '5' (Get-EnvValue -Path $dup -Key 'NUM_ACCOUNTS')
 
+Write-Host '== duplicate updates and case-sensitive keys =='
+$duplicatePath = [System.IO.Path]::GetTempFileName()
+Write-EnvContent -Path $duplicatePath -Content "CASE_KEY=upper`ncase_key=lower`nCASE_KEY =last`nEMPTY_KEY=old`nEMPTY_KEY=`n"
+Assert-Eq 'case-sensitive upper key' 'last' (Get-EnvValue -Path $duplicatePath -Key 'CASE_KEY')
+Assert-Eq 'case-sensitive lower key' 'lower' (Get-EnvValue -Path $duplicatePath -Key 'case_key')
+$duplicates = Read-EnvFile -Path $duplicatePath
+Assert-Eq 'hashtable preserves upper key' 'last' $duplicates['CASE_KEY']
+Assert-Eq 'hashtable preserves lower key' 'lower' $duplicates['case_key']
+Assert-Eq 'empty final value wins' '' $duplicates['EMPTY_KEY']
+Set-EnvValue -Path $duplicatePath -Key 'CASE_KEY' -Value 'new\literal # placeholder'
+Assert-Eq 'writer updates the effective duplicate literally' 'new\literal # placeholder' (Get-EnvValue -Path $duplicatePath -Key 'CASE_KEY')
+Assert-Eq 'writer preserves the differently cased key' 'lower' (Get-EnvValue -Path $duplicatePath -Key 'case_key')
+Remove-Item $duplicatePath -Force
+
 Write-Host '== Get-EnvValue: CRLF tolerance =='
 $crlfPath = [System.IO.Path]::GetTempFileName()
 [System.IO.File]::WriteAllBytes(
