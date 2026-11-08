@@ -16,14 +16,10 @@
     .\claude-docker.ps1 gh-auth
     .\claude-docker.ps1 usage daily
 #>
-[CmdletBinding()]
-param(
-    [Parameter(Position = 0)]
-    [string]$Command = 'help',
-
-    [Parameter(Position = 1, ValueFromRemainingArguments)]
-    [string[]]$Arguments = @()
-)
+# Keep Docker's short options out of PowerShell's parameter binder. Named
+# parameters and common parameters here would consume -c, -v, -a and others.
+$Command = if ($args.Count) { [string]$args[0] } else { 'help' }
+[string[]]$Arguments = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
 
 $ErrorActionPreference = 'Stop'
 
@@ -43,7 +39,7 @@ $ProjectRoot = Split-Path $PSScriptRoot -Parent
 if ($Command -in @('up','down','restart','update','build','scale','config','compose','gh-auth','ps')) {
     if ($IsWindows -and -not $env:CLAUDE_DOCKER_LOCK_TOKEN) {
         try {
-            Invoke-HostPolicy -ProjectRoot $ProjectRoot run-locked -- pwsh -NoProfile -File $PSCommandPath $Command @Arguments
+            Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs (@('run-locked', '--', 'pwsh', '-NoProfile', '-File', $PSCommandPath, $Command) + $Arguments)
         } catch {
             $nativeCode = $_.Exception.Data['ExitCode']
             if ($nativeCode) { exit $nativeCode }
@@ -52,7 +48,7 @@ if ($Command -in @('up','down','restart','update','build','scale','config','comp
         exit 0
     }
 } elseif ($Command -notin @('help','--help','-h','recover','build-tui')) {
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot guard
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('guard')
 }
 
 # --- Exit Code Propagation ----------------------------------------------------
@@ -192,9 +188,9 @@ function Show-IsolationMode {
 }
 
 function Invoke-ReadyUp {
-    param([Parameter(ValueFromRemainingArguments)][string[]]$UpArguments)
+    param([string[]]$UpArguments)
     try {
-        Invoke-HostPolicy -ProjectRoot $ProjectRoot up -- @UpArguments
+        Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs (@('up', '--') + $UpArguments)
     } catch {
         # Keep Docker's native failure code through both the direct wrapper
         # and the outer lifecycle-lock process.
@@ -210,11 +206,11 @@ function Invoke-Up {
     Show-IsolationMode
     Write-Host ''
     Write-Host 'Starting containers...' -ForegroundColor Cyan
-    Invoke-ReadyUp @Arguments
+    Invoke-ReadyUp -UpArguments $Arguments
     if (-not (Test-ComposeSucceeded 'up')) { return }
     Write-Host 'Containers started.' -ForegroundColor Green
     Write-Host ''
-    Invoke-Compose -ProjectRoot $ProjectRoot ps
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('ps')
     $null = Test-ComposeSucceeded 'ps'
 
     # Lightweight post-start GitHub auth check (non-blocking)
@@ -228,26 +224,26 @@ function Invoke-Up {
 
 function Invoke-Down {
     Write-Host 'Stopping containers...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot down @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('down') + $Arguments)
     if (-not (Test-ComposeSucceeded 'down')) { return }
     Write-Host 'Containers stopped.' -ForegroundColor Green
 }
 
 function Invoke-Restart {
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight --host
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('preflight', '--host')
     Write-Host 'Restarting containers...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot restart @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('restart') + $Arguments)
     if (-not (Test-ComposeSucceeded 'restart')) { return }
     Write-Host 'Containers restarted.' -ForegroundColor Green
 }
 
 function Invoke-Logs {
-    Invoke-Compose -ProjectRoot $ProjectRoot logs -f @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('logs', '-f') + $Arguments)
     $null = Test-ComposeSucceeded 'logs'
 }
 
 function Invoke-Ps {
-    Invoke-Compose -ProjectRoot $ProjectRoot ps @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('ps') + $Arguments)
     $null = Test-ComposeSucceeded 'ps'
 }
 
@@ -260,7 +256,7 @@ function Invoke-Exec {
     $service = $Arguments[0]
     $rest = if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] } else { @('bash') }
 
-    Invoke-Compose -ProjectRoot $ProjectRoot exec $service @rest
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('exec', $service) + $rest)
     # exec's exit code is the command's, and a caller scripting around this
     # wrapper needs it.
     $null = Test-ComposeSucceeded 'exec'
@@ -331,7 +327,7 @@ function Invoke-Agent {
         }
         $agentArgs += $skipFlag
     }
-    Invoke-Compose -ProjectRoot $ProjectRoot exec $service @agentArgs
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('exec', $service) + $agentArgs)
     $null = Test-ComposeSucceeded "$label"
 }
 
@@ -381,7 +377,7 @@ function Invoke-GhAuthShared {
     $running = Get-ContainerId -ProjectRoot $ProjectRoot -Service $primary
     if ($running) {
         Write-Host 'Recreating containers to apply...' -ForegroundColor Cyan
-        Invoke-ReadyUp --force-recreate
+        Invoke-ReadyUp -UpArguments @('--force-recreate')
         # A failed recreate means the token was written to .env but no
         # container picked it up. Verifying auth after that would report a
         # stale answer, so stop here with the code recorded.
@@ -511,7 +507,7 @@ function Invoke-GhAuthPerAccount {
     }
 
     Write-Host 'Recreating selected container(s) to apply...' -ForegroundColor Cyan
-    Invoke-ReadyUp --force-recreate @runningServices
+    Invoke-ReadyUp -UpArguments (@('--force-recreate') + $runningServices)
     # Same as the shared path: verifying auth against containers that were not
     # recreated would report a stale answer.
     if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
@@ -699,13 +695,13 @@ function Test-AllContainerGhAuth {
 
 function Invoke-Build {
     Write-Host 'Building Docker image...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot build @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs (@('build') + $Arguments)
     if (-not (Test-ComposeSucceeded 'build')) { return }
     Write-Host 'Build complete.' -ForegroundColor Green
 }
 
 function Invoke-Update {
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight --host
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('preflight', '--host')
     # The registry's `binary` field, not the runtime key: this value is exec'd
     # inside the container below (#356, row 3). cmd_update in the bash wrapper
     # calls agent_binary for the same reason.
@@ -727,13 +723,13 @@ function Invoke-Update {
     Write-Host ''
 
     Write-Host '[3/5] Rebuilding image (--no-cache)...' -ForegroundColor Cyan
-    Invoke-Compose -ProjectRoot $ProjectRoot build --no-cache
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('build', '--no-cache')
     # Recreating containers from an image that failed to build would replace a
     # working stack with a broken one, so this stops rather than continuing.
     if (-not (Test-ComposeSucceeded 'build --no-cache')) { return }
 
     Write-Host '[4/5] Recreating containers...' -ForegroundColor Cyan
-    Invoke-ReadyUp --force-recreate
+    Invoke-ReadyUp -UpArguments @('--force-recreate')
     if (-not (Test-ComposeSucceeded 'up --force-recreate')) { return }
 
     # Verify version and GitHub auth
@@ -759,15 +755,15 @@ function Invoke-Update {
 
 function Invoke-Scale {
     if ($Arguments.Count -eq 0) { throw 'Usage: claude-docker scale <N>' }
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot scale --count $Arguments[0] --language powershell
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('scale', '--count', $Arguments[0], '--language', 'powershell')
 }
 
 function Invoke-Config {
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot preflight @Arguments
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs (@('preflight') + $Arguments)
 }
 
 function Invoke-ComposePass {
-    Invoke-Compose -ProjectRoot $ProjectRoot @Arguments
+    Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs $Arguments
     # The raw pass-through: `compose --bogus-flag` must not exit 0.
     $null = Test-ComposeSucceeded 'compose'
 }
@@ -992,7 +988,7 @@ switch ($Command) {
     'build-tui'  { Invoke-BuildTui }
     'update'     { Invoke-Update }
     'scale'      { Invoke-Scale }
-    'recover'    { Invoke-HostPolicy -ProjectRoot $ProjectRoot recover }
+    'recover'    { Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('recover') }
     'config'     { Invoke-Config }
     'compose'    { Invoke-ComposePass }
     { $_ -in 'help', '--help', '-h' } { Show-Help }

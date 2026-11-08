@@ -567,7 +567,8 @@ collect_configuration() {
     while IFS= read -r r; do
         [[ -z "$r" ]] && continue
         if [[ "$r" == "claude" ]]; then
-            runtimes=("$r" "${runtimes[@]}")
+            # bash 3.2 treats an empty array as unset under nounset.
+            runtimes=("$r" ${runtimes[@]+"${runtimes[@]}"})
         else
             runtimes+=("$r")
         fi

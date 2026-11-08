@@ -105,18 +105,28 @@ $message"
 #     symlinks silently lost those entries. A missing hooks/lib/* left no
 #     signal at all.
 #   * The `while` ran in a pipe subshell, so a sed or cp failure could not
-#     propagate. The loop reads from a process substitution now, and the
-#     first failure is reported and returned.
+#     propagate. A checked file inventory and staged destination now keep
+#     enumeration/copy failures from publishing a partial directory.
 bootstrap_copy_dir() {
     local src="$1"
-    local dst="$2"
+    local target_dir="$2" dst files previous=""
     local rel failures=0
 
-    rm -rf "$dst" 2>/dev/null
-    mkdir -p "$dst" || return 1
+    mkdir -p "$(dirname "$target_dir")" || return 1
+    dst=$(mktemp -d "${target_dir}.copy.XXXXXX") || return 1
+    files=$(mktemp "${target_dir}.files.XXXXXX") || { rm -rf "$dst"; return 1; }
+    if ! (cd "$src" && find . \( -type f -o -type l \)) > "$files"; then
+        echo "[entrypoint] ERROR: could not enumerate $src" >&2
+        rm -rf "$dst"
+        rm -f "$files"
+        return 1
+    fi
 
     while IFS= read -r rel; do
-        mkdir -p "$dst/$(dirname "$rel")" 2>/dev/null
+        if ! mkdir -p "$dst/$(dirname "$rel")"; then
+            failures=$((failures + 1))
+            continue
+        fi
 
         if [ -L "$src/$rel" ]; then
             # Reproduce the link rather than dereferencing it. Copying the
@@ -144,8 +154,9 @@ bootstrap_copy_dir() {
                 # natural fallback is the `chmod +x` this replaces.
                 local mode
                 mode="$(stat -c '%a' "$src/$rel" 2>/dev/null || stat -f '%Lp' "$src/$rel" 2>/dev/null)"
-                if [ -n "$mode" ]; then
-                    chmod "$mode" "$dst/$rel" 2>/dev/null || true
+                if [ -z "$mode" ] || ! chmod "$mode" "$dst/$rel"; then
+                    echo "[entrypoint] ERROR: could not preserve mode for $rel" >&2
+                    failures=$((failures + 1))
                 fi
                 ;;
             *)
@@ -156,11 +167,32 @@ bootstrap_copy_dir() {
                 fi
                 ;;
         esac
-    done < <(cd "$src" && find . \( -type f -o -type l \) 2>/dev/null)
+    done < "$files"
+    rm -f "$files"
 
     if [ "$failures" -gt 0 ]; then
-        echo "[entrypoint] ERROR: $failures entr(y|ies) failed copying $src -> $dst" >&2
+        echo "[entrypoint] ERROR: $failures entr(y|ies) failed copying $src -> $target_dir" >&2
+        rm -rf "$dst"
         return 1
+    fi
+    # Publish only a complete copy. A failed refresh keeps the last working
+    # guard rather than replacing it with partial or zero-byte files.
+    if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+        previous=$(mktemp -d "${target_dir}.previous.XXXXXX") || { rm -rf "$dst"; return 1; }
+        if ! rmdir "$previous" || ! mv "$target_dir" "$previous"; then
+            rm -rf "$dst"
+            return 1
+        fi
+    fi
+    if ! mv "$dst" "$target_dir"; then
+        if [ -n "$previous" ]; then
+            mv "$previous" "$target_dir" || echo "[entrypoint] ERROR: previous copy retained at $previous" >&2
+        fi
+        rm -rf "$dst"
+        return 1
+    fi
+    if [ -n "$previous" ]; then
+        rm -rf "$previous"
     fi
     return 0
 }

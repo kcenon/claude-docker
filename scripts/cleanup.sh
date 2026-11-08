@@ -4,7 +4,7 @@
 # Usage:
 #   scripts/cleanup.sh [REPO_DIR] [--yes|-y | --no|-n] [--backups|-b] [--backup-age-days N]
 #
-# Without --yes or --no, state-directory removal is prompted interactively
+# Without --yes or --no, worktree/state removal is prompted interactively
 # when stdin is a TTY and aborted (non-zero exit) otherwise, so CI or piped
 # invocations never hang waiting for an answer.
 #
@@ -144,16 +144,40 @@ if [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
     #
     # Ownership is checked for the same reason as in remove.sh: a worktree the
     # user added themselves is not this tool's to delete.
+    targets=()
     while IFS= read -r wt; do
         if ! worktree_is_owned "$wt" "$REPO_DIR" "$PROJECT_ROOT/.env"; then
             echo "  Keeping worktree not created by claude-docker: $wt"
             continue
         fi
-        echo "  Removing worktree: $wt"
-        if ! git worktree remove "$wt" --force 2>/dev/null; then
-            echo "  Warning: git declined to remove $wt - left in place." >&2
-        fi
+        targets+=("$wt")
     done < <(worktree_selectable_paths "$(pwd)")
+    if [ "${#targets[@]}" -gt 0 ]; then
+        printf '  Candidate worktree: %s\n' "${targets[@]}"
+        WORKTREE_CONFIRM="$CONFIRM"
+        if [ "$WORKTREE_CONFIRM" = "ask" ]; then
+            if [ ! -t 0 ]; then
+                echo "  Error: stdin is not a TTY. Pass --yes to remove clean worktrees or --no to skip." >&2
+                exit 1
+            fi
+            read -rp "Remove the listed clean worktrees? Dirty worktrees will be kept. (y/N) " confirm
+            case "$confirm" in
+                y|Y|yes|YES) WORKTREE_CONFIRM="yes" ;;
+                *) WORKTREE_CONFIRM="no" ;;
+            esac
+        fi
+        if [ "$WORKTREE_CONFIRM" = "yes" ]; then
+            for wt in "${targets[@]}"; do
+                if git worktree remove "$wt" 2>/dev/null; then
+                    echo "  Removed worktree: $wt"
+                else
+                    echo "  Warning: git declined to remove $wt (dirty or otherwise protected) - left in place." >&2
+                fi
+            done
+        else
+            echo "  Skipped."
+        fi
+    fi
     cd "$PROJECT_ROOT"
 fi
 

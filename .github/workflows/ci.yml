@@ -2,8 +2,14 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Base commit for image-input freshness validation
+        required: true
+        type: string
   push:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -16,6 +22,31 @@ permissions:
   contents: read
 
 jobs:
+  required:
+    name: CI required
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [shellcheck, hadolint, psanalyzer, go-test, compose-validate,
+            compose-freshness, image-tag-freshness, image-sync-tests, bash-tests,
+            bash-tests-macos, isolated-up-smoke, host-policy-tests, terminal-tests,
+            pwsh-tests, pwsh-windows-tests, gemini-up-smoke]
+    steps:
+      - name: Require every applicable CI job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failed = {name: job['result'] for name, job in results.items()
+                    if job['result'] != 'success' and not
+                    (name == 'image-tag-freshness' and os.environ['EVENT'] == 'push'
+                     and job['result'] == 'skipped')}
+          if failed:
+              raise SystemExit(f'CI jobs did not pass: {failed}')
+          PY
+
   # Scans the whole repository, not just ./scripts. The 16 .sh files under
   # tests/ plus tests/lib/compose_assert.sh were linted by nothing, and those
   # files hold the assertion helpers -- an SC2086 or SC2181 defect there
@@ -224,16 +255,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Regenerate from generator defaults
-        # `.env` is gitignored and absent on a fresh checkout; removing it
-        # anyway pins the job to the documented defaults rather than to
-        # whatever a future change might leave in the working tree.
+        # Use defaults without deleting a local installation's configuration.
         run: |
-          rm -f .env
-          bash scripts/generate-compose.sh
+          bash scripts/generate-compose.sh --env-file /dev/null
       - name: Assert no drift
         run: |
           if ! git diff --exit-code -- docker-compose.yml docker-compose.linux.yml docker-compose.worktree.yml docker-compose.isolated.yml; then
-            echo "::error::Committed compose files differ from generator output. Regenerate with: rm -f .env && bash scripts/generate-compose.sh"
+            echo "::error::Committed compose files differ from generator output. Regenerate with: bash scripts/generate-compose.sh --env-file /dev/null"
             exit 1
           fi
 
@@ -253,7 +281,7 @@ jobs:
   # and no gemini, and nothing told it so.
   image-tag-freshness:
     name: Image content changes bump VERSION
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -263,11 +291,11 @@ jobs:
           fetch-depth: 0
       - name: Compare image inputs against VERSION
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
 
           # The inputs that decide what lands inside the image: every path the
           # Dockerfile COPYs, plus the Dockerfile itself. Keep this in step with
@@ -286,15 +314,23 @@ jobs:
           fi
 
           echo "Image inputs changed:"
-          printf '  %s\n' $image_inputs
+          printf '  %s\n' "$image_inputs"
 
           if printf '%s\n' "$changed" | grep -qx 'VERSION'; then
             echo "VERSION was bumped in the same change."
             exit 0
           fi
 
-          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (rm -f .env && bash scripts/generate-compose.sh)."
+          echo "::error::Image inputs changed but VERSION did not. docker-compose.yml pins image: claude-code-base:\${IMAGE_TAG:-<VERSION>}, and \`up\` reuses a local image with that tag rather than rebuilding -- so this change would never reach an existing installation. Bump VERSION and regenerate the compose files (bash scripts/generate-compose.sh --env-file /dev/null)."
           exit 1
+
+  image-sync-tests:
+    name: Image update synchronization
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 tests/test_image_sync.py
+      - run: python3 tests/test_ci_gate.py
 
   bash-tests:
     name: Bash Tests (${{ matrix.test }})
@@ -327,6 +363,7 @@ jobs:
           - tests/test_sandbox_gate.sh
           - tests/test_setup_isolated.sh
           - tests/test_bash32_portability.sh
+          - tests/test_bootstrap_refresh.sh
           - tests/test_workflow_contracts.sh
           # Linux-only on purpose: this covers container bootstrap code, the
           # image is Debian, and the CRLF sweep needs GNU sed --follow-symlinks.
@@ -399,6 +436,7 @@ jobs:
           failed=0
           for t in \
             tests/test_bash32_portability.sh \
+            tests/test_bootstrap_refresh.sh \
             tests/test_parse_env.sh \
             tests/test_agent_attach_argv.sh \
             tests/test_num_accounts_precedence.sh \
@@ -463,6 +501,8 @@ jobs:
         run: pwsh --version
       - name: Transaction and boundary fault tests
         run: python tests/test_lifecycle.py
+      - name: Worktree cleanup confirmation and dirty-work preservation
+        run: python tests/test_cleanup_worktrees.py
       - name: Native wrapper process interruption and recovery
         run: python tests/test_lifecycle_process.py
       - name: Startup readiness and wrapper parity

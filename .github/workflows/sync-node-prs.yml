@@ -1,0 +1,43 @@
+name: Synchronize Node image PRs
+
+on:
+  schedule:
+    - cron: '15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-node-prs
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: write
+    strategy:
+      max-parallel: 1
+      matrix:
+        base: [develop, main]
+    steps:
+      # This workflow never checks out a PR head or executes its code with a
+      # write token. Both the synchronizer and generator come from trusted refs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.base }}
+          path: base
+          persist-credentials: false
+      - name: Verify and complete FROM-only updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_BRANCH: ${{ matrix.base }}
+        run: python3 scripts/sync-node-prs.py --repository "$REPOSITORY" --base "$BASE_BRANCH" --root "$GITHUB_WORKSPACE/base"

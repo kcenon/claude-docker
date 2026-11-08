@@ -225,7 +225,7 @@ function Install-Prerequisite {
 function Invoke-PrerequisiteChecks {
     Write-LogStep 'Checking prerequisites'
 
-    Invoke-HostPolicy -ProjectRoot $ProjectRoot version
+    Invoke-HostPolicy -ProjectRoot $ProjectRoot -PolicyArgs @('version')
     $missing = @()
 
     if (-not (Test-Docker))        { $missing += 'docker' }
@@ -984,7 +984,7 @@ function Install-Dependencies {
 
     foreach ($svc in $services) {
         Write-LogInfo "Installing npm dependencies in $svc..."
-        $output = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $svc npm install 2>&1
+        $output = Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('exec', '-T', $svc, 'npm', 'install') 2>&1
         if ($LASTEXITCODE -eq 0) {
             $output | Select-Object -Last 3
             Write-LogSuccess "$svc`: dependencies installed"
@@ -1007,7 +1007,7 @@ function Invoke-Verification {
     $primarySvc = "$servicePrefix-a"
 
     # Check container is running
-    $psOutput = Invoke-Compose -ProjectRoot $ProjectRoot ps --format '{{.Name}}' 2>$null
+    $psOutput = Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('ps', '--format', '{{.Name}}') 2>$null
     if ($psOutput -match $primarySvc) {
         Write-LogSuccess "Container $primarySvc is running"
     }
@@ -1018,7 +1018,7 @@ function Invoke-Verification {
     }
 
     # Check the runtime CLI is available
-    $version = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc $runtimeBinary --version 2>$null
+    $version = Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('exec', '-T', $primarySvc, $runtimeBinary, '--version') 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-LogSuccess "$runtimeBinary is available ($version)"
     }
@@ -1027,7 +1027,7 @@ function Invoke-Verification {
     }
 
     # Check auth status (Path A: OAuth login required; Path B: API key validates)
-    $null = Invoke-Compose -ProjectRoot $ProjectRoot exec -T $primarySvc $runtimeBinary auth status 2>$null
+    $null = Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('exec', '-T', $primarySvc, $runtimeBinary, 'auth', 'status') 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-LogSuccess 'Authentication verified'
     }
@@ -1043,7 +1043,7 @@ function Invoke-Verification {
         $svc = "$servicePrefix-$letter"
         if (-not (Get-ContainerId -ProjectRoot $ProjectRoot -Service $svc)) { continue }
 
-        $output = @(Invoke-Compose -ProjectRoot $ProjectRoot exec -T $svc gh api user --jq .login 2>$null)
+        $output = @(Invoke-Compose -ProjectRoot $ProjectRoot -ComposeArgs @('exec', '-T', $svc, 'gh', 'api', 'user', '--jq', '.login') 2>$null)
         $ghExit = $LASTEXITCODE
         $actual = ($output -join '').Trim()
         if ($ghExit -ne 0 -or -not $actual) {

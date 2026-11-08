@@ -83,6 +83,26 @@ load_env_file "$FORCE_FIXTURE" -a
 assert_eq "force mode overwrites env" "from-file" "$FORCE_KEY"
 rm -f "$FORCE_FIXTURE"
 
+echo "== duplicate loading and token updates use the effective value =="
+DUP_FIXTURE="$(mktemp)"
+printf 'LF_DUP=first\r\nLF_DUP =last\r\nlf_dup=lower\r\nLF_EMPTY=first\r\nLF_EMPTY=\r\n' > "$DUP_FIXTURE"
+unset LF_DUP LF_EMPTY lf_dup
+load_env_file "$DUP_FIXTURE"
+assert_eq 'default loader uses the last duplicate' last "$LF_DUP"
+assert_eq 'an empty final duplicate stays empty' '' "$LF_EMPTY"
+# shellcheck disable=SC2154
+assert_eq 'keys differing only in case stay distinct' lower "$lf_dup"
+LF_DUP=environment
+load_env_file "$DUP_FIXTURE"
+assert_eq 'external environment still takes precedence' environment "$LF_DUP"
+load_env_file "$DUP_FIXTURE" -a
+assert_eq 'forced loader uses the last duplicate' last "$LF_DUP"
+set_env_value "$DUP_FIXTURE" LF_DUP 'new\literal # placeholder'
+assert_eq 'writer updates the effective duplicate literally' 'new\literal # placeholder' \
+    "$(parse_env_value "$DUP_FIXTURE" LF_DUP)"
+assert_eq 'writer preserves a differently cased key' lower "$(parse_env_value "$DUP_FIXTURE" lf_dup)"
+rm -f "$DUP_FIXTURE"
+
 echo "== set_env_value: update existing, insert missing =="
 SET_FIXTURE="$(mktemp)"
 cp "$FIXTURES/minimal.env" "$SET_FIXTURE"

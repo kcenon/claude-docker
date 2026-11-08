@@ -1,6 +1,6 @@
 # One host policy implementation for Bash and PowerShell; native argv only.
 function Invoke-HostPolicy {
-    param([string]$ProjectRoot, [Parameter(ValueFromRemainingArguments)][string[]]$PolicyArgs)
+    param([Parameter(Mandatory)][string]$ProjectRoot, [Parameter(Mandatory)][string[]]$PolicyArgs)
     # Preserve the native exit code even when the calling session opted into
     # PowerShell 7.3+'s native-command ErrorAction integration.
     $PSNativeCommandUseErrorActionPreference = $false
