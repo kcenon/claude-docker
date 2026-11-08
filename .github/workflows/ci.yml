@@ -9,7 +9,7 @@ on:
         required: true
         type: string
   push:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -22,6 +22,31 @@ permissions:
   contents: read
 
 jobs:
+  required:
+    name: CI required
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [shellcheck, hadolint, psanalyzer, go-test, compose-validate,
+            compose-freshness, image-tag-freshness, image-sync-tests, bash-tests,
+            bash-tests-macos, isolated-up-smoke, host-policy-tests, terminal-tests,
+            pwsh-tests, pwsh-windows-tests, gemini-up-smoke]
+    steps:
+      - name: Require every applicable CI job to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failed = {name: job['result'] for name, job in results.items()
+                    if job['result'] != 'success' and not
+                    (name == 'image-tag-freshness' and os.environ['EVENT'] == 'push'
+                     and job['result'] == 'skipped')}
+          if failed:
+              raise SystemExit(f'CI jobs did not pass: {failed}')
+          PY
+
   # Scans the whole repository, not just ./scripts. The 16 .sh files under
   # tests/ plus tests/lib/compose_assert.sh were linted by nothing, and those
   # files hold the assertion helpers -- an SC2086 or SC2181 defect there
@@ -308,6 +333,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 tests/test_image_sync.py
+      - run: python3 tests/test_ci_gate.py
 
   bash-tests:
     name: Bash Tests (${{ matrix.test }})
