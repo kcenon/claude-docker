@@ -107,7 +107,7 @@ class WrapperReadinessTests(unittest.TestCase):
             self.fail("PowerShell is required for readiness parity in CI")
         return result
 
-    def invoke(self, language, arguments, refuse="", remove_wait=False, probe_exit=0):
+    def invoke(self, language, arguments, refuse="", remove_wait=False, probe_exit=0, force_lock=False):
         with tempfile.TemporaryDirectory(prefix="readiness-wrapper-") as tmp:
             root = Path(tmp)
             shutil.copytree(ROOT / "scripts", root / "scripts")
@@ -159,6 +159,10 @@ class WrapperReadinessTests(unittest.TestCase):
                 path.write_text(original.replace(target, "            pass  # mutation: readiness removed"))
             if language == "powershell":
                 script = root / "scripts/claude-docker.ps1"
+                if force_lock:
+                    script.write_text(script.read_text().replace(
+                        "$IsWindows -and -not $env:CLAUDE_DOCKER_LOCK_TOKEN",
+                        "-not $env:CLAUDE_DOCKER_LOCK_TOKEN", 1))
                 if os.name != "nt":
                     script.write_text(script.read_text().replace("$ErrorActionPreference = 'Stop'",
                                       "$ErrorActionPreference = 'Stop'\n$PSVersionTable.OS = 'Microsoft Windows'", 1))
@@ -212,6 +216,20 @@ class WrapperReadinessTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
                 self.assertNotIn("private-probe-fixture-canary", result.stdout + result.stderr)
                 self.assertEqual(state["premature"], [])
+
+    def test_docker_arguments_survive_the_frontend_and_lifecycle_lock(self):
+        cases = [(["down", "-v"], ["down", "-v"]),
+                 (["compose", "down", "--volumes", "--dry-run"], ["down", "--volumes", "--dry-run"]),
+                 (["exec", "claude-a", "git", "-c", "x=y", "status"],
+                  ["exec", "claude-a", "git", "-c", "x=y", "status"]),
+                 (["compose", "ps", "-a"], ["ps", "-a"])]
+        for language in self.languages():
+            for arguments, expected in cases:
+                with self.subTest(language=language, arguments=arguments):
+                    result, state = self.invoke(language, arguments, force_lock=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertTrue(any(call[-len(expected):] == expected for call in state["calls"]),
+                                    state["calls"])
 
 
 if __name__ == "__main__":

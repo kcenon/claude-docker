@@ -15,7 +15,7 @@ def main():
     path = Path(os.environ["READINESS_FIXTURE"])
     state = json.loads(path.read_text())
     services = ["claude-a", "claude-b"]
-    state["calls"].append(args[:5])
+    state["calls"].append(args)
     if args[:1] == ["info"] or "config" in args:
         path.write_text(json.dumps(state))
         sys.argv = [str(Path(__file__).parent / "lib/mock_compose.py")] + args

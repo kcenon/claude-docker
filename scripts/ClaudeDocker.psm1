@@ -1074,16 +1074,13 @@ function Invoke-Compose {
     Execute docker compose with the correct file arguments.
     Replaces bash's eval "$compose_cmd ..." pattern with safe array splatting.
     .NOTES
-    CAUTION: This is an advanced function (CmdletBinding + Parameter attributes).
-    PowerShell intercepts short flags that match common parameters before they
-    reach ValueFromRemainingArguments. Use long flags for Docker options:
-      --detach (not -d, which maps to -Debug)
-      --verbose (not -v, which maps to -Verbose)
+    Pass Docker arguments as an explicit -ComposeArgs array so PowerShell's
+    binder cannot consume Docker options as common or named parameters.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ProjectRoot,
-        [Parameter(ValueFromRemainingArguments)][string[]]$ComposeArgs
+        [string[]]$ComposeArgs
     )
 
     $baseArgs = @(Get-ComposeArgs -ProjectRoot $ProjectRoot)
