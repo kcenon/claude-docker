@@ -78,7 +78,68 @@ else
     pass "an unknown runtime is still rejected after folding"
 fi
 
-# --- 2. No bash 4+ construct has come back ------------------------------------
+# --- 2. The installer can collect a configuration under nounset ---------------
+
+echo "== installer configuration handles an initially empty runtime array =="
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+for runtime_case in registry claude-only claude-last codex; do
+    status=0
+    (
+        export CLAUDE_DOCKER_INSTALL_LIBRARY_ONLY=1
+        # shellcheck source=../scripts/install.sh
+        . "$PROJECT_ROOT/scripts/install.sh"
+        # shellcheck disable=SC2034
+        PLATFORM=macos
+
+        case "$runtime_case" in
+            claude-only) runtime_list() { printf '%s\n' claude; } ;;
+            claude-last) runtime_list() { printf '%s\n' codex gemini claude; } ;;
+        esac
+
+        # Drive the complete configuration step without a TTY or credentials.
+        # Recording argv also catches an accidental empty option in the fix.
+        prompt_select() {
+            case "$1" in
+                'Which agent runtime will you use?')
+                    shift
+                    printf '%s\n' "$@" > "$WORK/$runtime_case.options"
+                    if [[ "$runtime_case" == codex ]]; then
+                        printf '%s\n' codex
+                    else
+                        printf '%s\n' "$1"
+                    fi
+                    ;;
+                *) printf '%s\n' "$2" ;;
+            esac
+        }
+        prompt_input() { printf '%s\n' "${2:-}"; }
+        # shellcheck disable=SC2034
+        prompt_account_count() { NUM_ACCOUNTS=2; }
+        measure_io_latency() { printf '0\n'; }
+
+        collect_configuration
+        printf '%s\n' "$RUNTIME" > "$WORK/$runtime_case.selected"
+    ) > "$WORK/$runtime_case.log" 2>&1 || status=$?
+    assert_eq "$runtime_case configuration completes" 0 "$status"
+    if [[ "$status" -ne 0 ]]; then
+        cat "$WORK/$runtime_case.log"
+        continue
+    fi
+    expected_runtime=claude
+    [[ "$runtime_case" == codex ]] && expected_runtime=codex
+    assert_eq "$runtime_case selects the requested runtime" "$expected_runtime" \
+        "$(cat "$WORK/$runtime_case.selected")"
+    if [[ "$runtime_case" != claude-only ]]; then
+        assert_eq "$runtime_case offers all runtimes with claude first" \
+            "$(printf '%s\n' claude codex gemini)" \
+            "$(cat "$WORK/$runtime_case.options")"
+    fi
+done
+
+# --- 3. No bash 4+ construct has come back ------------------------------------
 
 echo "== no bash 4+ construct in the shell sources =="
 
