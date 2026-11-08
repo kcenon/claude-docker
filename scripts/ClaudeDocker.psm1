@@ -250,6 +250,7 @@ function Read-EnvFile {
     Handles CRLF, inline comments, quoted values, and trailing whitespace.
     Later duplicate keys win, matching POSIX shell env semantics.
     #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseLiteralInitializerForHashtable', '', Justification = 'Env keys must be case-sensitive to match Bash, Go and Python; the literal hashtable is case-insensitive.')]
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
