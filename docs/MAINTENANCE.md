@@ -4,7 +4,7 @@ What the image installs and pins, and how to move its base image.
 
 ## Bumping the Base Image
 
-The `Dockerfile` pins **`node:26.13.0-slim` and its content digest**, so the
+The `Dockerfile` pins **`node:26.13.1-slim` and its content digest**, so the
 base layers stay fixed when the upstream tag moves. A digest-qualified reference
 selects that content; it does not require the tag to keep pointing to it.
 

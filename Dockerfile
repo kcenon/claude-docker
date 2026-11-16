@@ -1,4 +1,4 @@
-# Base: node:26.13.0-slim (Debian/glibc)
+# Base: node:26.13.1-slim (Debian/glibc)
 # Pinned to a specific patch version AND content digest so upstream tag
 # movement cannot silently change the base layers. The full image is not
 # byte-for-byte reproducible because later apt/npm installs may track current
@@ -36,7 +36,7 @@ WORKDIR /workspace
 # because this is the interpreter only, no pip or venv.
 #
 # DL3008 waived: rolling Debian base tracks security updates via the
-# digest-pinned node:26.13.0-slim; per-package apt pins would be churn
+# digest-pinned node:26.13.1-slim; per-package apt pins would be churn
 # without a meaningful security benefit. Pinning policy tracked in #171.
 # hadolint ignore=DL3008
 RUN apt-get update \
